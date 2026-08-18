@@ -1,0 +1,19 @@
+# Raw and generated data
+data/raw/
+data/interim/
+data/derived/
+
+# Generated outputs
+results/
+logs/
+
+# R
+.Rhistory
+.RData
+.Ruserdata
+renv/library/
+renv/staging/
+
+# OS
+.DS_Store
+Thumbs.db
