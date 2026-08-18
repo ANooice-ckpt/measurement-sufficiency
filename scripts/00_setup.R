@@ -1,14 +1,11 @@
-# Environment setup
-# Match upstream package versions before beginning analysis.
+options(repos = c(CRAN = "https://cloud.r-project.org"))
 
-if (!requireNamespace("renv", quietly = TRUE)) {
-  install.packages("renv")
-}
+if (!requireNamespace("renv", quietly = TRUE)) install.packages("renv")
+if (!file.exists("renv.lock")) renv::init(bare = TRUE, restart = FALSE)
 
-# Initialize only if this is a fresh project.
-# renv::init(bare = TRUE)
+core <- c("LightLogR@0.10.3", "melidosData@1.0.6", "tidyverse", "gt", "cowplot")
+renv::install(core, prompt = FALSE)
+renv::snapshot(prompt = FALSE)
 
-# Add package installation / restoration steps here.
-# Finish with:
-# renv::snapshot()
-# writeLines(capture.output(sessionInfo()), "logs/sessionInfo_setup.txt")
+dir.create("logs", showWarnings = FALSE, recursive = TRUE)
+writeLines(capture.output(sessionInfo()), "logs/sessionInfo_setup.txt")

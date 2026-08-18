@@ -12,3 +12,17 @@ Analysis repository for:
 5. Derive single-dimension sufficiency curves and multidimensional Pareto frontiers for RQ3.
 
 See `AGENTS.md` and `docs/`.
+
+## Reproduction foundation
+
+Run from the repository root:
+
+```powershell
+Rscript scripts/00_setup.R
+Rscript scripts/01_download_melidos.R
+Rscript scripts/02_inventory.R
+Rscript scripts/03_reproduce_upstream.R
+Rscript scripts/04_validate_reproduction.R
+```
+
+`scripts/01_download_melidos.R` never overwrites completed raw files. For a subset, set comma-separated `MELIDOS_SITES` and/or `MELIDOS_MODALITIES` environment variables before running it. The current upstream reproduction intentionally implements Zauner's three-position primary scenario; that intersection is not imposed on future measurement-sufficiency operators.

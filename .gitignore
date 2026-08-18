@@ -3,6 +3,14 @@ data/raw/
 data/interim/
 data/derived/
 
+# Downloaded read-only upstream references
+external/LightLogR/*
+!external/LightLogR/.gitkeep
+external/melidosData/*
+!external/melidosData/.gitkeep
+external/zauner_position/*
+!external/zauner_position/.gitkeep
+
 # Generated outputs
 results/
 logs/
