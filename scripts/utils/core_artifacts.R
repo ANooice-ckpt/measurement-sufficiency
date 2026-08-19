@@ -281,8 +281,8 @@ core_expand_metric_availability <- function(emitted, metric_types) {
   multi_units <- units |> dplyr::filter(analysis_unit_type == "participant_multiday")
 
   full <- dplyr::bind_rows(
-    tidyr::crossing(daily_units, daily_types),
-    tidyr::crossing(multi_units, multi_types)
+    dplyr::cross_join(daily_units, daily_types),
+    dplyr::cross_join(multi_units, multi_types)
   ) |>
     dplyr::left_join(
       emitted,
