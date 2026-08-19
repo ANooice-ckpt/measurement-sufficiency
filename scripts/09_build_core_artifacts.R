@@ -1,6 +1,7 @@
 source("scripts/utils/melidos_io.R")
 source("scripts/utils/rq1_metrics.R")
 source("scripts/utils/core_artifacts.R")
+source("scripts/utils/core_context.R")
 suppressPackageStartupMessages({
   library(tidyverse)
   library(melidosData)
@@ -23,6 +24,7 @@ force_rebuild <- identical(Sys.getenv("CORE_FORCE", unset = "0"), "1")
 
 dir.create("data/interim/core/supports", recursive = TRUE, showWarnings = FALSE)
 dir.create("data/interim/core/metrics", recursive = TRUE, showWarnings = FALSE)
+dir.create("data/interim/core/context", recursive = TRUE, showWarnings = FALSE)
 dir.create("data/derived/core", recursive = TRUE, showWarnings = FALSE)
 dir.create("logs", recursive = TRUE, showWarnings = FALSE)
 
@@ -54,35 +56,47 @@ support_paths <- unlist(support_paths, use.names = FALSE)
 support_paths <- support_paths[!is.na(support_paths) & file.exists(support_paths)]
 
 # Stage 2: compute every observable placement x optical x temporal-resolution
-# configuration within each support lattice. Each support block is persistent so
-# an interrupted cloud run can resume without recomputing completed blocks.
+# configuration within each support lattice. Metric and configuration-context
+# blocks are both persistent, so interrupted cloud runs can resume cheaply.
 compute_one <- function(path) {
   key <- tools::file_path_sans_ext(basename(path))
-  out <- file.path("data/interim/core/metrics", paste0(key, "__metrics.rds"))
-  if (!force_rebuild && file.exists(out)) return(out)
-  message("compute metric block: ", key)
-  m <- core_compute_support_metrics(path)
-  saveRDS(m, out, compress = FALSE)
-  out
+  metric_out <- file.path("data/interim/core/metrics", paste0(key, "__metrics.rds"))
+  context_out <- file.path("data/interim/core/context", paste0(key, "__context.rds"))
+
+  if (force_rebuild || !file.exists(metric_out)) {
+    message("compute metric block: ", key)
+    m <- core_compute_support_metrics(path)
+    saveRDS(m, metric_out, compress = FALSE)
+  }
+  if (force_rebuild || !file.exists(context_out)) {
+    message("compute context block: ", key)
+    cx <- core_config_daily_context(path)
+    saveRDS(cx, context_out, compress = FALSE)
+  }
+  c(metric = metric_out, context = context_out)
 }
-metric_paths <- if (workers > 1L) {
+block_paths <- if (workers > 1L) {
   parallel::mclapply(support_paths, compute_one, mc.cores = min(workers, length(support_paths)))
 } else lapply(support_paths, compute_one)
-metric_paths <- unlist(metric_paths, use.names = FALSE)
+metric_paths <- vapply(block_paths, `[[`, character(1), "metric")
+context_paths <- vapply(block_paths, `[[`, character(1), "context")
 
 # Stage 3: merge the expensive configuration-level values into one durable cube.
 emitted <- map_dfr(metric_paths, readRDS)
-metric_cube <- core_expand_metric_availability(emitted, metric_types)
+metric_cube <- core_finalize_metric_cube(emitted, metric_types)
 readr::write_csv(metric_cube, "data/derived/core/metric_cube.csv.gz", na = "")
 
-# Stage 4: one daily context row per support-specific participant-day.
-quality <- map_dfr(support_paths, ~core_support_quality(readRDS(.x)))
+# Stage 4: configuration-level participant-day context. ERA5 is attached by
+# official site and local calendar date. The 24 isiv_hXX columns are the exact
+# hourly transformed-light basis needed to reconstruct arbitrary duration-subset
+# IS/IV values downstream without the 10-s source.
+config_context <- map_dfr(context_paths, readRDS)
 site_meta <- core_site_metadata()
 era5_daily <- map_dfr(seq_len(nrow(site_meta)), function(i) {
   out <- core_read_era5_daily(site_meta$site[i], site_meta$timezone[i])
   if (is.null(out)) tibble(site = character(), Date = as.Date(character())) else out
 })
-unit_context <- quality |>
+unit_context <- config_context |>
   left_join(site_meta, by = "site") |>
   left_join(era5_daily, by = c("site", "Date")) |>
   mutate(
@@ -93,10 +107,11 @@ unit_context <- quality |>
   ) |>
   select(
     support_id, site, Id, analysis_unit_type, analysis_unit_id, Date,
+    placement, optical, resolution_s, config_id,
     city, country, timezone, latitude, longitude,
-    expected_epochs, valid_epochs, valid_fraction, n_missing_blocks, largest_missing_gap_s,
+    expected_values, valid_values, valid_fraction, n_missing_blocks, largest_missing_gap_s,
     first_valid_time, last_valid_time, year, month, day_of_year, weekday,
-    everything()
+    starts_with("isiv_h"), everything()
   )
 readr::write_csv(unit_context, "data/derived/core/unit_context.csv.gz", na = "")
 
