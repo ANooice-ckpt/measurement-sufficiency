@@ -15,7 +15,15 @@ Analysis repository for:
 See `AGENTS.md` and `docs/`.
 
 ## Reproduction foundation
-Run from the repository root under **R 4.5.0**. MeLiDos source files live under `data/raw/melidos/`. ERA5 site payloads live under `data/raw/era5/` and must include the nine site files named `BAUA.csv`, `FUSPCEU.csv`, `IZTECH.csv`, `KNUST.csv`, `MPI.csv`, `RISE.csv`, `THUAS.csv`, `TUM.csv`, and `UCR.csv`. The ERA5 reader accepts either plain CSV or ZIP-with-CSV payloads saved with a `.csv` extension.
+Run from the repository root under **R 4.5.0**. On a new/local R 4.5.0 installation, initialize or migrate the project environment with:
+
+```bash
+Rscript scripts/00_setup.R
+```
+
+If an older development lockfile is detected, the setup script rebuilds the project runtime under R 4.5.0 rather than restoring the obsolete R-version package set verbatim, then snapshots the actual R 4.5.0 environment. LightLogR 0.10.3 and melidosData 1.0.6 remain explicit scientific package pins. After a one-time migration, commit the regenerated `renv.lock`; later machines can restore that R 4.5.0 lock normally.
+
+MeLiDos source files live under `data/raw/melidos/`. ERA5 site payloads live under `data/raw/era5/` and must include the nine site files named `BAUA.csv`, `FUSPCEU.csv`, `IZTECH.csv`, `KNUST.csv`, `MPI.csv`, `RISE.csv`, `THUAS.csv`, `TUM.csv`, and `UCR.csv`. The ERA5 reader accepts either plain CSV or ZIP-with-CSV payloads saved with a `.csv` extension.
 
 ## Core artifacts
 The current production build on the 96-vCPU / 192-GiB Linux ECS uses 48 forked workers and checkpoint reuse:
