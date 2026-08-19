@@ -1,87 +1,52 @@
 # Project instructions
 
-## Goal
-Implement the analysis for **measurement sufficiency in personal light exposure** using the public MeLiDos field-study data.
-
 ## Source of truth
-Read these files in order:
-1. `docs/STUDY_SPEC.md` — frozen scientific specification and estimands.
-2. `docs/CORE_ARTIFACTS.md` — current core-artifact schema, support lattice, extraction levels, and build contract.
-3. `docs/UPSTREAM.md` — upstream package/repository versions and reproduction boundary.
-4. `docs/RQ1_EXECUTION.md` — downstream RQ1 execution from completed core artifacts.
-5. `docs/DATA_INVENTORY.md` — generated local data inventory; regenerate it when the inventory script changes.
+Read in this order:
+1. `docs/STUDY_SPEC.md`
+2. `docs/CORE_ARTIFACTS.md`
+3. `docs/UPSTREAM.md`
+4. `docs/RQ1_EXECUTION.md`
 
-If instructions conflict, scientific definitions in `docs/STUDY_SPEC.md` take priority. Extraction-only details belong to `docs/CORE_ARTIFACTS.md`.
+Scientific definitions in `STUDY_SPEC.md` override implementation notes elsewhere.
 
-The **only current downstream RQ1 executables** are:
-
-```text
-scripts/10_rq1_analysis.R
-scripts/11_plot_fig1.R
-```
-
-`scripts/10_rq1_analysis.R` reads the completed core artifacts and creates all RQ1 statistical/artifact outputs. `scripts/11_plot_fig1.R` reads those frozen RQ1 outputs and only renders Fig. 1; changing figure aesthetics must not require rerunning RQ1 analysis. The superseded pre-core `05`–`08` RQ1 scripts have been removed from `master`.
-
-The helper `scripts/utils/rq1_metrics.R` remains part of the **core extraction layer** because `09_build_core_artifacts.R` uses it to create configuration-level metric values. Do not reinterpret it as a third downstream RQ1 script and do not modify it while a core build is running.
-
-## Current phase
-The current task is **core artifact extraction**: convert the expensive high-resolution MeLiDos source layer and already-downloaded ERA5 site series into durable analysis tables that support later RQ1–RQ3 work without returning to the 10-s light records or reprocessing hourly weather for ordinary statistical changes.
-
-Required outputs:
+## Executable structure
+The expensive source-to-core layer ends at `scripts/09_build_core_artifacts.R`. Downstream analysis/plotting is deliberately paired:
 
 ```text
-data/derived/core/metric_cube.csv.gz
-data/derived/core/unit_context.csv.gz
-data/derived/core/weather_1min.csv.gz
+10_rq1_analysis.R -> 11_plot_fig1.R
+12_rq2_analysis.R -> 13_plot_rq2.R
+14_rq3_analysis.R -> 15_plot_rq3.R
 ```
 
-`metric_cube` and `unit_context` are the two main analysis artifacts. `weather_1min` is an auxiliary reusable continuous-context artifact; daily ERA5 summaries are merged into `unit_context`.
+Plot scripts read frozen outputs only and must not silently refit/recompute their corresponding analysis.
 
-After the core build completes, run the downstream sequence:
+## Frozen scientific rules
+- Scientific object: `configuration -> observed exposure process -> target representation`.
+- 54 published exposure metrics are analytical units; six metric classes are descriptive only.
+- Distribution first: preserve smallest-unit distortion before A/B, models, sufficiency, or Pareto projections.
+- High-information benchmark is eye / MEDI / 10 s / protocol-anchored seven-day reference; it is an empirical benchmark, not biological truth.
+- Support is part of the estimand. Pairwise placement analyses keep maximal eye–chest / eye–wrist supports.
+- Optical LIGHT is an operational proxy. MDER/nvRD are unavailable when the candidate configuration has LIGHT only.
+- Temporal primary levels: **10, 20, 30, 60, 300, 900, 1800 s**. Reserve: 120, 600, 3600 s. 15 s is prohibited.
+- Coarse temporal configurations are **systematic sparse subsamples of the 10-s grid**, not bin means. Retained source values cannot change.
+- Monitoring duration uses MeLiDos `trial_times` to anchor a fixed seven-day reference. Enumerate all contiguous 1–6 d candidate windows; do not substitute arbitrary non-contiguous subsets.
+- Unavailable configurations are unavailable, not high-distortion/insufficient.
+- RQ3 Pareto dominance applies only to justified ordered dimensions (temporal resolution, duration). Placement/optical are incomparable facets.
+- Multidimensional RQ3 uses facet-specific maximal supports, not a gratuitous eye+chest+wrist full-support intersection.
 
-```bash
-Rscript scripts/10_rq1_analysis.R
-Rscript scripts/11_plot_fig1.R
-```
+## Artifact/cache rules
+Current core version: `v2_sparse_sampling_protocol7`.
 
-RQ2 models, RQ3 sufficiency, bootstrap, duration-window selection, and manuscript outputs remain downstream choices and must not be written into the core artifacts.
+Interim core blocks are versioned under `data/interim/core/<core_version>/`. Do not point v2 at pre-v2 cache paths. Final core artifacts carry `core_artifact_version` and `data/derived/core/core_manifest.csv` records the temporal operator.
 
-## Working principles
-- Preserve the scientific mapping `measurement configuration -> target representation` before any distortion/statistical projection.
-- The 54 published exposure metrics are the analysis units; the six metric classes are descriptive grouping variables only.
-- Support is part of the estimand. Preserve `support_id` and do not collapse rows across incompatible support lattices.
-- RQ1 main effects retain their maximum valid support; stricter common supports are allowed only where joint configurations require them.
-- Primary temporal-resolution levels are **10 s, 15 s, 20 s, 30 s, 1 min, 5 min, 15 min, and 30 min**. Additional 2 min, 10 min, and 60 min rows are reserve extraction levels only and remain identifiable by `is_primary_resolution`.
-- Pairwise eye–chest and eye–wrist supports remain primary for placement. All-position common supports are reserve data for future multidimensional comparisons and must not silently replace pairwise maximal support.
-- Primary monitoring-duration comparisons use contiguous `d`-day windows within an unambiguous seven-valid-day reference, not arbitrary non-contiguous subsets.
-- Missing light support remains missing; never convert missing intervals to darkness/zero exposure.
-- Do not add a missingness-simulation interface in the core build.
-- ERA5 QC must be conservative: broad physical plausibility bounds may turn impossible values into missing, but weather observations must not be clipped merely to make later models convenient.
-- ERA5 interpolation is an information-preservation convenience, not higher-resolution ground truth. Keep original-hour interpretation available through documented construction and diagnostics.
+RQ1 outputs carry `rq1_analysis_version`; RQ2 checkpoint paths include that upstream version. Never reuse old RQ2 checkpoints after an upstream scientific version changes.
 
-## Minimal engineering rule
-Default to the smallest engineering solution that produces the scientific artifact. Do not add new hashes, frozen contracts, baselines, gates, or defensive infrastructure unless a concrete failure mode can be named and Git, version numbers, keys, types, ordinary tests, or existing checks are insufficient. Do not remove existing safety measures merely to simplify. Gates belong only at irreversible, cross-system, security, or formal-release boundaries. Preflight checks must not crowd out the actual computation.
+## Runtime
+Full rebuilds use R 4.5.0, LightLogR 0.10.3, melidosData 1.0.6. On the 96-vCPU Linux ECS, `CORE_WORKERS=48` is the intended start. On a 16-core/32-thread local Windows machine, RQ2 defaults near 12 PSOCK workers; workers keep BLAS/OpenMP at one thread each.
 
-The current duplicate-key stops and early ERA5-format/QC checks are permitted because a malformed final one-time artifact would otherwise silently contaminate all downstream RQs.
-
-## Data rules
-- `data/raw/` is immutable.
-- `external/` is read-only.
-- Do not modify `manuscript/methods_current.sdoc` during computation.
-- Derived datasets must be reproducible from scripts.
-- Use harmonized high-resolution MeLiDos time series as the source layer for the core extraction; do not use pre-aggregated 1-minute light data for primary temporal-resolution construction.
-- Use like-for-like ActLumus placement streams; MPI has no comparable chest/wrist placement stream.
-- Do not impose a three-position intersection unless an analysis specifically requires all three positions.
-- ERA5 source files live under `data/raw/era5/` and are immutable. Accept CDS CSV payloads whether delivered as plain CSV or ZIP-with-CSV content.
-
-## Runtime and reproduction
-- Run from the repository root.
-- Full rebuilds are pinned to **R 4.5.0**.
-- Use LightLogR 0.10.3 and melidosData 1.0.6 as recorded in `docs/UPSTREAM.md`.
-- Run the upstream reproduction and validator before the core build.
-- Record `sessionInfo()` for the core-artifact build.
-- On the current 96-vCPU / 192-GiB ECS, use `CORE_WORKERS=48` as the intended starting point and `CORE_FORCE=0` for checkpoint reuse unless a deliberate full rebuild is required.
-- If a choice would materially change the scientific estimand and is not resolved by `docs/STUDY_SPEC.md`, report the ambiguity instead of silently inventing a method. Minor engineering choices should be resolved pragmatically and execution should continue.
-
-## Completion condition
-The current core phase is complete when all three CSV.GZ artifacts are generated; daily ERA5 context is successfully merged into `unit_context`; the artifact summary, ERA5 QC, missing-weather-date audit, and session information are written under `logs/`; and no duplicate scientific keys remain.
+## Do not
+- Return to the raw 10-s source for ordinary RQ1–RQ3 changes after a validated core exists.
+- Average hidden high-frequency observations to simulate a slower logger.
+- Use Day 8 to replace a missing protocol reference day merely to reach seven days.
+- Treat metric classes as inferential replicates.
+- Invent universal sufficiency thresholds or universal burden orders for placement/optical.

@@ -1,5 +1,7 @@
 # Helpers for building the configuration-level metric cube.
 
+core_artifact_version <- function() "v2_sparse_sampling_protocol7"
+
 core_site_metadata <- function() {
   tibble::tribble(
     ~site, ~city, ~country, ~timezone, ~latitude, ~longitude,
@@ -15,8 +17,12 @@ core_site_metadata <- function() {
   )
 }
 
-core_primary_resolutions <- function() c(10L, 15L, 20L, 30L, 60L, 300L, 900L, 1800L)
-core_all_resolutions <- function() c(10L, 15L, 20L, 30L, 60L, 120L, 300L, 600L, 900L, 1800L, 3600L)
+# Every configured cadence must be exactly representable as a systematic subset
+# of the harmonized 10-s source grid. 15 s is intentionally absent because it
+# cannot be obtained by equal-spacing subsampling of that grid.
+core_primary_resolutions <- function() c(10L, 20L, 30L, 60L, 300L, 900L, 1800L)
+core_reserve_resolutions <- function() c(120L, 600L, 3600L)
+core_all_resolutions <- function() sort(unique(c(core_primary_resolutions(), core_reserve_resolutions())))
 
 core_build_state_intervals <- function(sleep, wear) {
   sleep_adj <- sleep |>
@@ -131,10 +137,7 @@ core_prepare_support <- function(site, support_id) {
     required <- if (is_full) measure_cols else c("MEDI_eye", "MEDI_chest", "MEDI_wrist")
   } else {
     position <- if (grepl("chest", support_id, fixed = TRUE)) "chest" else "wrist"
-    candidate0 <- load_raw_file(
-      raw_data_path(site, paste0("light_", position)),
-      paste0("light_", position)
-    )
+    candidate0 <- load_raw_file(raw_data_path(site, paste0("light_", position)), paste0("light_", position))
     x <- core_align_pair(eye0, candidate0, position) |>
       dplyr::mutate(site = site, .before = 1)
     med_nm <- paste0("MEDI_", position)
@@ -189,7 +192,15 @@ core_config_grid <- function(support_id) {
     )
 }
 
+# A lower temporal resolution represents a logger that samples intermittently,
+# not a logger that averages every hidden 10-s value inside a wider bin. Every
+# candidate cadence is therefore a deterministic clock-anchored subset of the
+# harmonized 10-s grid. Missing scheduled observations remain missing.
 core_make_series <- function(support, placement, optical, resolution_s) {
+  resolution_s <- as.integer(resolution_s)
+  if (!resolution_s %in% core_all_resolutions()) stop("Unsupported resolution: ", resolution_s)
+  if (resolution_s %% 10L != 0L) stop("Resolution must be an integer multiple of the 10-s source grid")
+
   med_nm <- paste0("MEDI_", placement)
   light_nm <- paste0("LIGHT_", placement)
   if (!med_nm %in% names(support)) stop("Missing channel: ", med_nm)
@@ -201,22 +212,33 @@ core_make_series <- function(support, placement, optical, resolution_s) {
       MEDI = if (optical == "MEDI") .data[[med_nm]] else .data[[light_nm]],
       LIGHT = if (optical == "MEDI") .data[[light_nm]] else NA_real_
     )
+
+  sec <- as.numeric(x$Datetime)
+  if (any(!is.finite(sec))) stop("Non-finite timestamp in core support")
+  sec_round <- round(sec)
+  if (any(abs(sec - sec_round) > 1e-6)) stop("Core source timestamps are not on integer seconds")
+  if (any((sec_round %% 10L) != 0L)) stop("Core source timestamps are not on the harmonized 10-s grid")
+  if (anyDuplicated(paste(x$site, x$Id, sec_round, sep = "|"))) {
+    stop("Duplicate source timestamps in core_make_series")
+  }
   if (resolution_s == 10L) return(x)
 
-  tz <- lubridate::tz(x$Datetime)
-  if (is.null(tz) || !length(tz) || is.na(tz) || !nzchar(tz)) tz <- "UTC"
-  x |>
-    dplyr::mutate(bin = as.POSIXct(
-      floor(as.numeric(Datetime) / resolution_s) * resolution_s,
-      origin = "1970-01-01", tz = tz
-    )) |>
-    dplyr::group_by(site, Id, Date, bin) |>
-    dplyr::summarise(
-      MEDI = if (all(is.na(MEDI))) NA_real_ else mean(MEDI, na.rm = TRUE),
-      LIGHT = if (all(is.na(LIGHT))) NA_real_ else mean(LIGHT, na.rm = TRUE),
-      .groups = "drop"
-    ) |>
-    dplyr::rename(Datetime = bin)
+  keep <- (sec_round %% resolution_s) == 0L
+  out <- x[keep, , drop = FALSE]
+  if (!nrow(out)) stop("Sparse sampling produced no rows at ", resolution_s, " s")
+
+  # Defensive invariant: sparse sampling may drop rows only. It must never alter
+  # a retained timestamp or measurement value.
+  src_idx <- match(
+    paste(out$site, out$Id, as.numeric(out$Datetime), sep = "|"),
+    paste(x$site, x$Id, as.numeric(x$Datetime), sep = "|")
+  )
+  if (anyNA(src_idx)) stop("Sparse-sampled timestamp is not a source timestamp")
+  same_num <- function(a, b) all((is.na(a) & is.na(b)) | (!is.na(a) & !is.na(b) & a == b))
+  if (!same_num(out$MEDI, x$MEDI[src_idx]) || !same_num(out$LIGHT, x$LIGHT[src_idx])) {
+    stop("Sparse sampling altered retained measurement values")
+  }
+  out
 }
 
 core_compute_support_metrics <- function(support_path) {
@@ -246,9 +268,7 @@ core_compute_support_metrics <- function(support_path) {
         resolution_s = cfg$resolution_s,
         config_id = cfg$config_id,
         is_primary_resolution = cfg$is_primary_resolution,
-        analysis_unit_type = dplyr::if_else(
-          is.na(Date), "participant_multiday", "participant_day"
-        ),
+        analysis_unit_type = dplyr::if_else(is.na(Date), "participant_multiday", "participant_day"),
         analysis_unit_id = dplyr::if_else(
           is.na(Date),
           paste(support_id, site, Id, "multiday", sep = "|"),
@@ -280,7 +300,7 @@ core_expand_metric_availability <- function(emitted, metric_types) {
   daily_units <- units |> dplyr::filter(analysis_unit_type == "participant_day")
   multi_units <- units |> dplyr::filter(analysis_unit_type == "participant_multiday")
 
-  full <- dplyr::bind_rows(
+  dplyr::bind_rows(
     dplyr::cross_join(daily_units, daily_types),
     dplyr::cross_join(multi_units, multi_types)
   ) |>
@@ -298,18 +318,14 @@ core_expand_metric_availability <- function(emitted, metric_types) {
         !(resolution_s >= 300L & stringr::str_detect(metric, "pulses_above")),
       available = representation_available & is.finite(value),
       unavailable_reason = dplyr::case_when(
-        optical == "LIGHT" & metric %in% c("MDER", "nvRD") ~
-          "requires MEDI and LIGHT simultaneously",
-        resolution_s >= 300L & stringr::str_detect(metric, "pulses_above") ~
-          "pulse operator unavailable at this epoch",
+        optical == "LIGHT" & metric %in% c("MDER", "nvRD") ~ "requires MEDI and LIGHT simultaneously",
+        resolution_s >= 300L & stringr::str_detect(metric, "pulses_above") ~ "pulse operator unavailable at this sampling interval",
         !is.finite(value) ~ "metric undefined or missing on this analysis unit",
         TRUE ~ NA_character_
       ),
-      is_reference_config =
-        placement == "eye" & optical == "MEDI" & resolution_s == 10L,
+      is_reference_config = placement == "eye" & optical == "MEDI" & resolution_s == 10L,
       metric_scope = dplyr::if_else(
-        metric %in% c("interdaily_stability", "intradaily_variability"),
-        "multiday", "daily"
+        metric %in% c("interdaily_stability", "intradaily_variability"), "multiday", "daily"
       ),
       metric_geometry = dplyr::if_else(metric_class == "timing", "circular_time", "linear")
     ) |>
@@ -319,5 +335,4 @@ core_expand_metric_availability <- function(emitted, metric_types) {
       metric, metric_class, metric_scope, metric_geometry,
       value, available, unavailable_reason, is_reference_config
     )
-  full
 }

@@ -1,55 +1,58 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# One-command Linux build for the final high-resolution extraction run.
+# One-command Linux build for the high-resolution extraction run.
+# Versioned core caches make CORE_FORCE=0 safe after scientific-operator changes.
 export CORE_WORKERS="${CORE_WORKERS:-16}"
-export CORE_FORCE="${CORE_FORCE:-1}"
+export CORE_FORCE="${CORE_FORCE:-0}"
 export REPRO_SITES="${REPRO_SITES:-TUM}"
-# Ubuntu's V8 package otherwise defaults to downloading a static libv8 build,
-# which is slow/unreliable from this ECS. Bootstrap installs libv8-dev.
 export DISABLE_STATIC_LIBV8="${DISABLE_STATIC_LIBV8:-1}"
-# Native R packages such as s2 can otherwise compile vendored C++ code serially.
-# Keep this below the 96-core machine size to avoid oversubscription during restore.
 export MAKEFLAGS="${MAKEFLAGS:--j24}"
 
 mkdir -p logs
-
-# Use --vanilla for the version probe so project-level renv startup messages
-# cannot contaminate the captured version string before the environment restore.
 R_VERSION="$(Rscript --vanilla -e 'cat(as.character(getRversion()))')"
 if [[ "${R_VERSION}" != "4.5.0" ]]; then
   echo "ERROR: this build requires R 4.5.0; found ${R_VERSION}" >&2
   exit 1
 fi
 
-echo "[1/7] Restore/pin R 4.5.0 environment"
+echo "[preflight] Parse all changed scientific entry points before any expensive work"
+Rscript --vanilla -e 'files <- c(
+  "scripts/utils/melidos_io.R", "scripts/utils/protocol_windows.R",
+  "scripts/utils/core_artifacts.R", "scripts/utils/core_context.R",
+  "scripts/01_download_melidos.R", "scripts/04c_prepare_raw_eye_spans.R",
+  "scripts/09_build_core_artifacts.R", "scripts/10_rq1_analysis.R",
+  "scripts/12_rq2_analysis.R", "scripts/13_plot_rq2.R",
+  "scripts/14_rq3_analysis.R", "scripts/15_plot_rq3.R"
+); invisible(lapply(files, parse)); cat("R parse preflight passed for", length(files), "files\n")'
+
+echo "[1/8] Restore/pin R 4.5.0 environment"
 Rscript scripts/00_setup.R
 
-echo "[2/7] Refresh local MeLiDos inventory"
+echo "[2/8] Download/validate MeLiDos inputs, including trial_times"
+Rscript scripts/01_download_melidos.R
+
+echo "[3/8] Refresh local MeLiDos inventory"
 Rscript scripts/02_inventory.R
 
-echo "[3/7] Reproduce upstream metric pipeline on ${REPRO_SITES}"
+echo "[4/8] Reproduce upstream metric pipeline on ${REPRO_SITES}"
 Rscript scripts/03_reproduce_upstream.R
 
-echo "[4/7] Validate upstream reproduction"
+echo "[5/8] Validate upstream reproduction"
 Rscript scripts/04_validate_reproduction.R
 
-echo "[5/7] Validate all ERA5 payloads and date coverage"
+echo "[6/8] Validate all ERA5 payloads and date coverage"
 Rscript scripts/04b_validate_era5_inputs.R
 
-echo "[6/7] Preserve raw near-corneal recording spans"
+echo "[7/8] Preserve raw spans and protocol trial metadata"
 Rscript scripts/04c_prepare_raw_eye_spans.R
 
-echo "[7/7] Build core + ERA5 artifacts with ${CORE_WORKERS} workers"
+echo "[8/8] Build versioned core artifacts with ${CORE_WORKERS} workers"
 CORE_WORKERS="${CORE_WORKERS}" CORE_FORCE="${CORE_FORCE}" Rscript scripts/09_build_core_artifacts.R
 
 echo "Artifact build complete:"
 echo "  data/derived/core/metric_cube.csv.gz"
 echo "  data/derived/core/unit_context.csv.gz"
 echo "  data/derived/core/weather_1min.csv.gz"
-echo "Diagnostics:"
-echo "  logs/core_artifact_summary.csv"
-echo "  logs/era5_input_inventory.csv"
-echo "  logs/era5_qc.csv"
-echo "  logs/era5_missing_study_dates.csv"
-echo "  logs/raw_eye_recording_spans.csv"
+echo "  data/derived/core/core_manifest.csv"
+echo "Diagnostics: logs/core_artifact_summary.csv; logs/protocol_participant_metadata.csv"

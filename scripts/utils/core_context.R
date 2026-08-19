@@ -18,22 +18,21 @@ core_config_daily_context <- function(support_path) {
       .groups = "drop"
     )
 
-  # Raw near-corneal start/end are deliberately preserved separately from the
-  # cleaned full-day support. They are needed to distinguish a true short
-  # recording from the common protocol pattern of partial first/last calendar days.
-  raw_span_path <- "data/interim/core/raw_eye_recording_spans.rds"
-  if (file.exists(raw_span_path)) {
-    raw_span <- readRDS(raw_span_path) |>
+  protocol_path <- "data/interim/core/protocol_participant_metadata.rds"
+  if (file.exists(protocol_path)) {
+    protocol_meta <- readRDS(protocol_path) |>
       dplyr::filter(site %in% unique(support$site))
     participant_meta <- participant_meta |>
-      dplyr::left_join(raw_span, by = c("site", "Id"))
+      dplyr::left_join(protocol_meta, by = c("site", "Id"))
   } else {
     participant_meta <- participant_meta |>
       dplyr::mutate(
-        raw_eye_recording_start = as.POSIXct(NA),
-        raw_eye_recording_end = as.POSIXct(NA),
-        raw_eye_span_hours = NA_real_,
-        raw_eye_calendar_day_count = NA_integer_
+        raw_eye_recording_start = as.POSIXct(NA), raw_eye_recording_end = as.POSIXct(NA),
+        raw_eye_span_hours = NA_real_, raw_eye_calendar_day_count = NA_integer_,
+        protocol_start = as.POSIXct(NA), protocol_end = as.POSIXct(NA),
+        protocol_start_date = as.Date(NA), protocol_end_date = as.Date(NA),
+        protocol_span_hours = NA_real_, protocol_calendar_date_count = NA_integer_,
+        protocol_nominal_7d = NA, protocol_metadata_available = FALSE
       )
   }
 
@@ -49,13 +48,8 @@ core_config_daily_context <- function(support_path) {
     cfg <- cfgs[i, ]
     series <- core_make_series(support, cfg$placement, cfg$optical, cfg$resolution_s)
 
-    # Exact basis needed to reconstruct LightLogR IS/IV for arbitrary later
-    # day subsets without returning to the high-resolution source.
     hourly <- series |>
-      dplyr::transmute(
-        site, Id, Date, Datetime,
-        log_light = LightLogR::log_zero_inflated(MEDI)
-      ) |>
+      dplyr::transmute(site, Id, Date, Datetime, log_light = LightLogR::log_zero_inflated(MEDI)) |>
       dplyr::filter(is.finite(log_light)) |>
       dplyr::mutate(hour = lubridate::hour(Datetime)) |>
       dplyr::group_by(site, Id, Date, hour) |>
@@ -65,10 +59,7 @@ core_config_daily_context <- function(support_path) {
       dplyr::ungroup() |>
       dplyr::mutate(hour_label = sprintf("%02d", hour)) |>
       dplyr::select(-hour) |>
-      tidyr::pivot_wider(
-        names_from = hour_label, values_from = hourly_log_light,
-        names_prefix = "isiv_h"
-      )
+      tidyr::pivot_wider(names_from = hour_label, values_from = hourly_log_light, names_prefix = "isiv_h")
 
     quality <- series |>
       dplyr::group_by(site, Id, Date) |>
@@ -81,15 +72,9 @@ core_config_daily_context <- function(support_path) {
           valid_values = sum(!missing),
           valid_fraction = mean(!missing),
           n_missing_blocks = length(miss_lengths),
-          largest_missing_gap_s = if (length(miss_lengths)) {
-            max(miss_lengths) * cfg$resolution_s
-          } else 0,
-          first_valid_time = if (all(missing)) {
-            as.POSIXct(NA, tz = lubridate::tz(.x$Datetime))
-          } else min(.x$Datetime[!missing], na.rm = TRUE),
-          last_valid_time = if (all(missing)) {
-            as.POSIXct(NA, tz = lubridate::tz(.x$Datetime))
-          } else max(.x$Datetime[!missing], na.rm = TRUE)
+          largest_missing_gap_s = if (length(miss_lengths)) max(miss_lengths) * cfg$resolution_s else 0,
+          first_valid_time = if (all(missing)) as.POSIXct(NA, tz = lubridate::tz(.x$Datetime)) else min(.x$Datetime[!missing]),
+          last_valid_time = if (all(missing)) as.POSIXct(NA, tz = lubridate::tz(.x$Datetime)) else max(.x$Datetime[!missing])
         )
       }) |>
       dplyr::ungroup() |>
@@ -97,6 +82,15 @@ core_config_daily_context <- function(support_path) {
       dplyr::left_join(participant_meta, by = c("site", "Id")) |>
       dplyr::left_join(day_index, by = c("site", "Id", "Date")) |>
       dplyr::mutate(
+        protocol_day_index = dplyr::if_else(
+          protocol_metadata_available & !is.na(protocol_start_date),
+          as.integer(Date - protocol_start_date) + 1L, NA_integer_
+        ),
+        is_within_protocol_interval =
+          protocol_metadata_available & !is.na(protocol_start_date) & !is.na(protocol_end_date) &
+          Date >= protocol_start_date & Date <= protocol_end_date,
+        is_protocol_day1_7 = is_within_protocol_interval & protocol_day_index %in% 1:7,
+        is_protocol_return_date = is_within_protocol_interval & protocol_day_index == 8L,
         support_id = support_id,
         placement = cfg$placement,
         optical = cfg$optical,
@@ -111,6 +105,10 @@ core_config_daily_context <- function(support_path) {
         valid_day_index, support_valid_day_count,
         raw_eye_recording_start, raw_eye_recording_end,
         raw_eye_span_hours, raw_eye_calendar_day_count,
+        protocol_start, protocol_end, protocol_start_date, protocol_end_date,
+        protocol_span_hours, protocol_calendar_date_count, protocol_nominal_7d,
+        protocol_metadata_available, protocol_day_index, is_within_protocol_interval,
+        is_protocol_day1_7, is_protocol_return_date,
         support_recording_start, support_recording_end, support_span_hours,
         placement, optical, resolution_s, is_primary_resolution, config_id,
         expected_values, valid_values, valid_fraction, n_missing_blocks,
@@ -124,18 +122,11 @@ core_config_daily_context <- function(support_path) {
 
 core_finalize_metric_cube <- function(emitted, metric_types) {
   out <- core_expand_metric_availability(emitted, metric_types)
-
-  # MDER/nvRD require both optical channels on the same time support. Any *_medi
-  # lattice deliberately maximizes MEDI support and is therefore not a valid
-  # support for these dual-channel representations; use the matching *_full lattice.
-  needs_full_support <- grepl("_medi$", out$support_id) &
-    out$metric %in% c("MDER", "nvRD")
+  needs_full_support <- grepl("_medi$", out$support_id) & out$metric %in% c("MDER", "nvRD")
   out$available[needs_full_support] <- FALSE
-  out$unavailable_reason[needs_full_support] <-
-    "dual-channel metric requires corresponding *_full support"
+  out$unavailable_reason[needs_full_support] <- "dual-channel metric requires corresponding *_full support"
 
-  support_roles <- core_support_grid() |>
-    dplyr::distinct(support_id, support_role)
+  support_roles <- core_support_grid() |> dplyr::distinct(support_id, support_role)
   out |>
     dplyr::left_join(support_roles, by = "support_id") |>
     dplyr::select(
