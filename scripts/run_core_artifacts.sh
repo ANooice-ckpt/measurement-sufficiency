@@ -8,7 +8,9 @@ export REPRO_SITES="${REPRO_SITES:-TUM}"
 
 mkdir -p logs
 
-R_VERSION="$(Rscript -e 'cat(as.character(getRversion()))')"
+# Use --vanilla for the version probe so project-level renv startup messages
+# cannot contaminate the captured version string before the environment restore.
+R_VERSION="$(Rscript --vanilla -e 'cat(as.character(getRversion()))')"
 if [[ "${R_VERSION}" != "4.5.0" ]]; then
   echo "ERROR: this build requires R 4.5.0; found ${R_VERSION}" >&2
   exit 1
