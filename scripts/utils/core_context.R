@@ -25,7 +25,9 @@ core_config_daily_context <- function(support_path) {
       dplyr::mutate(hour = lubridate::hour(Datetime)) |>
       dplyr::group_by(site, Id, Date, hour) |>
       dplyr::summarise(hourly_log_light = mean(log_light), .groups = "drop") |>
-      tidyr::complete(site, Id, Date, hour = 0:23) |>
+      dplyr::group_by(site, Id, Date) |>
+      tidyr::complete(hour = 0:23) |>
+      dplyr::ungroup() |>
       dplyr::mutate(hour_label = sprintf("%02d", hour)) |>
       dplyr::select(-hour) |>
       tidyr::pivot_wider(
