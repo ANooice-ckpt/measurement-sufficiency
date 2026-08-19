@@ -346,14 +346,14 @@ duration_daily_ref <- duration_daily |>
   ) |>
   summarise(
     n_days_present = n_distinct(Date),
-    reference_available = n_days_present == 7L && all(available & is.finite(value)),
+    reference_available = n_days_present == 7L && all(replace_na(available, FALSE) & is.finite(value)),
     reference_value = if (
-      n_days_present == 7L && all(available & is.finite(value))
+      n_days_present == 7L && all(replace_na(available, FALSE) & is.finite(value))
     ) {
       aggregate_daily_representation(value, first(metric_geometry))
     } else NA_real_,
     reference_unavailable_reason = if (
-      n_days_present == 7L && all(available & is.finite(value))
+      n_days_present == 7L && all(replace_na(available, FALSE) & is.finite(value))
     ) NA_character_ else "one or more daily reference representations unavailable",
     .groups = "drop"
   )
@@ -375,14 +375,14 @@ for (i in seq_len(nrow(duration_windows))) {
     summarise(
       n_days_present = n_distinct(Date),
       candidate_available =
-        n_days_present == w$n_days && all(available & is.finite(value)),
+        n_days_present == w$n_days && all(replace_na(available, FALSE) & is.finite(value)),
       candidate_value = if (
-        n_days_present == w$n_days && all(available & is.finite(value))
+        n_days_present == w$n_days && all(replace_na(available, FALSE) & is.finite(value))
       ) {
         aggregate_daily_representation(value, first(metric_geometry))
       } else NA_real_,
       candidate_unavailable_reason = if (
-        n_days_present == w$n_days && all(available & is.finite(value))
+        n_days_present == w$n_days && all(replace_na(available, FALSE) & is.finite(value))
       ) NA_character_ else "one or more daily candidate representations unavailable",
       .groups = "drop"
     ) |>
@@ -617,7 +617,9 @@ isiv_reconstruction_audit <- duration_isiv_ref |>
   ) |>
   mutate(
     abs_difference = abs(reconstructed_reference_value - core_reference_value),
-    pass = is.finite(abs_difference) & abs_difference <= 1e-8
+    pass =
+      (is.finite(abs_difference) & abs_difference <= 1e-8) |
+      (!is.finite(reconstructed_reference_value) & !is.finite(core_reference_value))
   )
 readr::write_csv(
   isiv_reconstruction_audit,
@@ -640,7 +642,7 @@ pairs <- bind_rows(
 if (!nrow(pairs)) stop("No RQ1 comparison rows were constructed")
 
 reference_basis <- pairs |>
-  filter(pair_available, is.finite(reference_value)) |>
+  filter(is.finite(reference_value)) |>
   distinct(
     comparison_lattice, metric, metric_geometry,
     site, Id, reference_unit_id, reference_value
@@ -670,6 +672,7 @@ canonical <- pairs |>
     by = c("comparison_lattice", "metric", "metric_geometry")
   ) |>
   mutate(
+    zero_or_near_zero = replace_na(zero_or_near_zero, TRUE),
     delta = if_else(
       metric_geometry == "circular_time",
       circular_delta(candidate_value, reference_value),
@@ -910,9 +913,23 @@ readr::write_csv(
 if (any(!geometry_audit$pass)) stop("A >= |B| geometry invariant failed")
 
 support_audit <- canonical |>
+  mutate(
+    expected_support_id = case_when(
+      dimension == "placement" & configuration == "chest" & metric %in% DUAL_CHANNEL_METRICS ~ "eye_chest_full",
+      dimension == "placement" & configuration == "chest" ~ "eye_chest_medi",
+      dimension == "placement" & configuration == "wrist" & metric %in% DUAL_CHANNEL_METRICS ~ "eye_wrist_full",
+      dimension == "placement" & configuration == "wrist" ~ "eye_wrist_medi",
+      dimension == "optical" ~ "eye_full",
+      dimension %in% c("temporal", "duration") & metric %in% DUAL_CHANNEL_METRICS ~ "eye_full",
+      dimension %in% c("temporal", "duration") ~ "eye_medi",
+      TRUE ~ NA_character_
+    ),
+    support_pass = support_id == expected_support_id
+  ) |>
   distinct(
     dimension, configuration, metric, comparison_lattice,
-    support_id, reference_config_id, candidate_config_id
+    support_id, expected_support_id, support_pass,
+    reference_config_id, candidate_config_id
   ) |>
   arrange(dimension, configuration, metric)
 readr::write_csv(
@@ -920,6 +937,7 @@ readr::write_csv(
   file.path(OUT_DIAG, "rq1_support_audit.csv"),
   na = ""
 )
+if (any(!support_audit$support_pass)) stop("RQ1 support-lattice audit failed")
 
 writeLines(
   c(
