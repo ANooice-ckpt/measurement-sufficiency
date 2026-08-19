@@ -8,6 +8,9 @@ export REPRO_SITES="${REPRO_SITES:-TUM}"
 # Ubuntu's V8 package otherwise defaults to downloading a static libv8 build,
 # which is slow/unreliable from this ECS. Bootstrap installs libv8-dev.
 export DISABLE_STATIC_LIBV8="${DISABLE_STATIC_LIBV8:-1}"
+# Native R packages such as s2 can otherwise compile vendored C++ code serially.
+# Keep this below the 96-core machine size to avoid oversubscription during restore.
+export MAKEFLAGS="${MAKEFLAGS:--j24}"
 
 mkdir -p logs
 
