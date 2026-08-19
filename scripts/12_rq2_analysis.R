@@ -7,6 +7,13 @@ suppressPackageStartupMessages({
 # Scientific source of truth: docs/STUDY_SPEC.md and the manuscript RQ2 methods.
 # Inputs are RQ1 smallest-unit distortion plus reusable core artifacts only.
 # This script never returns to the harmonized 10-s source.
+#
+# Runtime design:
+# - mixed-model work is parallelized across independent metric x configuration groups;
+# - each group is checkpointed independently and can be resumed after interruption;
+# - grouped-CV folds are fixed once per group and shared by every model family/outcome;
+# - gamma bootstrap is vectorized within group and parallelized across groups;
+# - BLAS/OpenMP threads are forced to one per worker to avoid oversubscription.
 
 RQ1_DISTORTION <- "data/derived/rq1/rq1_distortion_long.rds"
 CORE_METRICS <- "data/derived/core/metric_cube.csv.gz"
@@ -14,46 +21,59 @@ CORE_CONTEXT <- "data/derived/core/unit_context.csv.gz"
 OUT_DATA <- "data/derived/rq2"
 OUT_RESULTS <- "results/rq2"
 OUT_DIAG <- "results/diagnostics"
+INTERIM <- "data/interim/rq2"
 
 RQ2_BOOT <- suppressWarnings(as.integer(Sys.getenv("RQ2_BOOT", unset = "1000")))
 if (!is.finite(RQ2_BOOT) || RQ2_BOOT < 0L) RQ2_BOOT <- 1000L
 RQ2_CV_FOLDS <- suppressWarnings(as.integer(Sys.getenv("RQ2_CV_FOLDS", unset = "5")))
 if (!is.finite(RQ2_CV_FOLDS) || RQ2_CV_FOLDS < 2L) RQ2_CV_FOLDS <- 5L
 RQ2_RUN_MODELS <- !identical(Sys.getenv("RQ2_RUN_MODELS", unset = "1"), "0")
+RQ2_FORCE <- identical(Sys.getenv("RQ2_FORCE", unset = "0"), "1")
+
+physical_cores <- suppressWarnings(parallel::detectCores(logical = FALSE))
+logical_cores <- suppressWarnings(parallel::detectCores(logical = TRUE))
+if (!is.finite(physical_cores) || physical_cores < 1L) physical_cores <- logical_cores
+if (!is.finite(physical_cores) || physical_cores < 1L) physical_cores <- 2L
+auto_workers <- max(1L, min(12L, as.integer(physical_cores) - 2L))
+requested_workers <- suppressWarnings(as.integer(Sys.getenv("RQ2_WORKERS", unset = as.character(auto_workers))))
+if (!is.finite(requested_workers) || requested_workers < 1L) requested_workers <- auto_workers
+RQ2_WORKERS <- max(1L, min(requested_workers, logical_cores %||% requested_workers))
+RQ2_BATCH_MULT <- suppressWarnings(as.integer(Sys.getenv("RQ2_BATCH_MULT", unset = "2")))
+if (!is.finite(RQ2_BATCH_MULT) || RQ2_BATCH_MULT < 1L) RQ2_BATCH_MULT <- 2L
+
 BOOT_SEED <- 20260820L
 MODEL_SEED <- 20260821L
 PRIMARY_TEMPORAL_S <- c(15L, 20L, 30L, 60L, 300L, 900L, 1800L)
 DUAL_CHANNEL_METRICS <- c("MDER", "nvRD")
 STATE_METRICS <- c("mean_MEDI", "MDER", "frequency_crossing_250")
 NUMERIC_TOL <- 1e-12
+MODEL_CHECKPOINT_VERSION <- paste0("v3_psock_fixedfold_f", RQ2_CV_FOLDS)
+GAMMA_CHECKPOINT_VERSION <- paste0("v2_vectorized_b", RQ2_BOOT)
+MODEL_CKPT_DIR <- file.path(INTERIM, "models", MODEL_CHECKPOINT_VERSION)
+GAMMA_CKPT_DIR <- file.path(INTERIM, "gamma_bootstrap", GAMMA_CHECKPOINT_VERSION)
+
+Sys.setenv(
+  OMP_NUM_THREADS = "1",
+  OPENBLAS_NUM_THREADS = "1",
+  MKL_NUM_THREADS = "1",
+  VECLIB_MAXIMUM_THREADS = "1",
+  NUMEXPR_NUM_THREADS = "1"
+)
 
 for (p in c(RQ1_DISTORTION, CORE_METRICS, CORE_CONTEXT)) {
   if (!file.exists(p)) stop("Missing required input: ", p)
 }
-if (!requireNamespace("nlme", quietly = TRUE)) {
-  stop("RQ2 requires the recommended R package 'nlme'.")
-}
-for (d in c(OUT_DATA, OUT_RESULTS, OUT_DIAG)) {
+if (!requireNamespace("nlme", quietly = TRUE)) stop("RQ2 requires the recommended R package 'nlme'.")
+for (d in c(OUT_DATA, OUT_RESULTS, OUT_DIAG, MODEL_CKPT_DIR, GAMMA_CKPT_DIR)) {
   dir.create(d, recursive = TRUE, showWarnings = FALSE)
 }
 
-message("RQ2: read RQ1 and core artifacts")
-rq1 <- readRDS(RQ1_DISTORTION) |>
-  mutate(Date = as.Date(Date), window_start = as.Date(window_start), window_end = as.Date(window_end))
-cube <- readr::read_csv(CORE_METRICS, show_col_types = FALSE, progress = FALSE) |>
-  mutate(Date = as.Date(Date))
-context <- readr::read_csv(CORE_CONTEXT, show_col_types = FALSE, progress = FALSE) |>
-  mutate(Date = as.Date(Date))
-
-required_rq1 <- c(
-  "dimension", "configuration", "configuration_label", "configuration_order",
-  "comparison_lattice", "support_id", "site", "Id", "analysis_unit_type",
-  "analysis_unit_id", "Date", "window_id", "window_start", "window_end", "n_days",
-  "metric", "metric_class", "metric_geometry", "reference_config_id",
-  "reference_value", "candidate_value", "standardizer", "e", "available"
+message(
+  "RQ2 runtime: workers=", RQ2_WORKERS,
+  ", CV folds=", RQ2_CV_FOLDS,
+  ", gamma bootstrap=", RQ2_BOOT,
+  ", force=", RQ2_FORCE
 )
-missing_rq1 <- setdiff(required_rq1, names(rq1))
-if (length(missing_rq1)) stop("RQ1 distortion object missing columns: ", paste(missing_rq1, collapse = ", "))
 
 safe_mean <- function(x) {
   x <- x[is.finite(x)]
@@ -86,14 +106,88 @@ reference_scale <- function(x, geometry) {
   }
   stats::sd(x)
 }
-
-# Approximate local solar-noon elevation from latitude and day of year. This is a
-# deterministic geometric descriptor available before personal measurement; it is
-# not treated as measured personal light exposure.
 solar_noon_elevation <- function(latitude, day_of_year) {
   decl <- 23.44 * sin(2 * pi * (284 + day_of_year) / 365.25)
   pmax(0, 90 - abs(latitude - decl))
 }
+`%||%` <- function(x, y) if (is.null(x) || length(x) == 0L || all(is.na(x))) y else x
+
+checkpoint_valid <- function(path, version) {
+  if (!file.exists(path)) return(FALSE)
+  x <- tryCatch(readRDS(path), error = function(e) NULL)
+  !is.null(x) && identical(x$checkpoint_version, version) && isTRUE(x$complete)
+}
+
+atomic_save_rds <- function(object, path) {
+  tmp <- paste0(path, ".tmp_", Sys.getpid(), "_", sprintf("%08x", sample.int(.Machine$integer.max, 1L)))
+  saveRDS(object, tmp, compress = FALSE)
+  if (file.exists(path)) unlink(path)
+  ok <- file.rename(tmp, path)
+  if (!ok) {
+    ok <- file.copy(tmp, path, overwrite = TRUE)
+    unlink(tmp)
+  }
+  if (!ok) stop("Could not finalize checkpoint: ", path)
+  invisible(path)
+}
+
+run_in_batches <- function(tasks, runner, workers, label) {
+  if (!length(tasks)) return(list())
+  workers <- max(1L, min(workers, length(tasks)))
+  batch_size <- max(1L, workers * RQ2_BATCH_MULT)
+  chunks <- split(seq_along(tasks), ceiling(seq_along(tasks) / batch_size))
+  out <- vector("list", length(tasks))
+  completed <- 0L
+
+  cl <- NULL
+  if (workers > 1L) {
+    cl <- parallel::makePSOCKcluster(workers)
+    parallel::clusterCall(cl, function() {
+      Sys.setenv(
+        OMP_NUM_THREADS = "1", OPENBLAS_NUM_THREADS = "1",
+        MKL_NUM_THREADS = "1", VECLIB_MAXIMUM_THREADS = "1",
+        NUMEXPR_NUM_THREADS = "1"
+      )
+      NULL
+    })
+  }
+  on_exit <- function() {
+    if (!is.null(cl)) try(parallel::stopCluster(cl), silent = TRUE)
+  }
+
+  tryCatch({
+    for (chunk in chunks) {
+      batch <- tasks[chunk]
+      ans <- if (is.null(cl)) {
+        lapply(batch, runner)
+      } else {
+        parallel::parLapplyLB(cl, batch, runner)
+      }
+      out[chunk] <- ans
+      completed <- completed + length(chunk)
+      message(sprintf("[%s] %d/%d pending tasks completed", label, completed, length(tasks)))
+    }
+  }, finally = on_exit())
+  out
+}
+
+message("RQ2: read RQ1 and core artifacts")
+rq1 <- readRDS(RQ1_DISTORTION) |>
+  mutate(Date = as.Date(Date), window_start = as.Date(window_start), window_end = as.Date(window_end))
+cube <- readr::read_csv(CORE_METRICS, show_col_types = FALSE, progress = FALSE) |>
+  mutate(Date = as.Date(Date))
+context <- readr::read_csv(CORE_CONTEXT, show_col_types = FALSE, progress = FALSE) |>
+  mutate(Date = as.Date(Date))
+
+required_rq1 <- c(
+  "dimension", "configuration", "configuration_label", "configuration_order",
+  "comparison_lattice", "support_id", "site", "Id", "analysis_unit_type",
+  "analysis_unit_id", "Date", "window_id", "window_start", "window_end", "n_days",
+  "metric", "metric_class", "metric_geometry", "reference_config_id",
+  "reference_value", "candidate_value", "standardizer", "e", "available"
+)
+missing_rq1 <- setdiff(required_rq1, names(rq1))
+if (length(missing_rq1)) stop("RQ1 distortion object missing columns: ", paste(missing_rq1, collapse = ", "))
 
 # -----------------------------------------------------------------------------
 # 1. Reference-exposure state and external context for each RQ1 distortion unit
@@ -129,10 +223,7 @@ if (length(missing_external)) {
 }
 
 context_daily <- context |>
-  select(
-    support_id, site, Id, Date, config_id,
-    all_of(external_cols)
-  ) |>
+  select(support_id, site, Id, Date, config_id, all_of(external_cols)) |>
   distinct()
 
 feature_daily <- full_join(
@@ -162,8 +253,6 @@ feature_daily <- full_join(
     solar_noon_elevation_deg
   )
 
-# Daily RQ1 units: context is tied to the exact comparison support and reference
-# configuration used to create e.
 daily_condition <- rq1 |>
   filter(analysis_unit_type == "participant_day") |>
   left_join(
@@ -174,9 +263,6 @@ daily_condition <- rq1 |>
     )
   )
 
-# Participant-level multiday RQ1 units: use the mean daily state/context on the same
-# support/reference configuration. This keeps IS/IV in RQ2 without pretending they
-# have a participant-day exposure state.
 feature_multiday <- feature_daily |>
   group_by(support_id, site, Id, config_id) |>
   summarise(
@@ -201,12 +287,6 @@ multiday_condition <- rq1 |>
     )
   )
 
-# Duration rows use synthetic config IDs, so reconstruct window context from the
-# actual eye-MEDI 10-s core reference on the same support. The primary duration
-# state is how atypical the selected window's mean light level is relative to the
-# participant's seven-day reference, standardized by that participant's day-to-day
-# variation. This varies across contiguous windows and directly represents
-# cross-day exposure-state heterogeneity.
 core_duration_ref_map <- cube |>
   filter(
     analysis_unit_type == "participant_day",
@@ -237,8 +317,7 @@ for (i in seq_len(nrow(duration_units))) {
       config_id == u$config_id
     ) |>
     arrange(Date)
-  win <- all_days |>
-    filter(Date >= u$window_start, Date <= u$window_end)
+  win <- all_days |> filter(Date >= u$window_start, Date <= u$window_end)
 
   ref_level_mean <- safe_mean(all_days$state_level)
   ref_level_sd <- safe_sd(all_days$state_level)
@@ -296,12 +375,7 @@ condition <- bind_rows(daily_condition, multiday_condition, duration_condition) 
     ),
     abs_e = abs(e),
     participant_key = paste(site, Id, sep = "|")
-  )
-
-# Condition bins are metric-specific empirical tertiles of the relevant state.
-# This avoids imposing universal physical cut-points across heterogeneous metrics
-# and supports the manuscript's low/mid/high conditional A-B trajectories.
-condition <- condition |>
+  ) |>
   group_by(dimension, configuration, metric) |>
   mutate(
     state_bin = if (
@@ -344,15 +418,8 @@ conditional_geometry <- condition |>
     p975_e = safe_quantile(e, .975),
     .groups = "drop"
   )
-readr::write_csv(
-  conditional_geometry,
-  file.path(OUT_RESULTS, "rq2_conditional_geometry.csv"),
-  na = ""
-)
+readr::write_csv(conditional_geometry, file.path(OUT_RESULTS, "rq2_conditional_geometry.csv"), na = "")
 
-# Anchor configurations keep Fig. 2 interpretable and the prediction workload
-# finite: both placement alternatives, the optical proxy, and the most demanding
-# primary alternative for each ordered dimension.
 anchor_manifest <- rq1 |>
   filter(available) |>
   distinct(dimension, configuration, configuration_label, configuration_order) |>
@@ -375,8 +442,6 @@ anchor_manifest <- rq1 |>
   )
 readr::write_csv(anchor_manifest, file.path(OUT_RESULTS, "rq2_anchor_configurations.csv"), na = "")
 
-# Algorithmically select one strongly state-dependent example per dimension for
-# Fig. 2a. Score combines magnitude change and signed-location shift.
 example_scores <- conditional_geometry |>
   semi_join(anchor_manifest, by = c("dimension", "configuration")) |>
   filter(state_bin %in% c(1L, 3L)) |>
@@ -401,14 +466,10 @@ example_scores <- conditional_geometry |>
   group_by(dimension) |>
   slice_max(state_shift_score, n = 1L, with_ties = FALSE) |>
   ungroup()
-readr::write_csv(
-  example_scores,
-  file.path(OUT_RESULTS, "rq2_conditional_examples.csv"),
-  na = ""
-)
+readr::write_csv(example_scores, file.path(OUT_RESULTS, "rq2_conditional_examples.csv"), na = "")
 
 # -----------------------------------------------------------------------------
-# 2. Mixed models and external predictability
+# 2. Mixed models and external predictability: parallel + resumable
 # -----------------------------------------------------------------------------
 message("RQ2: mixed models and out-of-sample predictability")
 
@@ -423,134 +484,255 @@ MODEL_FAMILIES <- list(
 )
 MODEL_OUTCOMES <- c(signed = "e", magnitude = "abs_e")
 
-z_train_test <- function(train, test, predictors) {
-  keep <- character()
-  for (p in predictors) {
-    mu <- mean(train[[p]], na.rm = TRUE)
-    sig <- stats::sd(train[[p]], na.rm = TRUE)
-    if (!is.finite(mu) || !is.finite(sig) || sig <= sqrt(.Machine$double.eps)) next
-    train[[p]] <- (train[[p]] - mu) / sig
-    test[[p]] <- (test[[p]] - mu) / sig
-    keep <- c(keep, p)
-  }
-  list(train = train, test = test, predictors = keep)
-}
-
-fit_mixed <- function(dat, outcome, predictors) {
-  if (!length(predictors)) return(list(fit = NULL, random_structure = NA_character_))
-  f <- stats::reformulate(predictors, response = outcome)
-  dat$site <- factor(dat$site)
-  dat$participant_key <- factor(dat$participant_key)
-  ctrl <- nlme::lmeControl(
-    opt = "optim", maxIter = 100L, msMaxIter = 100L,
-    returnObject = TRUE
-  )
-  fit <- tryCatch(
-    suppressWarnings(nlme::lme(
-      fixed = f,
-      random = ~1 | site/participant_key,
-      data = dat,
-      method = "ML",
-      na.action = na.omit,
-      control = ctrl
-    )),
-    error = function(e) NULL
-  )
-  if (!is.null(fit)) return(list(fit = fit, random_structure = "site/participant"))
-
-  fit <- tryCatch(
-    suppressWarnings(nlme::lme(
-      fixed = f,
-      random = ~1 | participant_key,
-      data = dat,
-      method = "ML",
-      na.action = na.omit,
-      control = ctrl
-    )),
-    error = function(e) NULL
-  )
-  list(
-    fit = fit,
-    random_structure = if (is.null(fit)) NA_character_ else "participant"
-  )
-}
-
-predict_fixed <- function(fit, newdata) {
-  if (is.null(fit)) return(rep(NA_real_, nrow(newdata)))
-  tryCatch(
-    as.numeric(stats::predict(fit, newdata = newdata, level = 0)),
-    error = function(e) rep(NA_real_, nrow(newdata))
-  )
-}
-
-performance_metrics <- function(obs, pred) {
-  ok <- is.finite(obs) & is.finite(pred)
-  obs <- obs[ok]
-  pred <- pred[ok]
-  if (length(obs) < 2L) {
-    return(tibble(n_test = length(obs), rmse = NA_real_, mae = NA_real_, r2 = NA_real_))
-  }
-  sst <- sum((obs - mean(obs))^2)
+empty_model_coefficients <- function() {
   tibble(
-    n_test = length(obs),
-    rmse = sqrt(mean((obs - pred)^2)),
-    mae = mean(abs(obs - pred)),
-    r2 = if (is.finite(sst) && sst > 0) 1 - sum((obs - pred)^2) / sst else NA_real_
+    dimension = character(), configuration = character(), configuration_label = character(),
+    metric = character(), metric_class = character(), outcome = character(),
+    model_family = character(), random_structure = character(), term = character(),
+    estimate = numeric(), std_error = numeric(), df = numeric(), t_value = numeric(),
+    p_value = numeric()
+  )
+}
+empty_model_performance <- function() {
+  tibble(
+    dimension = character(), configuration = character(), configuration_label = character(),
+    metric = character(), metric_class = character(), outcome = character(),
+    model_family = character(), validation_scheme = character(),
+    n_participants = integer(), n_sites = integer(), n_test = integer(),
+    rmse = numeric(), mae = numeric(), r2 = numeric()
   )
 }
 
-make_participant_folds <- function(dat, k) {
-  p <- dat |>
-    distinct(site, participant_key) |>
-    group_by(site) |>
-    mutate(
-      random_order = sample.int(n()),
-      fold = ((rank(random_order, ties.method = "first") - 1L) %% k) + 1L
-    ) |>
-    ungroup() |>
-    select(site, participant_key, fold)
-  left_join(dat, p, by = c("site", "participant_key"))
-}
+# The worker is deliberately self-contained so PSOCK workers do not need the
+# parent global environment. This works on Windows as well as Unix-like systems.
+run_model_task <- function(task) {
+  t0 <- proc.time()[[3]]
+  tryCatch({
+    dat0 <- task$data
+    meta <- task$meta
 
-cv_predictions <- function(dat, outcome, predictors, scheme, k = RQ2_CV_FOLDS) {
-  out <- vector("list", 0L)
-  idx <- 0L
+    z_train_test <- function(train, test, predictors) {
+      keep <- character()
+      for (p in predictors) {
+        mu <- mean(train[[p]], na.rm = TRUE)
+        sig <- stats::sd(train[[p]], na.rm = TRUE)
+        if (!is.finite(mu) || !is.finite(sig) || sig <= sqrt(.Machine$double.eps)) next
+        train[[p]] <- (train[[p]] - mu) / sig
+        test[[p]] <- (test[[p]] - mu) / sig
+        keep <- c(keep, p)
+      }
+      list(train = train, test = test, predictors = keep)
+    }
 
-  if (scheme == "participant_grouped") {
-    d <- make_participant_folds(dat, k)
-    split_values <- sort(unique(d$fold))
-    split_col <- "fold"
-  } else if (scheme == "leave_site_out") {
-    d <- dat |> mutate(.site_split = as.character(site))
-    split_values <- sort(unique(d$.site_split))
-    split_col <- ".site_split"
-  } else stop("Unknown CV scheme: ", scheme)
+    fit_mixed <- function(dat, outcome, predictors) {
+      if (!length(predictors)) return(list(fit = NULL, random_structure = NA_character_))
+      f <- stats::reformulate(predictors, response = outcome)
+      dat$site <- factor(dat$site)
+      dat$participant_key <- factor(dat$participant_key)
+      ctrl <- nlme::lmeControl(
+        opt = "optim", maxIter = 100L, msMaxIter = 100L,
+        returnObject = TRUE
+      )
+      fit <- tryCatch(
+        suppressWarnings(nlme::lme(
+          fixed = f,
+          random = ~1 | site/participant_key,
+          data = dat,
+          method = "ML",
+          na.action = na.omit,
+          control = ctrl
+        )),
+        error = function(e) NULL
+      )
+      if (!is.null(fit)) return(list(fit = fit, random_structure = "site/participant"))
+      fit <- tryCatch(
+        suppressWarnings(nlme::lme(
+          fixed = f,
+          random = ~1 | participant_key,
+          data = dat,
+          method = "ML",
+          na.action = na.omit,
+          control = ctrl
+        )),
+        error = function(e) NULL
+      )
+      list(fit = fit, random_structure = if (is.null(fit)) NA_character_ else "participant")
+    }
 
-  for (s in split_values) {
-    test_flag <- d[[split_col]] == s
-    train <- d[!test_flag, , drop = FALSE]
-    test <- d[test_flag, , drop = FALSE]
-    if (
-      nrow(train) < 20L || nrow(test) < 2L ||
-      n_distinct(train$participant_key) < 5L ||
-      n_distinct(train$site) < 2L
-    ) next
+    predict_fixed <- function(fit, newdata) {
+      if (is.null(fit)) return(rep(NA_real_, nrow(newdata)))
+      tryCatch(
+        as.numeric(stats::predict(fit, newdata = newdata, level = 0)),
+        error = function(e) rep(NA_real_, nrow(newdata))
+      )
+    }
 
-    scaled <- z_train_test(train, test, predictors)
-    if (!length(scaled$predictors)) next
-    fitted <- fit_mixed(scaled$train, outcome, scaled$predictors)
-    pred <- predict_fixed(fitted$fit, scaled$test)
+    perf <- function(obs, pred) {
+      ok <- is.finite(obs) & is.finite(pred)
+      obs <- obs[ok]
+      pred <- pred[ok]
+      if (length(obs) < 2L) {
+        return(data.frame(n_test = length(obs), rmse = NA_real_, mae = NA_real_, r2 = NA_real_))
+      }
+      sst <- sum((obs - mean(obs))^2)
+      data.frame(
+        n_test = length(obs),
+        rmse = sqrt(mean((obs - pred)^2)),
+        mae = mean(abs(obs - pred)),
+        r2 = if (is.finite(sst) && sst > 0) 1 - sum((obs - pred)^2) / sst else NA_real_
+      )
+    }
 
-    idx <- idx + 1L
-    out[[idx]] <- tibble(
-      scheme = scheme,
-      split = as.character(s),
-      observed = scaled$test[[outcome]],
-      predicted = pred,
-      random_structure = fitted$random_structure
+    # One deterministic participant fold map per metric x configuration group.
+    # All model families and both outcomes use this same map.
+    make_fold_map <- function(dat, k, seed) {
+      p <- unique(dat[c("site", "participant_key")])
+      p$fold <- NA_integer_
+      set.seed(seed)
+      for (s in sort(unique(p$site))) {
+        ii <- which(p$site == s)
+        ord <- sample(ii, length(ii), replace = FALSE)
+        p$fold[ord] <- ((seq_along(ord) - 1L) %% k) + 1L
+      }
+      p
+    }
+
+    cv_performance <- function(dat, outcome, predictors, scheme, fold_map) {
+      if (scheme == "participant_grouped") {
+        d <- merge(dat, fold_map, by = c("site", "participant_key"), all.x = TRUE, sort = FALSE)
+        split_values <- sort(unique(d$fold[is.finite(d$fold)]))
+        split_vector <- d$fold
+      } else if (scheme == "leave_site_out") {
+        d <- dat
+        split_values <- sort(unique(as.character(d$site)))
+        split_vector <- as.character(d$site)
+      } else stop("Unknown CV scheme")
+
+      obs_all <- numeric()
+      pred_all <- numeric()
+      structures <- character()
+      for (s in split_values) {
+        test_flag <- split_vector == s
+        train <- d[!test_flag, , drop = FALSE]
+        test <- d[test_flag, , drop = FALSE]
+        if (
+          nrow(train) < 20L || nrow(test) < 2L ||
+          length(unique(train$participant_key)) < 5L ||
+          length(unique(train$site)) < 2L
+        ) next
+        scaled <- z_train_test(train, test, predictors)
+        if (!length(scaled$predictors)) next
+        fitted <- fit_mixed(scaled$train, outcome, scaled$predictors)
+        pred <- predict_fixed(fitted$fit, scaled$test)
+        obs_all <- c(obs_all, scaled$test[[outcome]])
+        pred_all <- c(pred_all, pred)
+        structures <- c(structures, fitted$random_structure)
+      }
+      list(
+        performance = perf(obs_all, pred_all),
+        random_structure = paste(sort(unique(na.omit(structures))), collapse = "+")
+      )
+    }
+
+    fold_map <- make_fold_map(dat0, task$cv_folds, task$seed)
+    coef_rows <- list()
+    perf_rows <- list()
+    ci <- 0L
+    pi <- 0L
+
+    for (outcome_name in names(task$model_outcomes)) {
+      outcome <- task$model_outcomes[[outcome_name]]
+      for (family in names(task$model_families)) {
+        predictors <- task$model_families[[family]]
+
+        scaled_full <- z_train_test(dat0, dat0, predictors)
+        fit_full <- fit_mixed(scaled_full$train, outcome, scaled_full$predictors)
+        if (!is.null(fit_full$fit)) {
+          tt <- summary(fit_full$fit)$tTable
+          ci <- ci + 1L
+          coef_rows[[ci]] <- data.frame(
+            dimension = meta$dimension,
+            configuration = meta$configuration,
+            configuration_label = meta$configuration_label,
+            metric = meta$metric,
+            metric_class = meta$metric_class,
+            outcome = outcome_name,
+            model_family = family,
+            random_structure = fit_full$random_structure,
+            term = rownames(tt),
+            estimate = tt[, "Value"],
+            std_error = tt[, "Std.Error"],
+            df = tt[, "DF"],
+            t_value = tt[, "t-value"],
+            p_value = tt[, "p-value"],
+            row.names = NULL,
+            check.names = FALSE
+          )
+        }
+
+        for (scheme in c("participant_grouped", "leave_site_out")) {
+          cv <- cv_performance(dat0, outcome, predictors, scheme, fold_map)
+          pp <- cv$performance
+          pi <- pi + 1L
+          perf_rows[[pi]] <- data.frame(
+            dimension = meta$dimension,
+            configuration = meta$configuration,
+            configuration_label = meta$configuration_label,
+            metric = meta$metric,
+            metric_class = meta$metric_class,
+            outcome = outcome_name,
+            model_family = family,
+            validation_scheme = scheme,
+            n_participants = length(unique(dat0$participant_key)),
+            n_sites = length(unique(dat0$site)),
+            n_test = pp$n_test,
+            rmse = pp$rmse,
+            mae = pp$mae,
+            r2 = pp$r2,
+            row.names = NULL
+          )
+        }
+      }
+    }
+
+    coefficient_df <- if (length(coef_rows)) do.call(rbind, coef_rows) else data.frame()
+    performance_df <- if (length(perf_rows)) do.call(rbind, perf_rows) else data.frame()
+    elapsed <- proc.time()[[3]] - t0
+    audit <- data.frame(
+      group_index = task$group_index,
+      dimension = meta$dimension,
+      configuration = meta$configuration,
+      metric = meta$metric,
+      n_rows = nrow(dat0),
+      n_participants = length(unique(dat0$participant_key)),
+      n_sites = length(unique(dat0$site)),
+      n_coefficient_rows = nrow(coefficient_df),
+      n_performance_rows = nrow(performance_df),
+      elapsed_seconds = elapsed,
+      status = "completed",
+      error = NA_character_,
+      stringsAsFactors = FALSE
     )
-  }
-  bind_rows(out)
+    object <- list(
+      checkpoint_version = task$checkpoint_version,
+      complete = TRUE,
+      coefficients = coefficient_df,
+      performance = performance_df,
+      audit = audit
+    )
+    tmp <- paste0(task$checkpoint_path, ".tmp_", Sys.getpid())
+    saveRDS(object, tmp, compress = FALSE)
+    if (file.exists(task$checkpoint_path)) unlink(task$checkpoint_path)
+    ok <- file.rename(tmp, task$checkpoint_path)
+    if (!ok) {
+      ok <- file.copy(tmp, task$checkpoint_path, overwrite = TRUE)
+      unlink(tmp)
+    }
+    if (!ok) stop("Could not write model checkpoint")
+    list(ok = TRUE, checkpoint_path = task$checkpoint_path, error = NA_character_)
+  }, error = function(e) {
+    list(ok = FALSE, checkpoint_path = task$checkpoint_path, error = conditionMessage(e))
+  })
 }
 
 model_anchor <- condition |>
@@ -561,19 +743,17 @@ model_anchor <- condition |>
   )
 
 model_groups <- model_anchor |>
-  distinct(
-    dimension, configuration, configuration_label,
-    metric, metric_class
-  ) |>
-  arrange(dimension, configuration, metric)
+  distinct(dimension, configuration, configuration_label, metric, metric_class) |>
+  arrange(dimension, configuration, metric) |>
+  mutate(group_index = row_number())
 
-model_coef_list <- vector("list", 0L)
-model_perf_list <- vector("list", 0L)
-coef_i <- 0L
-perf_i <- 0L
+model_tasks <- list()
+model_task_manifest <- list()
+model_ineligible <- list()
+mt <- 0L
+mi <- 0L
 
-if (RQ2_RUN_MODELS) {
-  set.seed(MODEL_SEED)
+if (RQ2_RUN_MODELS && nrow(model_groups)) {
   for (gi in seq_len(nrow(model_groups))) {
     g <- model_groups[gi, ]
     dat0 <- model_anchor |>
@@ -585,11 +765,7 @@ if (RQ2_RUN_MODELS) {
       select(
         site, Id, participant_key, e, abs_e, primary_state_raw,
         all_of(EXTERNAL_PREDICTORS)
-      )
-
-    # Fair model-family comparison uses the same complete-case rows for all three
-    # predictor sets within a metric x anchor-configuration group.
-    dat0 <- dat0 |>
+      ) |>
       filter(
         if_all(
           all_of(c("e", "abs_e", "primary_state_raw", EXTERNAL_PREDICTORS)),
@@ -597,87 +773,107 @@ if (RQ2_RUN_MODELS) {
         )
       )
 
-    if (
-      nrow(dat0) < 40L ||
-      n_distinct(dat0$participant_key) < 10L ||
-      n_distinct(dat0$site) < 3L
-    ) next
+    eligible <-
+      nrow(dat0) >= 40L &&
+      n_distinct(dat0$participant_key) >= 10L &&
+      n_distinct(dat0$site) >= 3L
 
-    for (outcome_name in names(MODEL_OUTCOMES)) {
-      outcome <- MODEL_OUTCOMES[[outcome_name]]
-      for (family in names(MODEL_FAMILIES)) {
-        predictors <- MODEL_FAMILIES[[family]]
+    ckpt <- file.path(MODEL_CKPT_DIR, sprintf("group_%04d.rds", g$group_index))
+    if (!eligible) {
+      mi <- mi + 1L
+      model_ineligible[[mi]] <- tibble(
+        group_index = g$group_index,
+        dimension = g$dimension,
+        configuration = g$configuration,
+        metric = g$metric,
+        n_rows = nrow(dat0),
+        n_participants = n_distinct(dat0$participant_key),
+        n_sites = n_distinct(dat0$site),
+        n_coefficient_rows = 0L,
+        n_performance_rows = 0L,
+        elapsed_seconds = 0,
+        status = "ineligible",
+        error = "requires >=40 complete rows, >=10 participants, and >=3 sites",
+        checkpoint_reused = FALSE
+      )
+      next
+    }
 
-        # Full-data model for coefficient table.
-        scaled_full <- z_train_test(dat0, dat0, predictors)
-        fit_full <- fit_mixed(scaled_full$train, outcome, scaled_full$predictors)
-        if (!is.null(fit_full$fit)) {
-          tt <- summary(fit_full$fit)$tTable
-          coef_i <- coef_i + 1L
-          model_coef_list[[coef_i]] <- tibble(
-            dimension = g$dimension,
-            configuration = g$configuration,
-            configuration_label = g$configuration_label,
-            metric = g$metric,
-            metric_class = g$metric_class,
-            outcome = outcome_name,
-            model_family = family,
-            random_structure = fit_full$random_structure,
-            term = rownames(tt),
-            estimate = tt[, "Value"],
-            std_error = tt[, "Std.Error"],
-            df = tt[, "DF"],
-            t_value = tt[, "t-value"],
-            p_value = tt[, "p-value"]
-          )
-        }
-
-        for (scheme in c("participant_grouped", "leave_site_out")) {
-          preds <- cv_predictions(dat0, outcome, predictors, scheme)
-          if (!nrow(preds)) next
-          perf <- performance_metrics(preds$observed, preds$predicted)
-          perf_i <- perf_i + 1L
-          model_perf_list[[perf_i]] <- bind_cols(
-            tibble(
-              dimension = g$dimension,
-              configuration = g$configuration,
-              configuration_label = g$configuration_label,
-              metric = g$metric,
-              metric_class = g$metric_class,
-              outcome = outcome_name,
-              model_family = family,
-              validation_scheme = scheme,
-              n_participants = n_distinct(dat0$participant_key),
-              n_sites = n_distinct(dat0$site)
-            ),
-            perf
-          )
-        }
-      }
+    reused <- !RQ2_FORCE && checkpoint_valid(ckpt, MODEL_CHECKPOINT_VERSION)
+    mt <- mt + 1L
+    model_task_manifest[[mt]] <- tibble(
+      group_index = g$group_index,
+      checkpoint_path = ckpt,
+      checkpoint_reused = reused
+    )
+    if (!reused) {
+      model_tasks[[length(model_tasks) + 1L]] <- list(
+        group_index = g$group_index,
+        meta = list(
+          dimension = g$dimension,
+          configuration = g$configuration,
+          configuration_label = g$configuration_label,
+          metric = g$metric,
+          metric_class = g$metric_class
+        ),
+        data = as.data.frame(dat0),
+        cv_folds = RQ2_CV_FOLDS,
+        seed = MODEL_SEED + g$group_index * 1009L,
+        model_families = MODEL_FAMILIES,
+        model_outcomes = MODEL_OUTCOMES,
+        checkpoint_version = MODEL_CHECKPOINT_VERSION,
+        checkpoint_path = ckpt
+      )
     }
   }
 }
 
-model_coefficients <- bind_rows(model_coef_list)
-model_performance <- bind_rows(model_perf_list)
-if (!nrow(model_coefficients)) {
-  model_coefficients <- tibble(
-    dimension = character(), configuration = character(), configuration_label = character(),
-    metric = character(), metric_class = character(), outcome = character(),
-    model_family = character(), random_structure = character(), term = character(),
-    estimate = numeric(), std_error = numeric(), df = numeric(), t_value = numeric(),
-    p_value = numeric()
-  )
+model_task_manifest <- bind_rows(model_task_manifest)
+model_ineligible <- bind_rows(model_ineligible)
+reused_n <- if (nrow(model_task_manifest)) sum(model_task_manifest$checkpoint_reused) else 0L
+message(
+  "RQ2 models: groups=", nrow(model_groups),
+  ", eligible=", nrow(model_task_manifest),
+  ", reused=", reused_n,
+  ", pending=", length(model_tasks)
+)
+
+model_run_results <- if (RQ2_RUN_MODELS) {
+  run_in_batches(model_tasks, run_model_task, RQ2_WORKERS, "models")
+} else list()
+model_errors <- keep(model_run_results, ~!isTRUE(.x$ok))
+if (length(model_errors)) {
+  err_tbl <- map_dfr(model_errors, ~tibble(checkpoint_path = .x$checkpoint_path, error = .x$error))
+  readr::write_csv(err_tbl, file.path(OUT_DIAG, "rq2_model_worker_errors.csv"), na = "")
+  stop("One or more RQ2 model workers failed; inspect results/diagnostics/rq2_model_worker_errors.csv")
 }
-if (!nrow(model_performance)) {
-  model_performance <- tibble(
-    dimension = character(), configuration = character(), configuration_label = character(),
-    metric = character(), metric_class = character(), outcome = character(),
-    model_family = character(), validation_scheme = character(),
-    n_participants = integer(), n_sites = integer(), n_test = integer(),
-    rmse = numeric(), mae = numeric(), r2 = numeric()
-  )
+
+model_objects <- list()
+if (nrow(model_task_manifest)) {
+  for (i in seq_len(nrow(model_task_manifest))) {
+    p <- model_task_manifest$checkpoint_path[i]
+    if (!checkpoint_valid(p, MODEL_CHECKPOINT_VERSION)) {
+      stop("Expected model checkpoint is missing or invalid: ", p)
+    }
+    model_objects[[i]] <- readRDS(p)
+  }
 }
+
+coef_parts <- map(model_objects, "coefficients")
+perf_parts <- map(model_objects, "performance")
+model_coefficients <- bind_rows(coef_parts)
+model_performance <- bind_rows(perf_parts)
+if (!nrow(model_coefficients)) model_coefficients <- empty_model_coefficients()
+if (!nrow(model_performance)) model_performance <- empty_model_performance()
+
+model_audit_completed <- map_dfr(seq_along(model_objects), function(i) {
+  z <- as_tibble(model_objects[[i]]$audit)
+  z$checkpoint_reused <- model_task_manifest$checkpoint_reused[i]
+  z
+})
+model_audit <- bind_rows(model_audit_completed, model_ineligible) |>
+  arrange(group_index)
+readr::write_csv(model_audit, file.path(OUT_DIAG, "rq2_model_task_audit.csv"), na = "")
 readr::write_csv(model_coefficients, file.path(OUT_RESULTS, "rq2_model_coefficients.csv"), na = "")
 readr::write_csv(model_performance, file.path(OUT_RESULTS, "rq2_model_performance.csv"), na = "")
 
@@ -696,10 +892,7 @@ cell <- function(z, prefix) {
       all_of(cell_keys), Date, metric_class, metric_geometry,
       value, available, unavailable_reason
     ) |>
-    rename_with(
-      ~paste0(prefix, .x),
-      c("value", "available", "unavailable_reason")
-    )
+    rename_with(~paste0(prefix, .x), c("value", "available", "unavailable_reason"))
 }
 
 make_gamma_cells <- function(z00, za0, z0b, zab, dimension_pair,
@@ -747,7 +940,6 @@ make_gamma_cells <- function(z00, za0, z0b, zab, dimension_pair,
 gamma_blocks <- vector("list", 0L)
 gb <- 0L
 
-# Placement x optical: requires the corresponding *_full support.
 for (pos in c("chest", "wrist")) {
   support <- paste0("eye_", pos, "_full")
   z <- cube |>
@@ -772,13 +964,12 @@ for (pos in c("chest", "wrist")) {
   )
 }
 
-# Placement x temporal: use maximum pairwise support, with *_full only for the two
-# intrinsically dual-channel target representations.
+all_metrics <- unique(cube$metric)
 for (pos in c("chest", "wrist")) {
   for (r in PRIMARY_TEMPORAL_S) {
     for (support_type in c("medi", "full")) {
       support <- paste0("eye_", pos, "_", support_type)
-      metric_filter <- if (support_type == "full") DUAL_CHANNEL_METRICS else setdiff(unique(cube$metric), DUAL_CHANNEL_METRICS)
+      metric_filter <- if (support_type == "full") DUAL_CHANNEL_METRICS else setdiff(all_metrics, DUAL_CHANNEL_METRICS)
       z <- cube |>
         filter(
           support_id == support,
@@ -805,8 +996,6 @@ for (pos in c("chest", "wrist")) {
   }
 }
 
-# Optical x temporal: one common full-information support. LIGHT-only unavailable
-# representations remain unavailable rather than being assigned extreme gamma.
 for (r in PRIMARY_TEMPORAL_S) {
   z <- cube |>
     filter(
@@ -833,7 +1022,6 @@ for (r in PRIMARY_TEMPORAL_S) {
 gamma_cells <- bind_rows(gamma_blocks)
 if (!nrow(gamma_cells)) stop("No observable RQ2 joint configuration cells were constructed")
 
-# Standardizers are fixed within an interaction lattice and target representation.
 gamma_standardizers <- gamma_cells |>
   filter(is.finite(m00)) |>
   distinct(
@@ -851,11 +1039,7 @@ gamma_standardizers <- gamma_cells |>
       !is.finite(standardizer) |
       standardizer <= sqrt(.Machine$double.eps)
   )
-readr::write_csv(
-  gamma_standardizers,
-  file.path(OUT_DIAG, "rq2_gamma_standardizer_audit.csv"),
-  na = ""
-)
+readr::write_csv(gamma_standardizers, file.path(OUT_DIAG, "rq2_gamma_standardizer_audit.csv"), na = "")
 
 gamma_long <- gamma_cells |>
   left_join(
@@ -888,55 +1072,18 @@ gamma_long <- gamma_cells |>
     marginal_a_at_b = if_else(available, marginal_a_at_b_delta / standardizer, NA_real_),
     participant_key = paste(site, Id, sep = "|")
   )
-
 saveRDS(gamma_long, file.path(OUT_DATA, "rq2_gamma_long.rds"), compress = "xz")
-
-bootstrap_gamma <- function(g, B = RQ2_BOOT) {
-  site_counts <- g |>
-    distinct(site, Id) |>
-    count(site, name = "n_participants")
-  supported <-
-    B > 0L &&
-    n_distinct(g$participant_key) >= 2L &&
-    any(site_counts$n_participants > 1L)
-  if (!supported) {
-    return(tibble(
-      bootstrap_supported = FALSE,
-      R_ci_low = NA_real_, R_ci_high = NA_real_,
-      Q_ci_low = NA_real_, Q_ci_high = NA_real_
-    ))
-  }
-
-  clusters <- g |>
-    group_by(site, Id) |>
-    summarise(sum_g = sum(gamma), sum_abs_g = sum(abs(gamma)), n = n(), .groups = "drop")
-  by_site <- split(clusters, clusters$site)
-  vals <- replicate(B, {
-    sampled <- map_dfr(by_site, function(z) {
-      z[sample.int(nrow(z), nrow(z), replace = TRUE), , drop = FALSE]
-    })
-    c(
-      R = sum(sampled$sum_g) / sum(sampled$n),
-      Q = sum(sampled$sum_abs_g) / sum(sampled$n)
-    )
-  })
-  tibble(
-    bootstrap_supported = TRUE,
-    R_ci_low = safe_quantile(vals["R", ], .025),
-    R_ci_high = safe_quantile(vals["R", ], .975),
-    Q_ci_low = safe_quantile(vals["Q", ], .025),
-    Q_ci_high = safe_quantile(vals["Q", ], .975)
-  )
-}
 
 gamma_available <- gamma_long |> filter(available, is.finite(gamma))
 
+gamma_group_keys <- c(
+  "dimension_pair", "a_dimension", "a_configuration", "a_configuration_label",
+  "b_dimension", "b_configuration", "b_configuration_label",
+  "interaction_lattice", "metric", "metric_class", "metric_geometry"
+)
+
 gamma_summary_base <- gamma_available |>
-  group_by(
-    dimension_pair, a_dimension, a_configuration, a_configuration_label,
-    b_dimension, b_configuration, b_configuration_label,
-    interaction_lattice, metric, metric_class, metric_geometry
-  ) |>
+  group_by(across(all_of(gamma_group_keys))) |>
   summarise(
     n_participants = n_distinct(participant_key),
     n_units = n(),
@@ -952,25 +1099,131 @@ gamma_summary_base <- gamma_available |>
     .groups = "drop"
   )
 
-set.seed(BOOT_SEED)
-gamma_cis <- gamma_available |>
-  group_by(
-    dimension_pair, a_dimension, a_configuration, a_configuration_label,
-    b_dimension, b_configuration, b_configuration_label,
-    interaction_lattice, metric, metric_class, metric_geometry
-  ) |>
-  group_modify(~bootstrap_gamma(.x, B = RQ2_BOOT)) |>
-  ungroup()
+# Pre-aggregate participant clusters before sending bootstrap work to workers.
+gamma_clusters <- gamma_available |>
+  group_by(across(all_of(gamma_group_keys)), site, Id) |>
+  summarise(
+    sum_g = sum(gamma),
+    sum_abs_g = sum(abs(gamma)),
+    n = n(),
+    .groups = "drop"
+  )
+
+gamma_nested <- gamma_clusters |>
+  group_by(across(all_of(gamma_group_keys))) |>
+  nest() |>
+  ungroup() |>
+  mutate(group_index = row_number())
+
+run_gamma_task <- function(task) {
+  tryCatch({
+    z <- task$data
+    B <- task$B
+    site_counts <- table(z$site)
+    supported <-
+      B > 0L &&
+      nrow(z) >= 2L &&
+      any(site_counts > 1L)
+
+    if (!supported) {
+      ci <- data.frame(
+        bootstrap_supported = FALSE,
+        R_ci_low = NA_real_, R_ci_high = NA_real_,
+        Q_ci_low = NA_real_, Q_ci_high = NA_real_
+      )
+    } else {
+      set.seed(task$seed)
+      total_g <- numeric(B)
+      total_abs <- numeric(B)
+      total_n <- numeric(B)
+      for (s in sort(unique(z$site))) {
+        zs <- z[z$site == s, , drop = FALSE]
+        ns <- nrow(zs)
+        idx <- matrix(sample.int(ns, ns * B, replace = TRUE), nrow = ns, ncol = B)
+        total_g <- total_g + colSums(matrix(zs$sum_g[idx], nrow = ns, ncol = B))
+        total_abs <- total_abs + colSums(matrix(zs$sum_abs_g[idx], nrow = ns, ncol = B))
+        total_n <- total_n + colSums(matrix(zs$n[idx], nrow = ns, ncol = B))
+      }
+      r <- total_g / total_n
+      q <- total_abs / total_n
+      ci <- data.frame(
+        bootstrap_supported = TRUE,
+        R_ci_low = unname(stats::quantile(r, .025, names = FALSE, type = 7)),
+        R_ci_high = unname(stats::quantile(r, .975, names = FALSE, type = 7)),
+        Q_ci_low = unname(stats::quantile(q, .025, names = FALSE, type = 7)),
+        Q_ci_high = unname(stats::quantile(q, .975, names = FALSE, type = 7))
+      )
+    }
+    object <- list(
+      checkpoint_version = task$checkpoint_version,
+      complete = TRUE,
+      ci = ci
+    )
+    tmp <- paste0(task$checkpoint_path, ".tmp_", Sys.getpid())
+    saveRDS(object, tmp, compress = FALSE)
+    if (file.exists(task$checkpoint_path)) unlink(task$checkpoint_path)
+    ok <- file.rename(tmp, task$checkpoint_path)
+    if (!ok) {
+      ok <- file.copy(tmp, task$checkpoint_path, overwrite = TRUE)
+      unlink(tmp)
+    }
+    if (!ok) stop("Could not write gamma bootstrap checkpoint")
+    list(ok = TRUE, checkpoint_path = task$checkpoint_path, error = NA_character_)
+  }, error = function(e) {
+    list(ok = FALSE, checkpoint_path = task$checkpoint_path, error = conditionMessage(e))
+  })
+}
+
+gamma_tasks <- list()
+gamma_manifest <- vector("list", nrow(gamma_nested))
+for (i in seq_len(nrow(gamma_nested))) {
+  ckpt <- file.path(GAMMA_CKPT_DIR, sprintf("group_%04d.rds", i))
+  reused <- !RQ2_FORCE && checkpoint_valid(ckpt, GAMMA_CHECKPOINT_VERSION)
+  gamma_manifest[[i]] <- tibble(group_index = i, checkpoint_path = ckpt, checkpoint_reused = reused)
+  if (!reused) {
+    gamma_tasks[[length(gamma_tasks) + 1L]] <- list(
+      data = as.data.frame(gamma_nested$data[[i]]),
+      B = RQ2_BOOT,
+      seed = BOOT_SEED + i * 1013L,
+      checkpoint_version = GAMMA_CHECKPOINT_VERSION,
+      checkpoint_path = ckpt
+    )
+  }
+}
+gamma_manifest <- bind_rows(gamma_manifest)
+message(
+  "RQ2 gamma bootstrap: groups=", nrow(gamma_nested),
+  ", reused=", sum(gamma_manifest$checkpoint_reused),
+  ", pending=", length(gamma_tasks)
+)
+
+gamma_run_results <- run_in_batches(gamma_tasks, run_gamma_task, RQ2_WORKERS, "gamma bootstrap")
+gamma_errors <- keep(gamma_run_results, ~!isTRUE(.x$ok))
+if (length(gamma_errors)) {
+  err_tbl <- map_dfr(gamma_errors, ~tibble(checkpoint_path = .x$checkpoint_path, error = .x$error))
+  readr::write_csv(err_tbl, file.path(OUT_DIAG, "rq2_gamma_worker_errors.csv"), na = "")
+  stop("One or more RQ2 gamma workers failed; inspect results/diagnostics/rq2_gamma_worker_errors.csv")
+}
+
+gamma_ci_rows <- vector("list", nrow(gamma_nested))
+for (i in seq_len(nrow(gamma_nested))) {
+  p <- gamma_manifest$checkpoint_path[i]
+  if (!checkpoint_valid(p, GAMMA_CHECKPOINT_VERSION)) stop("Missing gamma checkpoint: ", p)
+  gamma_ci_rows[[i]] <- bind_cols(
+    gamma_nested[i, gamma_group_keys, drop = FALSE],
+    as_tibble(readRDS(p)$ci)
+  )
+}
+gamma_cis <- bind_rows(gamma_ci_rows)
+
+readr::write_csv(
+  gamma_manifest,
+  file.path(OUT_DIAG, "rq2_gamma_bootstrap_task_audit.csv"),
+  na = ""
+)
 
 gamma_summary <- gamma_summary_base |>
-  left_join(
-    gamma_cis,
-    by = c(
-      "dimension_pair", "a_dimension", "a_configuration", "a_configuration_label",
-      "b_dimension", "b_configuration", "b_configuration_label",
-      "interaction_lattice", "metric", "metric_class", "metric_geometry"
-    )
-  ) |>
+  left_join(gamma_cis, by = gamma_group_keys) |>
   mutate(
     geometry_gap = Q_mean_absolute - abs(R_mean_signed),
     geometry_pass = Q_mean_absolute + NUMERIC_TOL >= abs(R_mean_signed)
@@ -991,7 +1244,6 @@ pair_summary <- gamma_summary |>
   arrange(desc(median_Q))
 readr::write_csv(pair_summary, file.path(OUT_RESULTS, "rq2_gamma_pair_summary.csv"), na = "")
 
-# Fig. 3b archetypes selected algorithmically from Q and |R|/Q geometry.
 elig <- gamma_summary |>
   filter(n_participants >= 3L, is.finite(Q_mean_absolute), Q_mean_absolute > 0) |>
   mutate(
@@ -1019,10 +1271,6 @@ strong_coupling <- gamma_summary |>
   slice(1)
 readr::write_csv(strong_coupling, file.path(OUT_RESULTS, "rq2_strong_coupling_example.csv"), na = "")
 
-# Cross-dimensional analysis is intentionally limited to joint configurations
-# directly materialized with adequate support in the core cube. Duration joint
-# contrasts are not given population-level inference under the current exact-7-day
-# cohort of three participants.
 interaction_scope <- tibble(
   dimension_pair = c(
     "placement × optical", "placement × temporal", "optical × temporal",
@@ -1039,7 +1287,6 @@ interaction_scope <- tibble(
 )
 readr::write_csv(interaction_scope, file.path(OUT_RESULTS, "rq2_interaction_scope.csv"), na = "")
 
-# Diagnostics and completion report.
 condition_audit <- condition |>
   group_by(dimension, configuration) |>
   summarise(
@@ -1048,9 +1295,9 @@ condition_audit <- condition |>
     n_primary_state = sum(is.finite(primary_state_raw)),
     n_external_complete = sum(
       is.finite(external_radiation) &
-      is.finite(external_direct_fraction) &
-      is.finite(external_cloud) &
-      is.finite(solar_noon_elevation_deg)
+        is.finite(external_direct_fraction) &
+        is.finite(external_cloud) &
+        is.finite(solar_noon_elevation_deg)
     ),
     .groups = "drop"
   )
@@ -1066,6 +1313,16 @@ writeLines(
     paste0("- ", RQ1_DISTORTION),
     paste0("- ", CORE_METRICS),
     paste0("- ", CORE_CONTEXT),
+    "",
+    "Runtime:",
+    sprintf("- workers: %d", RQ2_WORKERS),
+    sprintf("- model checkpoint version: %s", MODEL_CHECKPOINT_VERSION),
+    sprintf("- gamma checkpoint version: %s", GAMMA_CHECKPOINT_VERSION),
+    sprintf("- force recomputation: %s", RQ2_FORCE),
+    sprintf("- model checkpoints reused: %d", reused_n),
+    sprintf("- gamma checkpoints reused: %d", sum(gamma_manifest$checkpoint_reused)),
+    "- BLAS/OpenMP threads are limited to one per worker.",
+    "- grouped participant folds are fixed once per metric x configuration and shared across all model families/outcomes.",
     "",
     "Conditionality:",
     "- placement state: reference eye light level (mean_MEDI)",
@@ -1088,7 +1345,11 @@ writeLines(
     "- results/rq2/rq2_model_coefficients.csv",
     "- results/rq2/rq2_model_performance.csv",
     "- results/rq2/rq2_gamma_summary.csv",
-    "- results/rq2/rq2_gamma_pair_summary.csv"
+    "- results/rq2/rq2_gamma_pair_summary.csv",
+    "",
+    "Execution diagnostics:",
+    "- results/diagnostics/rq2_model_task_audit.csv",
+    "- results/diagnostics/rq2_gamma_bootstrap_task_audit.csv"
   ),
   file.path(OUT_RESULTS, "RQ2_RUN_REPORT.md")
 )
