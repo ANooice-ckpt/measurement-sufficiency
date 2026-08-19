@@ -87,3 +87,78 @@ core_finalize_metric_cube <- function(emitted, metric_types) {
     "dual-channel placement metric requires corresponding *_full support"
   out
 }
+
+# Safe ERA5 daily summaries. Missing variables/days remain NA; they are never
+# converted to zero by sum(..., na.rm = TRUE).
+core_read_era5_daily_safe <- function(site, timezone) {
+  path <- file.path("data", "raw", "era5", paste0(site, ".csv"))
+  if (!file.exists(path)) return(NULL)
+  x <- readr::read_csv(path, show_col_types = FALSE, progress = FALSE)
+  time_col <- intersect(c("time", "valid_time", "datetime", "Datetime", "date"), names(x))[1]
+  if (is.na(time_col)) stop("No recognizable ERA5 time column in ", path)
+  dt <- suppressWarnings(lubridate::ymd_hms(x[[time_col]], tz = "UTC", quiet = TRUE))
+  if (all(is.na(dt))) dt <- suppressWarnings(as.POSIXct(x[[time_col]], tz = "UTC"))
+  if (all(is.na(dt))) stop("Could not parse ERA5 time column in ", path)
+  x$local_time <- lubridate::with_tz(dt, timezone)
+  x$Date <- as.Date(x$local_time)
+
+  getv <- function(df, name) if (name %in% names(df)) as.numeric(df[[name]]) else rep(NA_real_, nrow(df))
+  safe_mean <- function(z) if (all(!is.finite(z))) NA_real_ else mean(z[is.finite(z)])
+  safe_min <- function(z) if (all(!is.finite(z))) NA_real_ else min(z[is.finite(z)])
+  safe_max <- function(z) if (all(!is.finite(z))) NA_real_ else max(z[is.finite(z)])
+  safe_sum <- function(z) if (all(!is.finite(z))) NA_real_ else sum(z[is.finite(z)])
+
+  x |>
+    dplyr::group_by(Date) |>
+    dplyr::group_modify(~{
+      d <- .x
+      u10 <- getv(d, "10m_u_component_of_wind"); v10 <- getv(d, "10m_v_component_of_wind")
+      u100 <- getv(d, "100m_u_component_of_wind"); v100 <- getv(d, "100m_v_component_of_wind")
+      t2m <- getv(d, "2m_temperature") - 273.15
+      d2m <- getv(d, "2m_dewpoint_temperature") - 273.15
+      skin <- getv(d, "skin_temperature") - 273.15
+      tcc <- getv(d, "total_cloud_cover")
+      blh <- getv(d, "boundary_layer_height")
+      cbh <- getv(d, "cloud_base_height")
+      sp <- getv(d, "surface_pressure") / 100
+      msl <- getv(d, "mean_sea_level_pressure") / 100
+      ssrd <- getv(d, "surface_solar_radiation_downwards")
+      fdir <- getv(d, "total_sky_direct_solar_radiation_at_surface")
+      strd <- getv(d, "surface_thermal_radiation_downwards")
+      tp <- getv(d, "total_precipitation")
+      ssrd_sum <- safe_sum(ssrd) / 1e6
+      fdir_sum <- safe_sum(fdir) / 1e6
+      tibble::tibble(
+        era5_hours = sum(!is.na(d$local_time)),
+        era5_grid_latitude = if ("latitude" %in% names(d)) dplyr::first(d$latitude) else NA_real_,
+        era5_grid_longitude = if ("longitude" %in% names(d)) dplyr::first(d$longitude) else NA_real_,
+        era5_t2m_mean_c = safe_mean(t2m),
+        era5_t2m_min_c = safe_min(t2m),
+        era5_t2m_max_c = safe_max(t2m),
+        era5_dewpoint_mean_c = safe_mean(d2m),
+        era5_skin_temperature_mean_c = safe_mean(skin),
+        era5_total_cloud_cover_mean = safe_mean(tcc),
+        era5_boundary_layer_height_mean_m = safe_mean(blh),
+        era5_boundary_layer_height_max_m = safe_max(blh),
+        era5_cloud_base_height_mean_m = safe_mean(cbh),
+        era5_surface_pressure_mean_hpa = safe_mean(sp),
+        era5_msl_pressure_mean_hpa = safe_mean(msl),
+        era5_u10_mean_ms = safe_mean(u10),
+        era5_v10_mean_ms = safe_mean(v10),
+        era5_wind10_mean_ms = safe_mean(sqrt(u10^2 + v10^2)),
+        era5_wind10_max_ms = safe_max(sqrt(u10^2 + v10^2)),
+        era5_u100_mean_ms = safe_mean(u100),
+        era5_v100_mean_ms = safe_mean(v100),
+        era5_wind100_mean_ms = safe_mean(sqrt(u100^2 + v100^2)),
+        era5_wind100_max_ms = safe_max(sqrt(u100^2 + v100^2)),
+        era5_ssrd_sum_mj_m2 = ssrd_sum,
+        era5_fdir_sum_mj_m2 = fdir_sum,
+        era5_diffuse_sum_mj_m2 = if (is.finite(ssrd_sum) && is.finite(fdir_sum)) ssrd_sum - fdir_sum else NA_real_,
+        era5_direct_fraction = if (is.finite(ssrd_sum) && ssrd_sum > 0 && is.finite(fdir_sum)) fdir_sum / ssrd_sum else NA_real_,
+        era5_strd_sum_mj_m2 = safe_sum(strd) / 1e6,
+        era5_precipitation_sum_mm = safe_sum(tp) * 1000
+      )
+    }) |>
+    dplyr::ungroup() |>
+    dplyr::mutate(site = site, .before = 1)
+}
