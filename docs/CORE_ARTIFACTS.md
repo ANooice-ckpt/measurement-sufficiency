@@ -12,7 +12,7 @@ data/derived/core/weather_1min.csv.gz
 
 `metric_cube` and `unit_context` are the two main analysis artifacts. `weather_1min` is an auxiliary continuous meteorological artifact retained so that later RQ2 window definitions can change without redownloading or reprocessing ERA5.
 
-Downstream distortion, bootstrap uncertainty, model predictions, sufficiency thresholds, and Pareto labels are deliberately not stored here; they remain cheap analysis choices.
+Downstream distortion, bootstrap uncertainty, model predictions, duration-window selection, sufficiency thresholds, and Pareto labels are deliberately not stored here; they remain cheap analysis choices.
 
 ## Runtime
 
@@ -52,10 +52,10 @@ is_reference_config
 
 ### Measurement configurations
 
-The frozen primary temporal-resolution levels remain:
+The primary temporal-resolution levels are:
 
 ```text
-10 s, 30 s, 60 s, 300 s, 900 s, 1800 s
+10 s, 15 s, 20 s, 30 s, 60 s, 300 s, 900 s, 1800 s
 ```
 
 For the one-time extraction run, the cube also retains inexpensive reserve levels:
@@ -64,7 +64,7 @@ For the one-time extraction run, the cube also retains inexpensive reserve level
 120 s, 600 s, 3600 s
 ```
 
-`is_primary_resolution` distinguishes the frozen primary design from these reserve rows. The reserve rows do not redefine the primary RQs.
+`is_primary_resolution` distinguishes the primary design from the reserve rows. The reserve rows preserve later design flexibility without requiring another high-resolution extraction.
 
 Optical rows use MEDI and, on dual-channel common supports, LIGHT as the operational one-channel proxy. Placement rows cover eye, chest, and wrist where the relevant ActLumus streams exist.
 
@@ -107,16 +107,21 @@ It contains:
 - placement/optical/resolution configuration keys;
 - valid-value fraction and missing-block structure after the configured measurement operation;
 - participant support start/end, support span, number of valid days, and ordered valid-day index;
+- raw near-corneal recording start/end and calendar-span metadata before full-day cleaning;
 - site city/country/latitude/longitude/timezone;
 - local calendar variables;
 - ERA5 daily context summaries;
-- `isiv_h00`–`isiv_h23`, the exact hourly transformed-light basis needed to reconstruct later day-subset IS/IV without returning to 10-s light data.
+- `isiv_h00`–`isiv_h23`, the hourly transformed-light basis needed to reconstruct later day-subset IS/IV without returning to 10-s light data.
 
-### Duration preservation
+### Duration preservation and downstream construction
 
-The artifact does not prematurely choose a canonical seven-day duration window. For the 52 daily metrics, arbitrary later `d`-day representations are obtained by averaging selected daily metric values. For IS/IV, the stored 24 hourly transformed-light values permit exact reconstruction of the LightLogR formulas for arbitrary selected days.
+The artifact does not prematurely choose a canonical seven-day duration window. For the 52 daily metrics, arbitrary later `d`-day representations are obtained by averaging selected daily metric values. For IS/IV, the stored 24 hourly transformed-light values permit reconstruction of the LightLogR formulas for arbitrary selected days.
 
-This means the current duration-reference ambiguity can be resolved scientifically later without another expensive high-resolution extraction.
+For a fixed consecutive reference window, the preferred primary duration construction is to **enumerate every contiguous `d`-day window**, rather than use only a prefix such as days 1–2, 1–3, 1–4. This removes start-day/week-position confounding while retaining the practical meaning of a consecutive monitoring protocol. With a seven-day reference there are only `7-d+1` such windows, so random sampling is unnecessary.
+
+If a secondary robustness analysis needs to ignore contiguity, enumerate all unique `d`-day subsets rather than sample them randomly; for seven days the largest set is only `choose(7,3)=35`. Random subset sampling should be used only if a future reference window becomes large enough that exact enumeration is genuinely burdensome.
+
+This means the duration-reference ambiguity can be resolved scientifically later without another expensive high-resolution extraction.
 
 ## 3. `weather_1min.csv.gz`
 
@@ -176,10 +181,10 @@ An interrupted run can resume with `CORE_FORCE=0`.
 From the repository root on Linux:
 
 ```bash
-CORE_WORKERS=16 CORE_FORCE=1 bash scripts/run_core_artifacts.sh
+CORE_WORKERS=48 CORE_FORCE=0 bash scripts/run_core_artifacts.sh
 ```
 
-For a 64-core / 128-GB machine, 16 workers is the conservative starting point because each worker can hold a large support block in memory. Increase only after observing real peak memory/CPU use.
+For a 96-core / 192-GB c9ae.24xlarge, 48 workers is the intended starting point. Reduce only if real peak memory use approaches the machine limit or swap activity appears.
 
 Final diagnostics:
 
