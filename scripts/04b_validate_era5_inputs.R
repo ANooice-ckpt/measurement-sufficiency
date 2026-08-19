@@ -46,6 +46,7 @@ for (i in seq_len(nrow(site_meta))) {
   path <- file.path("data", "raw", "era5", paste0(site_i, ".csv"))
   if (!file.exists(path)) stop("Missing ERA5 file: ", path)
 
+  era5_validate_tz(timezone_i)
   payload <- era5_read_payload(path)
   x <- payload$data
   parsed_time <- era5_pick_time(x)
@@ -57,7 +58,7 @@ for (i in seq_len(nrow(site_meta))) {
   if (length(miss)) missing_fields[[site_i]] <- miss
 
   diffs <- as.numeric(diff(dt), units = "secs")
-  local_dates <- as.Date(lubridate::with_tz(dt, timezone_i))
+  local_dates <- as.Date(dt, tz = timezone_i)
   study <- eye_inv |> filter(.data$site == site_i)
   if (nrow(study) != 1L) stop("Could not resolve one light_glasses inventory row for ", site_i)
 
@@ -70,6 +71,19 @@ for (i in seq_len(nrow(site_meta))) {
   lon_delta <- if (is.finite(grid_lon)) abs(((grid_lon - expected_lon + 180) %% 360) - 180) else Inf
   grid_matches_site <- is.finite(grid_lat) && is.finite(grid_lon) &&
     abs(grid_lat - expected_lat) <= 0.26 && lon_delta <= 0.26
+
+  # Cheap runtime smoke test: exercise the same QC, daily-summary, and minute-
+  # interpolation functions used by the full artifact build on the first 48 h.
+  # This catches parser/timezone/runtime failures before the expensive stage.
+  ord <- order(parsed_time)
+  smoke_idx <- ord[seq_len(min(48L, length(ord)))]
+  smoke_raw <- x[smoke_idx, , drop = FALSE]
+  smoke_clean <- era5_qc_hourly(smoke_raw, site_i, timezone_i, payload$payload_format)$hourly
+  smoke_daily <- era5_daily_summary(smoke_clean, timezone_i)
+  smoke_minute <- era5_interpolate_1min(smoke_clean, timezone_i)
+  if (!nrow(smoke_daily) || !nrow(smoke_minute) || anyNA(smoke_minute$local_datetime)) {
+    stop("ERA5 runtime smoke test failed for ", site_i)
+  }
 
   rows[[i]] <- tibble(
     site = site_i,
@@ -118,4 +132,4 @@ if (any(!audit$grid_matches_site)) {
   stop("ERA5 grid coordinate does not match the named MeLiDos site for one or more files; inspect logs/era5_input_inventory.csv")
 }
 
-message("ERA5 input preflight passed for all ", nrow(audit), " sites")
+message("ERA5 input preflight + runtime smoke test passed for all ", nrow(audit), " sites")
