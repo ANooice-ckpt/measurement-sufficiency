@@ -214,24 +214,33 @@ The current strict duration cohort contains only three eligible participants dis
 Supplementary representation-retention diagnostics may include Lin’s CCC, Spearman correlation, and clearly meaningful classification agreement. They are secondary diagnostics and do not replace `D(e)`, `A`, or `B` as the RQ1 scientific object.
 
 ## 8. RQ1 Figure 1
-Figure 1 is the first visualization of the RQ1 canonical distortion table.
+Figure 1 is the first visualization of the RQ1 canonical distortion object and is frozen as a **2 × 4 matrix**. The four columns correspond, in the same order in both rows, to measurement placement, optical representation, temporal resolution, and monitoring duration.
 
-Panel a: representative empirical `D(e)` distributions chosen by explicit rules after all results are computed, illustrating:
-- low distortion,
-- directional positive distortion,
-- directional negative distortion,
-- large bidirectional distortion with partial cancellation.
+### 8.1 Top row: empirical distortion distributions
+Panels a–d display the empirical standardized signed-distortion landscape for all primary candidate states within each measurement dimension.
 
-Panels b–e: `B` on the x-axis and `A` on the y-axis, with the boundaries `A = |B|`.
+- a: placement — chest and wrist relative to eye;
+- b: optical — photopic illuminance relative to eye `MEDI`;
+- c: temporal resolution — all primary 15 s to 30 min candidates relative to 10 s;
+- d: monitoring duration — all primary 1–6 d candidate families relative to 7 d.
 
-- b: placement — chest and wrist relative to eye;
-- c: optical — photopic relative to eye `MEDI`;
-- d: temporal resolution — main-text example uses 30 min relative to 10 s;
-- e: monitoring duration — main-text example uses 1 d relative to 7 d.
+The x-axis is standardized signed distortion `e`; the y-axis lists the candidate configuration states/levels. For this overview only, smallest-unit `e` values are descriptively pooled across target metrics **after within-metric standardization**. Each metric × configuration contributes total weight 1 so metrics with more analysis units do not dominate the plotted density. This pooled density is a descriptive visualization of the overall distortion landscape and is not used as a class-level inferential object.
 
-Each point is one target metric. Color encodes the six published metric classes. Only representative/extreme metrics should be labelled. Participant-cluster bootstrap CIs are shown where supported; the duration panel must not display a degenerate population bootstrap CI for the current three-participant cohort. Other temporal-resolution and monitoring-duration levels belong in supplementary outputs rather than being crowded into the main figure.
+The earlier four hand-picked distribution archetypes (low distortion, positive directional, negative directional, and cancellation) are not part of the main Fig. 1 grammar.
 
-Panel-a examples must be selected algorithmically from the computed results, not hand-picked to support a narrative. A practical selection rule is documented in `docs/RQ1_EXECUTION.md`.
+### 8.2 Bottom row: A–B distortion geometry
+Panels e–h plot `B` on the x-axis and `A` on the y-axis with the boundaries `A = |B|`.
+
+- e: placement — chest and wrist in the same panel;
+- f: optical — photopic proxy;
+- g: temporal resolution — all primary candidate levels, connected within each metric as an ordered finer-to-coarser trajectory;
+- h: monitoring duration — all 1–6 d levels, connected within each metric as an ordered longer-to-shorter trajectory.
+
+Each plotted state is one target metric × candidate configuration. Color encodes the six published metric classes. Only a small number of extreme terminal metrics are labelled.
+
+Participant-cluster bootstrap uncertainty is retained in the RQ1 summary artifacts wherever supported. Error bars may be shown in the sparse placement/optical panels when legible; the dense temporal/duration trajectory panels need not display every interval in the main figure because doing so would obscure the configuration trajectories. The duration panel must never display a degenerate population bootstrap CI for the current three-participant cohort.
+
+Figure 1 is therefore a **distortion-characterization** figure: `configuration -> D(e) -> (A,B)`. It must not be converted into a sufficiency-threshold figure. RQ3/Fig. 4 later performs the distinct inverse decision mapping from acceptable tolerance `epsilon` to sufficient measurement requirement.
 
 ## 9. RQ2 — Conditionality and separability
 RQ2 asks whether the distortion distribution changes with the actual exposure process/external environment and whether the effects of configuration dimensions are separable.
