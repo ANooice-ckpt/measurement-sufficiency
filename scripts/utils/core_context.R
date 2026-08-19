@@ -26,9 +26,11 @@ core_config_daily_context <- function(support_path) {
       dplyr::group_by(site, Id, Date, hour) |>
       dplyr::summarise(hourly_log_light = mean(log_light), .groups = "drop") |>
       tidyr::complete(site, Id, Date, hour = 0:23) |>
+      dplyr::mutate(hour_label = sprintf("%02d", hour)) |>
+      dplyr::select(-hour) |>
       tidyr::pivot_wider(
-        names_from = hour, values_from = hourly_log_light,
-        names_prefix = "isiv_h", names_glue = "isiv_h{sprintf('%02d', hour)}"
+        names_from = hour_label, values_from = hourly_log_light,
+        names_prefix = "isiv_h"
       )
 
     quality <- series |>
