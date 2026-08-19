@@ -36,6 +36,10 @@ Do not modify files under `external/`.
 
 ## Environment boundary
 
-The Zauner `v0.9.9` lockfile records **R 4.5.0**. New full reproductions and core-artifact builds are therefore pinned to R 4.5.0. `scripts/00_setup.R` stops on any other R runtime, restores the recorded package environment, enforces LightLogR 0.10.3 and melidosData 1.0.6, and snapshots the lockfile under R 4.5.0.
+The Zauner `v0.9.9` lockfile records **R 4.5.0**. New full reproductions, core-artifact builds, and final downstream analyses are therefore pinned to R 4.5.0.
+
+The project was briefly snapshotted locally under R 4.4.2 during development. That stale runtime record is not part of the scientific specification. `scripts/00_setup.R` now handles this as a one-time migration: if the repository lockfile already records R 4.5.0 it performs a normal `renv::restore()`; if an older/unknown R runtime is recorded, it does not restore that stale library verbatim. Instead it installs an R-4.5-compatible project runtime, re-asserts LightLogR 0.10.3 and melidosData 1.0.6, and snapshots the resulting R 4.5.0 environment.
+
+`renv/settings.json` explicitly encodes R 4.5.0 for future snapshots. After the one-time migration succeeds, the regenerated `renv.lock` should be committed and becomes the normal restore source for subsequent machines.
 
 Earlier RQ1 exploratory outputs produced under R 4.4.2 are historical diagnostics only and should be replaced by the R 4.5.0 rebuild before final analysis.
