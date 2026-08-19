@@ -13,7 +13,8 @@ external/zauner_position/*
 
 # Generated outputs
 results/
-logs/
+logs/*
+!logs/.gitkeep
 
 # R
 .Rhistory
