@@ -14,7 +14,7 @@ BUILD_JOBS="${R_BUILD_JOBS:-32}"
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   build-essential gfortran git curl wget ca-certificates unzip zip tmux htop \
-  pkg-config make gcc g++ \
+  pkg-config cmake make gcc g++ \
   libreadline-dev libbz2-dev liblzma-dev libpcre2-dev zlib1g-dev \
   libcurl4-openssl-dev libssl-dev libxml2-dev libicu-dev \
   libblas-dev liblapack-dev \
