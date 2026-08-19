@@ -36,4 +36,6 @@ Do not modify files under `external/`.
 
 ## Environment boundary
 
-The Zauner `v0.9.9` lockfile records R 4.5.0. The available local runtime is R 4.4.2, so the project uses a local renv environment with the same core LightLogR and melidosData versions but is not represented as a byte-for-byte restoration of the upstream runtime.
+The Zauner `v0.9.9` lockfile records **R 4.5.0**. New full reproductions and core-artifact builds are therefore pinned to R 4.5.0. `scripts/00_setup.R` stops on any other R runtime, restores the recorded package environment, enforces LightLogR 0.10.3 and melidosData 1.0.6, and snapshots the lockfile under R 4.5.0.
+
+Earlier RQ1 exploratory outputs produced under R 4.4.2 are historical diagnostics only and should be replaced by the R 4.5.0 rebuild before final analysis.
