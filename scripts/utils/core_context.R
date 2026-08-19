@@ -18,6 +18,25 @@ core_config_daily_context <- function(support_path) {
       .groups = "drop"
     )
 
+  # Raw near-corneal start/end are deliberately preserved separately from the
+  # cleaned full-day support. They are needed to distinguish a true short
+  # recording from the common protocol pattern of partial first/last calendar days.
+  raw_span_path <- "data/interim/core/raw_eye_recording_spans.rds"
+  if (file.exists(raw_span_path)) {
+    raw_span <- readRDS(raw_span_path) |>
+      dplyr::filter(site %in% unique(support$site))
+    participant_meta <- participant_meta |>
+      dplyr::left_join(raw_span, by = c("site", "Id"))
+  } else {
+    participant_meta <- participant_meta |>
+      dplyr::mutate(
+        raw_eye_recording_start = as.POSIXct(NA),
+        raw_eye_recording_end = as.POSIXct(NA),
+        raw_eye_span_hours = NA_real_,
+        raw_eye_calendar_day_count = NA_integer_
+      )
+  }
+
   day_index <- support |>
     dplyr::distinct(site, Id, Date) |>
     dplyr::arrange(site, Id, Date) |>
@@ -90,6 +109,8 @@ core_config_daily_context <- function(support_path) {
       dplyr::select(
         support_id, site, Id, analysis_unit_type, analysis_unit_id, Date,
         valid_day_index, support_valid_day_count,
+        raw_eye_recording_start, raw_eye_recording_end,
+        raw_eye_span_hours, raw_eye_calendar_day_count,
         support_recording_start, support_recording_end, support_span_hours,
         placement, optical, resolution_s, is_primary_resolution, config_id,
         expected_values, valid_values, valid_fraction, n_missing_blocks,
