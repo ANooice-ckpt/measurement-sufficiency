@@ -1,12 +1,12 @@
 # RQ1 execution brief for Codex
 
 ## Objective
-Implement and **run** RQ1 from the completed core artifacts, producing the canonical representation-distortion dataset, unified RQ1 summaries, and a reproducible rough draft of Fig. 1.
+Run RQ1 entirely from the completed core artifacts, producing one canonical representation-distortion object plus stable tabular outputs, then render Fig. 1 from those frozen RQ1 outputs without rerunning the analysis.
 
-This is an execution task, not a design task. Scientific definitions are frozen in `docs/STUDY_SPEC.md`. The expensive high-resolution metric computation has been moved upstream into the core-artifact build; do not rerun it for ordinary RQ1 changes.
+This is an execution task, not a design task. Scientific definitions are frozen in `docs/STUDY_SPEC.md`.
 
 ## 0. Preconditions
-Confirm that the following exist and were produced without blocking diagnostics:
+The following core artifacts must exist and the core build must have completed without blocking diagnostics:
 
 ```text
 data/derived/core/metric_cube.csv.gz
@@ -18,101 +18,133 @@ logs/era5_missing_study_dates.csv
 logs/sessionInfo_core_artifacts.txt
 ```
 
-The upstream reproduction and structural validator must already have passed. Numerical differences above the explicitly authorized floating-point tolerance may be recorded, but ordered keys, row structure, 54 metrics, and six metric classes must agree with the upstream reference.
+The expensive high-resolution metric computation ends at the core-artifact layer. Do not return to the harmonized 10-s source for ordinary RQ1 changes.
 
-Do **not** use the old `scripts/05_rq1_reference.R`–`08_plot_fig1.R` or `06b_rq1_duration.R` as the final analysis source. They remain useful historical checks only. The final RQ1 must be reconstructed from the core artifacts.
-
-## 1. Core input semantics
-`metric_cube.csv.gz` contains one target metric value for one analysis unit × measurement configuration × explicit `support_id`.
-
-`unit_context.csv.gz` contains the support/configuration-specific participant-day context and the hourly transformed-light basis required for later IS/IV duration reconstruction.
-
-Preserve at minimum these scientific keys through downstream joins:
+## 1. Frozen downstream code structure
+There are exactly two current downstream RQ1 scripts:
 
 ```text
+scripts/10_rq1_analysis.R
+scripts/11_plot_fig1.R
+```
+
+### `10_rq1_analysis.R`
+Reads `metric_cube.csv.gz` and `unit_context.csv.gz`, constructs all primary RQ1 comparison lattices, monitoring-duration windows, standardized signed distortion, uncertainty, and supporting diagnostics.
+
+It writes the canonical analysis artifact and all tables needed by the main text, supplement, and Fig. 1.
+
+### `11_plot_fig1.R`
+Reads only frozen RQ1 outputs from script `10`. It may estimate plotting densities and change visual styling, but must not recompute reference metric values, duration windows, standardizers, `e`, `A`, `B`, or bootstrap intervals.
+
+Changing Fig. 1 aesthetics therefore never requires rerunning RQ1 analysis.
+
+The superseded pre-core `05`–`08` RQ1 scripts are removed from `master`. `scripts/utils/rq1_metrics.R` remains an upstream core-extraction helper because `09_build_core_artifacts.R` depends on it; do not treat it as a downstream RQ1 executable.
+
+## 2. Core input semantics
+`metric_cube.csv.gz` contains one target metric value for one analysis unit × measurement configuration × explicit support lattice.
+
+`unit_context.csv.gz` contains support/configuration-specific participant-day context and the stored `isiv_h00`–`isiv_h23` hourly transformed-light basis required to reconstruct monitoring-duration IS/IV without returning to high-resolution light records.
+
+Never collapse across incompatible `support_id` values.
+
+## 3. Primary RQ1 configurations
+### Placement
+- reference: eye / near-corneal, MEDI, 10 s
+- alternatives: chest and wrist
+- eye–chest and eye–wrist use separate maximal pairwise supports
+- non-dual-channel metrics use the corresponding `*_medi` lattice
+- MDER/nvRD use the corresponding `*_full` lattice
+
+### Optical
+- reference: eye MEDI, 10 s
+- alternative: synchronous eye photopic illuminance (`LIGHT`)
+- comparison uses `eye_full`
+- MDER and nvRD are unavailable for the LIGHT-only candidate
+
+### Temporal resolution
+Reference: 10 s.
+
+Primary candidates:
+
+```text
+15 s
+20 s
+30 s
+1 min
+5 min
+15 min
+30 min
+```
+
+Reserve 2 min, 10 min, and 60 min rows in the core cube are not primary RQ1 results.
+
+Pulse-family representations are unavailable at epochs >=5 min under the frozen upstream operator definitions and must remain unavailable rather than be assigned extreme distortion.
+
+### Monitoring duration
+Reference: an unambiguous sequence of exactly seven consecutive valid eye-MEDI monitoring days.
+
+For each eligible participant and each `d = 1..6`, enumerate every contiguous `d`-day window within that fixed seven-day sequence:
+
+`W_(d,j) = {j, ..., j+d-1}, j = 1, ..., 8-d`.
+
+Do not arbitrarily select seven days from participants with >7 valid days.
+
+For daily metrics:
+- linear representations use the arithmetic mean across selected days;
+- circular-time representations use the circular mean on the 24-h clock.
+
+For IS/IV, reconstruct directly from the stored hourly transformed-light basis. The reconstructed seven-day value must reproduce the corresponding core seven-day IS/IV value to numerical tolerance.
+
+## 4. Distortion and comparison lattices
+For analysis unit `i`, metric `k`, candidate configuration `c`, and comparison lattice `g`:
+
+`e[i,k,c] = delta_k(candidate, reference) / s[k,0,g]`.
+
+Rules:
+- ordinary signed differences for linear metrics;
+- shortest signed 24-h circular difference for circular-time metrics;
+- `s[k,0,g]` is the reference dispersion on the comparison lattice and is fixed across candidate levels within that lattice;
+- temporal levels share one standardizer within each metric;
+- duration levels share one eligible seven-day reference standardizer within each metric;
+- eye–chest and eye–wrist remain separate placement lattices;
+- zero or undefined reference dispersion makes standardized distortion unavailable rather than triggering an arbitrary epsilon denominator.
+
+The smallest-unit `e` distribution is the primary RQ1 object.
+
+## 5. Frozen outputs from `10_rq1_analysis.R`
+### Canonical distortion artifact
+
+```text
+data/derived/rq1/rq1_distortion_long.rds
+```
+
+It contains, at minimum:
+
+```text
+dimension
+configuration
+configuration_label
+configuration_order
+comparison_lattice
+reference_configuration
 support_id
 site
 Id
 analysis_unit_type
 analysis_unit_id
+reference_unit_id
 Date
-placement
-optical
-resolution_s
-config_id
-metric
-```
-
-Never collapse across incompatible `support_id` values.
-
-## 2. Primary configuration levels
-### Placement
-- reference: eye / near-corneal
-- alternatives: chest, wrist
-- use separate eye–chest and eye–wrist maximal pairwise supports
-- do not replace them with the stricter all-position intersection
-
-### Optical
-- reference: eye `MEDI`
-- alternative: synchronous eye `LIGHT`
-- MDER and nvRD are unavailable for `LIGHT`-only proxy configurations
-
-### Temporal resolution
-Primary levels are:
-
-```text
-10 s reference
-15 s
-20 s
-30 s
-60 s
-300 s
-900 s
-1800 s
-```
-
-Reserve extraction levels `120 s`, `600 s`, and `3600 s` remain in the cube but are not primary RQ1 results by default.
-
-Pulse-family metrics are unavailable at epochs `>= 300 s` under the current upstream operator definitions. Treat them as unavailable, not as extreme distortion.
-
-### Monitoring duration
-Primary duration analysis uses an unambiguous reference of exactly seven consecutive valid eye-MEDI days. Under the current frozen rule, do not arbitrarily select seven days from a participant with more than seven valid days.
-
-For each eligible participant and `d = 1..6`, enumerate every contiguous `d`-day window within the fixed seven-day reference:
-
-`W_(d,j) = {j, ..., j+d-1}, j = 1, ..., 8-d`.
-
-For the 52 daily metrics:
-- arithmetic mean across selected days for linear metrics;
-- circular mean across selected days for circular-time metrics.
-
-For IS/IV, reconstruct the selected-window metric from the stored `isiv_h00`–`isiv_h23` basis in `unit_context`; do not return to 10-s light data.
-
-The current strict cohort contains three eligible participants, one each from FUSPCEU, IZTECH, and RISE. THUAS has an eight-valid-day participant and is excluded under the frozen primary rule unless the canonical seven-day protocol window can later be resolved without arbitrary selection.
-
-## 3. Canonical RQ1 data products
-Create a unified configuration-level metric-value table from the core artifacts before distortion. Keep explicit availability and support fields.
-
-Then create one canonical long-form distortion object, preferably:
-
-`data/derived/rq1_distortion_long.rds`
-
-Required semantics:
-
-```text
-dimension
-configuration
-reference_configuration
-support_id / comparison_lattice
-site
-Id
-analysis_unit_id
-Date
-window_id              # duration only
-n_days                 # duration only
+window_id
+window_index
+window_start
+window_end
+n_days
 metric
 metric_class
+metric_scope
 metric_geometry
+candidate_config_id
+reference_config_id
 reference_value
 candidate_value
 delta
@@ -122,33 +154,20 @@ available
 unavailable_reason
 ```
 
-Do not store only aggregated `A`/`B`. The row-level `e` distribution is the primary object.
-
-## 4. Comparison lattices and standardizers
-For analysis unit `i`, metric `k`, candidate `c`, and comparison lattice `g`:
-
-`e[i,k,c] = delta_k(candidate, reference) / s[k,0,g]`.
-
-Rules:
-- `s[k,0,g]` is estimated from the reference values on the comparison lattice and is fixed across all candidate levels within that lattice;
-- temporal primary levels share one reference support/standardizer within a metric;
-- duration levels share one eligible seven-day cohort/standardizer within a metric;
-- eye–chest and eye–wrist are separate placement lattices and may have different standardizers;
-- use shortest signed circular differences for circular-time metrics and compatible circular dispersion;
-- if reference dispersion is zero or numerically degenerate, mark standardized distortion undefined and report it; do not insert an arbitrary epsilon.
-
-## 5. RQ1 summary table
-Create:
-
-`results/rq1/rq1_summary.csv`
-
-One row per metric × primary configuration with at least:
+### Main/supporting tables
 
 ```text
-dimension
-configuration
-metric
-metric_class
+results/rq1/rq1_summary.csv
+results/rq1/rq1_configuration_manifest.csv
+results/rq1/rq1_metric_availability.csv
+results/rq1/rq1_sample_flow.csv
+results/rq1/rq1_retention_diagnostics.csv
+results/rq1/RQ1_RUN_REPORT.md
+```
+
+`rq1_summary.csv` is one row per metric × primary candidate configuration and includes:
+
+```text
 n_participants
 n_units
 median_e
@@ -158,121 +177,101 @@ p025_e
 p975_e
 B_mean_signed
 A_mean_absolute
+bootstrap_supported
 B_ci_low
 B_ci_high
 A_ci_low
 A_ci_high
+uncertainty_method
 ```
 
-For duration, CI fields may be left unavailable or separately flagged because the current site-stratified participant bootstrap degenerates with one eligible participant per site.
+Lin's CCC and Spearman correlation in `rq1_retention_diagnostics.csv` are descriptive supplementary retention diagnostics for linear representations only. They do not replace `D(e)`, `A`, or `B`.
 
-## 6. Bootstrap and uncertainty
-For placement, optical, and temporal resolution:
-- resample participants within study site;
-- preserve every row belonging to a sampled participant;
-- use a fixed seed recorded in code;
-- 1000 replicates is the default unless runtime clearly requires a smaller named rough-run value.
-
-For the current duration cohort, do not report a site-stratified participant bootstrap as population-level uncertainty. Preserve and report the complete participant × contiguous-window empirical distribution and point estimates. The small cohort is a data-support limitation, not a reason to relax the frozen eligibility rule.
-
-Do not bootstrap metric classes as if metrics were independent observations.
-
-## 7. Availability and sample-flow outputs
-Create:
+### Diagnostics
 
 ```text
-results/rq1/rq1_sample_flow.csv
-results/rq1/rq1_metric_availability.csv
+results/diagnostics/rq1_standardizer_audit.csv
+results/diagnostics/rq1_geometry_invariant.csv
+results/diagnostics/rq1_support_audit.csv
+results/diagnostics/rq1_duration_cohort_audit.csv
+results/diagnostics/rq1_duration_windows.csv
+results/diagnostics/rq1_duration_isiv_reconstruction.csv
 ```
 
-The availability table must distinguish:
-- structurally unavailable representations;
-- metric undefined/missing on a specific analysis unit;
-- zero/undefined standardizer.
+## 6. Uncertainty
+For placement, optical, and temporal resolution, use participant-cluster bootstrap stratified by study site, preserving all smallest-unit rows belonging to a sampled participant. Default to 1000 replicates with a fixed seed; `RQ1_BOOT` may override the replicate count for deliberate rough runs.
 
-Do not infer availability from failed function calls because the expensive metric functions have already run upstream in the core build.
+The implementation checks whether site-stratified participant resampling has any non-degenerate stratum. If not, bootstrap intervals are left unavailable and the point estimate plus complete empirical unit distribution are retained.
 
-## 8. Required diagnostics
-Save under `results/diagnostics/`.
+Under the current strict duration cohort, each eligible site contributes only one participant, so no population-style duration bootstrap CI should be manufactured.
 
-### 8.1 Geometry invariant
-For every finite summary row verify:
+## 7. Required diagnostics
+### Geometry
+Every finite summary row must satisfy:
 
-`A_mean_absolute + tolerance >= abs(B_mean_signed)`.
+`A_mean_absolute >= abs(B_mean_signed)`
 
-Any violation is an implementation error.
+within numerical tolerance.
 
-### 8.2 Standardizer audit
-Report metric × comparison lattice:
-- standardizer;
-- number of reference units;
-- zero/near-zero flag.
+### Standardizer
+Record metric × comparison lattice reference scale, reference-unit count, and zero/near-zero flag.
 
-### 8.3 Support audit
-Verify that each candidate/reference pair uses the intended `support_id` and that no join silently mixes maximal pairwise supports with stricter joint supports.
+### Support
+Record the actual `support_id`, candidate config, and reference config used by every metric × primary comparison so maximal pairwise supports cannot silently be replaced by stricter joint supports.
 
-### 8.4 Availability audit
-Verify that optical MDER/nvRD and temporal pulse-family unavailability follow the frozen rules.
+### Duration
+Record exact eligible participants, ordered dates, every contiguous candidate window, and the seven-day IS/IV reconstruction check.
 
-### 8.5 Duration cohort audit
-Report:
-- valid-day counts by participant;
-- exact eligible seven-day cohort;
-- ordered valid dates;
-- all primary contiguous windows generated for each `d`;
-- confirmation that participants with ambiguous >7-day windows were not arbitrarily truncated.
-
-## 9. Fig. 1 rough draft
-Generate:
+## 8. Frozen Fig. 1 grammar
+`11_plot_fig1.R` generates:
 
 ```text
 results/figures/Fig1_RQ1.pdf
 results/figures/Fig1_RQ1.png
+results/rq1/fig1_pooled_distribution_density.csv
 ```
 
-Panel a uses algorithmically selected representative empirical `D(e)` distributions showing low distortion, positive directional distortion, negative directional distortion, and high bidirectional distortion with cancellation.
+Fig. 1 is a **2 × 4 matrix**. Columns are the four measurement dimensions in the same order throughout:
 
-Panels b–e use:
-- x = `B_mean_signed`
-- y = `A_mean_absolute`
-- boundaries `y = |x|`
-- one point per metric
-- color = published metric class
-- b = placement
-- c = optical
-- d = 30 min vs 10 s
-- e = 1 d vs 7 d
+```text
+Placement | Optical proxy | Temporal resolution | Monitoring duration
+```
 
-Show participant-cluster bootstrap uncertainty where supported. Do not fabricate duration CIs from the degenerate three-stratum bootstrap.
+### Top row: empirical distortion distributions (`a`–`d`)
+Each panel displays the empirical standardized signed-distortion distribution for all primary candidate states in that measurement dimension.
 
-Record panel-a example IDs in:
+- x-axis: standardized signed distortion `e`
+- y-axis: candidate configuration level/state
+- placement: chest and wrist
+- optical: photopic proxy
+- temporal: all seven primary coarser resolutions
+- duration: all contiguous 1–6 d candidate families relative to 7 d
 
-`results/rq1/fig1_panel_a_examples.csv`.
+For this top-row overview, smallest-unit `e` values are descriptively pooled across target metrics **after within-metric standardization**. Each metric × configuration contributes total weight 1, so metrics with more analysis units do not dominate the pooled density. This is a descriptive visualization of the distortion landscape, not a class-level inferential distribution.
 
-Do not spend time on journal-perfect styling before the numerical structure is validated.
+The old four hand-picked archetypes (low distortion, positive directional, negative directional, cancellation) are not part of the main Fig. 1 grammar.
 
-## 10. Completion report
-Write:
+### Bottom row: A–B distortion geometry (`e`–`h`)
+- x-axis: `B = mean(e)`
+- y-axis: `A = mean(|e|)`
+- show the boundaries `A = |B|`
+- color encodes the six published metric classes
+- each plotted state is one metric × candidate configuration
 
-`results/rq1/RQ1_RUN_REPORT.md`
+Placement displays chest and wrist in the same panel. Optical displays the photopic proxy. Temporal displays **all primary resolutions** for each metric as an ordered trajectory from finer to coarser measurement. Duration displays **all 1–6 d levels** for each metric as an ordered trajectory from longer to shorter monitoring.
 
-Keep it factual and short. Include:
-- core artifact inputs used;
-- downstream scripts run;
-- sample sizes by dimension;
-- unavailable metrics/configurations;
-- whether diagnostics passed;
-- duration data-support limitation;
-- paths to canonical tables and Fig. 1;
-- any unresolved issue that materially affects interpretation.
+Only a small number of extreme terminal metrics are labelled. Bootstrap error bars may be shown in sparse placement/optical panels where legible; the dense temporal/duration trajectory panels retain their uncertainty in `rq1_summary.csv` rather than crowding the main figure. Duration never displays a degenerate population bootstrap CI.
 
-## 11. Stop conditions
-Stop and report only if:
-- the final core artifacts are absent or structurally invalid;
-- a target metric cannot be reconciled with the upstream implementation;
-- the intended support lattice cannot be identified without changing the estimand;
-- standardized distortion requires an arbitrary denominator because reference dispersion is zero/near-zero;
-- the duration seven-day reference requires an arbitrary selection not authorized by the frozen rule;
-- a proposed workaround changes the scientific estimand.
+This figure is therefore a distortion-characterization figure, not a sufficiency figure: it shows `configuration -> D(e) -> (A,B)`. RQ3/Fig. 4 later performs the distinct inverse decision mapping from acceptable tolerance `epsilon` to sufficient measurement requirement.
 
-Otherwise, make ordinary engineering decisions directly and continue execution.
+## 9. Run sequence after the core artifacts complete
+From the repository root:
+
+```bash
+Rscript scripts/10_rq1_analysis.R
+Rscript scripts/11_plot_fig1.R
+```
+
+If only Fig. 1 aesthetics change, rerun `11_plot_fig1.R` alone.
+
+Stop only for a scientific or structural failure: missing/invalid core artifacts, incompatible support joins, an unreconcilable metric definition, failed IS/IV reconstruction, degenerate standardizer for a requested standardized result, or violation of `A >= |B|`. Ordinary plotting changes are not reasons to rerun the core or RQ1 analysis.
