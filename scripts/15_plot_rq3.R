@@ -12,7 +12,6 @@ suppressPackageStartupMessages({
 SINGLE_RDS <- "data/derived/rq3/rq3_single_dimension_sufficiency.rds"
 REQ_CSV <- "results/rq3/rq3_single_dimension_requirement.csv"
 UNORDERED_CSV <- "results/rq3/rq3_unordered_sufficiency_thresholds.csv"
-COVERAGE_CSV <- "results/rq3/rq3_unordered_coverage_curves.csv"
 JOINT_SUMMARY_CSV <- "results/rq3/rq3_joint_summary.csv"
 PARETO_EVER_CSV <- "results/rq3/rq3_pareto_ever.csv"
 PARETO_FREQ_CSV <- "results/rq3/rq3_pareto_frequency.csv"
@@ -21,7 +20,7 @@ SCOPE_CSV <- "results/rq3/rq3_scope.csv"
 FIG_DIR <- "results/figures"
 
 required <- c(
-  SINGLE_RDS, REQ_CSV, UNORDERED_CSV, COVERAGE_CSV,
+  SINGLE_RDS, REQ_CSV, UNORDERED_CSV,
   JOINT_SUMMARY_CSV, PARETO_EVER_CSV, PARETO_FREQ_CSV,
   REP_CSV, SCOPE_CSV
 )
@@ -51,7 +50,6 @@ req <- readr::read_csv(REQ_CSV, show_col_types = FALSE) |>
   mutate(metric_class = factor(metric_class, levels = METRIC_CLASSES))
 unordered <- readr::read_csv(UNORDERED_CSV, show_col_types = FALSE) |>
   mutate(metric_class = factor(metric_class, levels = METRIC_CLASSES))
-coverage <- readr::read_csv(COVERAGE_CSV, show_col_types = FALSE)
 joint_summary <- readr::read_csv(JOINT_SUMMARY_CSV, show_col_types = FALSE)
 pareto_ever <- readr::read_csv(PARETO_EVER_CSV, show_col_types = FALSE)
 pareto_freq <- readr::read_csv(PARETO_FREQ_CSV, show_col_types = FALSE)
@@ -135,25 +133,24 @@ p4c <- ordered_requirement_panel(
   DURATION_LEVELS
 )
 
-# Optical has one alternative state, so its entire sufficiency function is the
-# empirical CDF of metric-specific entry tolerances. Thin class curves retain
-# representation structure; the black curve is the descriptive all-metric summary.
+# Unordered alternatives have no c*(epsilon). Their sufficiency functions are
+# represented as coverage curves: the fraction of target representations whose
+# entry tolerance A is no larger than epsilon.
+coverage_curve <- function(z, eps) {
+  tibble(
+    epsilon = eps,
+    fraction = map_dbl(eps, ~if (nrow(z)) mean(z$epsilon_entry <= .x + 1e-12) else NA_real_)
+  )
+}
+
 optical_threshold <- unordered |> filter(dimension == "optical", is.finite(epsilon_entry))
 opt_eps <- sort(unique(c(0, optical_threshold$epsilon_entry)))
-opt_class <- tidyr::crossing(
-  epsilon = opt_eps,
-  metric_class = factor(METRIC_CLASSES, levels = METRIC_CLASSES)
-) |>
-  rowwise() |>
-  mutate(
-    fraction = {
-      z <- optical_threshold |> filter(metric_class == .env$metric_class)
-      if (nrow(z)) mean(z$epsilon_entry <= epsilon + 1e-12) else NA_real_
-    }
-  ) |>
-  ungroup()
-opt_all <- tibble(epsilon = opt_eps) |>
-  mutate(fraction = map_dbl(epsilon, ~mean(optical_threshold$epsilon_entry <= .x + 1e-12)))
+opt_class <- map_dfr(METRIC_CLASSES, function(cls) {
+  z <- optical_threshold |> filter(as.character(metric_class) == cls)
+  coverage_curve(z, opt_eps) |>
+    mutate(metric_class = factor(cls, levels = METRIC_CLASSES))
+})
+opt_all <- coverage_curve(optical_threshold, opt_eps)
 
 p4d <- ggplot(opt_class, aes(epsilon, fraction, color = metric_class)) +
   geom_step(linewidth = .45, alpha = .62, na.rm = TRUE) +
@@ -173,18 +170,11 @@ p4d <- ggplot(opt_class, aes(epsilon, fraction, color = metric_class)) +
 
 placement_threshold <- unordered |> filter(dimension == "placement", is.finite(epsilon_entry))
 place_eps <- sort(unique(c(0, placement_threshold$epsilon_entry)))
-place_curve <- tidyr::crossing(
-  epsilon = place_eps,
-  configuration_label = sort(unique(placement_threshold$configuration_label))
-) |>
-  rowwise() |>
-  mutate(
-    fraction = {
-      z <- placement_threshold |> filter(configuration_label == .env$configuration_label)
-      if (nrow(z)) mean(z$epsilon_entry <= epsilon + 1e-12) else NA_real_
-    }
-  ) |>
-  ungroup()
+place_curve <- map_dfr(sort(unique(placement_threshold$configuration_label)), function(lbl) {
+  z <- placement_threshold |> filter(configuration_label == lbl)
+  coverage_curve(z, place_eps) |>
+    mutate(configuration_label = lbl)
+})
 
 p4e <- ggplot(place_curve, aes(epsilon, fraction, linetype = configuration_label)) +
   geom_step(linewidth = .78) +
@@ -205,7 +195,7 @@ legend_source <- ggplot(
     x = seq_along(METRIC_CLASSES), y = 1
   ), aes(x, y, color = metric_class)
 ) +
-  geom_line(linewidth = .8) +
+  geom_point(size = 1.7) +
   scale_color_discrete(drop = FALSE) +
   guides(color = guide_legend(title = "metric class", nrow = 1, byrow = TRUE)) +
   theme_void(base_size = 8) +
@@ -274,11 +264,12 @@ if (!joint_estimable) {
   } else {
     rep_metrics <- representatives$metric
   }
-  rep_metrics <- unique(rep_metrics)[seq_len(min(4L, length(unique(rep_metrics))))]
+  rep_metrics <- unique(rep_metrics)
+  rep_metrics <- rep_metrics[seq_len(min(4L, length(rep_metrics)))]
   if (!length(rep_metrics)) stop("No representative metrics available for Fig. 5")
 
-  # Panel a is a conceptual dominance map only; empirical panels b-e use the
-  # actual joint configuration results below.
+  # Panel a is a conceptual dominance map only; empirical panels b-e use actual
+  # joint configuration results.
   schem <- tibble(
     x = c(1, 2, 3, 4, 2, 3, 4),
     y = c(4, 4, 4, 4, 3, 3, 2),
@@ -321,7 +312,7 @@ if (!joint_estimable) {
       facet_wrap(~placement, nrow = 1) +
       scale_shape_manual(values = c(MEDI = 21, LIGHT = 24), drop = FALSE) +
       scale_fill_viridis_c(
-        option = "C", transform = "asinh",
+        option = "C", transform = asinh_display,
         limits = fill_lim,
         name = "entry tolerance\nA = εentry"
       ) +
@@ -371,8 +362,9 @@ if (!joint_estimable) {
       legend.position = "right"
     )
 
-  # Fill any missing representative slots with blanks so the 2x3 grammar stays stable.
-  while (length(rep_plots) < 4L) rep_plots[[length(rep_plots) + 1L]] <- NULL
+  while (length(rep_plots) < 4L) {
+    rep_plots[length(rep_plots) + 1L] <- list(NULL)
+  }
   fig5 <- plot_grid(
     p5a, rep_plots[[1]], rep_plots[[2]],
     rep_plots[[3]], rep_plots[[4]], p5f,
