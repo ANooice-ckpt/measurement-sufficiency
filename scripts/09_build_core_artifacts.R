@@ -93,7 +93,7 @@ readr::write_csv(metric_cube, "data/derived/core/metric_cube.csv.gz", na = "")
 config_context <- map_dfr(context_paths, readRDS)
 site_meta <- core_site_metadata()
 era5_daily <- map_dfr(seq_len(nrow(site_meta)), function(i) {
-  out <- core_read_era5_daily(site_meta$site[i], site_meta$timezone[i])
+  out <- core_read_era5_daily_safe(site_meta$site[i], site_meta$timezone[i])
   if (is.null(out)) tibble(site = character(), Date = as.Date(character())) else out
 })
 unit_context <- config_context |>
