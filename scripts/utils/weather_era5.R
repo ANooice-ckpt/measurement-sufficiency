@@ -40,10 +40,25 @@ era5_pick_numeric <- function(x, aliases) {
 era5_pick_time <- function(x) {
   nm <- intersect(c("valid_time", "time", "datetime", "Datetime", "date"), names(x))[1]
   if (is.na(nm)) stop("No recognizable ERA5 time column")
-  dt <- suppressWarnings(lubridate::ymd_hms(x[[nm]], tz = "UTC", quiet = TRUE))
-  if (all(is.na(dt))) dt <- suppressWarnings(as.POSIXct(x[[nm]], tz = "UTC"))
+
+  raw <- x[[nm]]
+  dt <- suppressWarnings(
+    lubridate::ymd_hms(raw, tz = "UTC", quiet = TRUE, truncated = 3)
+  )
+  bad <- is.na(dt) & !is.na(raw)
+  if (any(bad)) {
+    fallback <- suppressWarnings(as.POSIXct(raw[bad], tz = "UTC"))
+    dt[bad] <- fallback
+  }
   if (all(is.na(dt))) stop("Could not parse ERA5 time column")
   dt
+}
+
+era5_validate_tz <- function(tz) {
+  if (length(tz) != 1L || is.na(tz) || !nzchar(tz) || !(tz %in% OlsonNames())) {
+    stop("Invalid ERA5 timezone: ", paste(tz, collapse = ", "))
+  }
+  invisible(tz)
 }
 
 era5_rh_pct <- function(t_c, td_c) {
@@ -59,12 +74,13 @@ era5_vpd_kpa <- function(t_c, rh_pct) {
   pmax(0, es_kpa * (1 - rh_pct / 100))
 }
 
-era5_qc_hourly <- function(raw, site, timezone, payload_format) {
+era5_qc_hourly <- function(raw, site, tz, payload_format) {
+  era5_validate_tz(tz)
   time_utc <- era5_pick_time(raw)
   x <- tibble::tibble(
     site = site,
     time_utc = time_utc,
-    timezone = timezone,
+    timezone = tz,
     u100_ms = era5_pick_numeric(raw, c("u100", "100m_u_component_of_wind")),
     v100_ms = era5_pick_numeric(raw, c("v100", "100m_v_component_of_wind")),
     u10_ms = era5_pick_numeric(raw, c("u10", "10m_u_component_of_wind")),
@@ -150,8 +166,8 @@ era5_qc_hourly <- function(raw, site, timezone, payload_format) {
 
   x <- x |>
     dplyr::mutate(
-      local_time = lubridate::with_tz(time_utc, timezone),
-      local_date = as.Date(local_time),
+      local_time = lubridate::with_tz(time_utc, tz),
+      local_date = as.Date(time_utc, tz = tz),
       wind10_ms = sqrt(u10_ms^2 + v10_ms^2),
       wind100_ms = sqrt(u100_ms^2 + v100_ms^2),
       rh_pct = era5_rh_pct(t2m_c, dewpoint_c),
@@ -204,9 +220,10 @@ era5_safe_sum <- function(z) {
   if (!length(z)) NA_real_ else sum(z)
 }
 
-era5_daily_summary <- function(hourly, timezone) {
+era5_daily_summary <- function(hourly, tz) {
+  era5_validate_tz(tz)
   inst <- hourly |>
-    dplyr::mutate(Date = as.Date(lubridate::with_tz(time_utc, timezone))) |>
+    dplyr::mutate(Date = as.Date(time_utc, tz = tz)) |>
     dplyr::group_by(site, Date) |>
     dplyr::summarise(
       era5_hours_instantaneous = dplyr::n(),
@@ -248,7 +265,7 @@ era5_daily_summary <- function(hourly, timezone) {
   accum <- hourly |>
     dplyr::mutate(
       interval_mid_utc = time_utc - 1800,
-      Date = as.Date(lubridate::with_tz(interval_mid_utc, timezone))
+      Date = as.Date(interval_mid_utc, tz = tz)
     ) |>
     dplyr::group_by(site, Date) |>
     dplyr::summarise(
@@ -387,7 +404,8 @@ era5_piecewise_hourly_rate <- function(end_time, hourly_value, out_time) {
   out
 }
 
-era5_interpolate_1min <- function(hourly, timezone) {
+era5_interpolate_1min <- function(hourly, tz) {
+  era5_validate_tz(tz)
   out_time <- seq(
     from = min(hourly$time_utc, na.rm = TRUE),
     to = max(hourly$time_utc, na.rm = TRUE),
@@ -398,7 +416,7 @@ era5_interpolate_1min <- function(hourly, timezone) {
   out <- tibble::tibble(
     site = dplyr::first(hourly$site),
     time_utc = out_time,
-    timezone = timezone,
+    timezone = tz,
     grid_latitude = dplyr::first(hourly$grid_latitude),
     grid_longitude = dplyr::first(hourly$grid_longitude),
     t2m_c = era5_pchip(hourly$time_utc, hourly$t2m_c, out_time),
@@ -442,9 +460,8 @@ era5_interpolate_1min <- function(hourly, timezone) {
           is.finite(fdir_w_m2) & fdir_w_m2 <= ssrd_w_m2 + 1e-6,
         pmin(1, pmax(0, fdir_w_m2 / ssrd_w_m2)), NA_real_
       ),
-      local_time = lubridate::with_tz(time_utc, timezone),
-      local_datetime = format(local_time, "%Y-%m-%dT%H:%M:%S%z"),
-      Date = as.Date(local_time),
+      local_datetime = format(time_utc, "%Y-%m-%dT%H:%M:%S%z", tz = tz),
+      Date = as.Date(time_utc, tz = tz),
       source_exact_hour = lubridate::minute(time_utc) == 0L &
         lubridate::second(time_utc) == 0L
     ) |>
@@ -461,19 +478,20 @@ era5_interpolate_1min <- function(hourly, timezone) {
   out
 }
 
-era5_build_site <- function(site, timezone) {
+era5_build_site <- function(site, tz) {
+  era5_validate_tz(tz)
   path <- file.path("data", "raw", "era5", paste0(site, ".csv"))
   if (!file.exists(path)) stop("Missing ERA5 site file: ", path)
   payload <- era5_read_payload(path)
-  cleaned <- era5_qc_hourly(payload$data, site, timezone, payload$payload_format)
+  cleaned <- era5_qc_hourly(payload$data, site, tz, payload$payload_format)
   hourly <- cleaned$hourly
   if (nrow(hourly) < 48L) stop("ERA5 file too short for ", site, ": ", nrow(hourly), " rows")
   if (any(diff(hourly$time_utc) <= 0)) stop("ERA5 time is not strictly increasing for ", site)
 
   list(
     hourly = hourly,
-    daily = era5_daily_summary(hourly, timezone),
-    minute = era5_interpolate_1min(hourly, timezone),
+    daily = era5_daily_summary(hourly, tz),
+    minute = era5_interpolate_1min(hourly, tz),
     qc = cleaned$qc
   )
 }
