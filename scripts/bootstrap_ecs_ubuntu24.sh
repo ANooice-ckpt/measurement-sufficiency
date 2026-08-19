@@ -20,7 +20,9 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   libblas-dev liblapack-dev \
   libcairo2-dev libfontconfig1-dev libfreetype6-dev \
   libharfbuzz-dev libfribidi-dev libpng-dev libjpeg-dev libtiff-dev \
-  libgit2-dev libssh2-1-dev
+  libgit2-dev libssh2-1-dev \
+  libv8-dev libabsl-dev libudunits2-dev \
+  libgdal-dev libgeos-dev libproj-dev libsqlite3-dev
 
 if [[ ! -x "${R_PREFIX}/bin/R" ]]; then
   work="$(mktemp -d)"
