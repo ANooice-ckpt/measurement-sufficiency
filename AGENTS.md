@@ -11,7 +11,18 @@ Read these files in order:
 4. `docs/RQ1_EXECUTION.md` — downstream RQ1 execution from completed core artifacts.
 5. `docs/DATA_INVENTORY.md` — generated local data inventory; regenerate it when the inventory script changes.
 
-If instructions conflict, scientific definitions in `docs/STUDY_SPEC.md` take priority. Extraction-only details belong to `docs/CORE_ARTIFACTS.md`. The old `scripts/05_rq1_reference.R` through `scripts/08_plot_fig1.R` and the earlier `06b_rq1_duration.R` are historical implementations and must not override the current artifact-first design.
+If instructions conflict, scientific definitions in `docs/STUDY_SPEC.md` take priority. Extraction-only details belong to `docs/CORE_ARTIFACTS.md`.
+
+The **only current downstream RQ1 executables** are:
+
+```text
+scripts/10_rq1_analysis.R
+scripts/11_plot_fig1.R
+```
+
+`scripts/10_rq1_analysis.R` reads the completed core artifacts and creates all RQ1 statistical/artifact outputs. `scripts/11_plot_fig1.R` reads those frozen RQ1 outputs and only renders Fig. 1; changing figure aesthetics must not require rerunning RQ1 analysis. The superseded pre-core `05`–`08` RQ1 scripts have been removed from `master`.
+
+The helper `scripts/utils/rq1_metrics.R` remains part of the **core extraction layer** because `09_build_core_artifacts.R` uses it to create configuration-level metric values. Do not reinterpret it as a third downstream RQ1 script and do not modify it while a core build is running.
 
 ## Current phase
 The current task is **core artifact extraction**: convert the expensive high-resolution MeLiDos source layer and already-downloaded ERA5 site series into durable analysis tables that support later RQ1–RQ3 work without returning to the 10-s light records or reprocessing hourly weather for ordinary statistical changes.
@@ -26,7 +37,14 @@ data/derived/core/weather_1min.csv.gz
 
 `metric_cube` and `unit_context` are the two main analysis artifacts. `weather_1min` is an auxiliary reusable continuous-context artifact; daily ERA5 summaries are merged into `unit_context`.
 
-After the core build completes, downstream RQ1 should read these artifacts rather than rerun high-resolution metric computation. RQ2 models, RQ3 sufficiency, bootstrap, duration-window selection, and manuscript outputs remain downstream choices and must not be written into the core artifacts.
+After the core build completes, run the downstream sequence:
+
+```bash
+Rscript scripts/10_rq1_analysis.R
+Rscript scripts/11_plot_fig1.R
+```
+
+RQ2 models, RQ3 sufficiency, bootstrap, duration-window selection, and manuscript outputs remain downstream choices and must not be written into the core artifacts.
 
 ## Working principles
 - Preserve the scientific mapping `measurement configuration -> target representation` before any distortion/statistical projection.
