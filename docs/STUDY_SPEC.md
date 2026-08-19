@@ -5,7 +5,7 @@ This file is the human-readable scientific source of truth for the current analy
 
 **How Much Measurement Is Enough? Measurement Sufficiency in Personal Light Exposure Assessment**
 
-The present execution phase is RQ1. RQ2 and RQ3 are retained below only to preserve the logic of the full study.
+The expensive core-artifact extraction is currently running. Once complete, RQ1–RQ3 statistics must be derived from the reusable core artifacts rather than returning to the 10-s source for ordinary analytical changes. RQ2 and RQ3 are retained below to preserve the logic of the full study.
 
 ## 1. Scientific object
 A measurement configuration is represented as
@@ -53,27 +53,41 @@ Upstream preprocessing provides the reference for:
 
 The Zauner three-position concurrency rule belongs to the upstream placement-paper reproduction only. It is **not** a default sample restriction for this study.
 
+The expensive high-resolution computation is materialized in:
+
+```text
+data/derived/core/metric_cube.csv.gz
+data/derived/core/unit_context.csv.gz
+data/derived/core/weather_1min.csv.gz
+```
+
+After these artifacts are complete, downstream distortion, duration-window construction, bootstrap, RQ2 models, sufficiency, and Pareto calculations should use them. See `docs/CORE_ARTIFACTS.md` for the extraction schema and support lattice.
+
 ## 4. Reference configuration and observable domains
 The conceptual high-information reference configuration is:
 
 - placement: near-corneal / glasses,
 - optical quantity: melanopic EDI (`MEDI`),
 - temporal resolution: harmonized 10-s grid,
-- monitoring duration: 7 valid monitoring days.
+- monitoring duration: 7 consecutive valid monitoring days.
 
 Single-dimension RQ1 analyses vary one measurement dimension while holding the other dimensions at their reference state as far as the data permit.
 
 For each target metric `k`, define a target-specific observable configuration domain `C_obs[k]`. A configuration for which the target representation cannot be computed is **unavailable**, not “high distortion” and not “insufficient”. Availability must therefore be recorded explicitly.
 
+Support is part of the estimand. Single-dimension main effects use the maximum common valid support required for that comparison. Eye–chest and eye–wrist therefore retain separate pairwise support lattices. Stricter all-position or multi-information supports are used only when a joint configuration analysis requires them and must not silently replace the maximal-support single-dimension analyses.
+
 ## 5. RQ1 — Representation distortion across measurement configurations
 
 ### 5.1 General workflow
 For each measurement dimension:
-1. construct the reference and alternative configurations on an explicitly defined common support;
-2. compute the same target metric definition on the reference and candidate records;
+1. select the appropriate explicit support lattice from the core artifacts;
+2. identify the reference and candidate configuration-level target metric values on that lattice;
 3. calculate the smallest-unit signed representation distortion;
 4. preserve the empirical distortion distribution;
 5. derive summary projections and uncertainty only after the distribution exists.
+
+Do not recompute the expensive 54-metric high-resolution configuration layer from the 10-s source unless the core artifacts are shown to be scientifically wrong.
 
 ### 5.2 Measurement placement
 Reference: near-corneal / glasses.
@@ -86,7 +100,7 @@ Rules:
 - eye–chest and eye–wrist analyses use their **pairwise maximum valid sample** separately;
 - do not require the third placement;
 - within each pair, retain only synchronized time support on which the two compared positions are jointly valid;
-- apply the same upstream non-wear/range/completeness logic after constructing pairwise common support;
+- use the corresponding pairwise `*_medi` or `*_full` support according to the target representation;
 - only compare like-for-like ActLumus placement streams; do not introduce a device-type confound.
 
 Because the protocol places devices near the bed during sleep, “placement” should be interpreted as the **protocol-defined measurement placement**, not as a literal anatomical placement throughout all 24 h.
@@ -99,45 +113,50 @@ Alternative: synchronous near-corneal photopic illuminance (`LIGHT`).
 Operational rule:
 - for metrics defined by an operator acting on one scalar light channel, apply the same operator and the same numerical parameters to `MEDI` and `LIGHT`; the resulting difference is the empirical distortion induced by using photopic illuminance as the optical proxy;
 - holding a numerical threshold fixed across `MEDI` and `LIGHT` is an operational proxy comparison and must not be described as physical equivalence of photopic and melanopic lux;
-- metrics that intrinsically require information unavailable from a photopic-only channel are marked unavailable rather than assigned a numerical distortion. At minimum, any representation requiring both `MEDI` and `LIGHT` simultaneously (for example MDER or nvRD as defined upstream) must be checked explicitly in the availability table.
+- metrics that intrinsically require information unavailable from a photopic-only channel are marked unavailable rather than assigned a numerical distortion. In the current metric system, MDER and nvRD require both `MEDI` and `LIGHT` and are unavailable for a `LIGHT`-only proxy configuration.
 
 Do not invent a spectral conversion model in RQ1.
 
 ### 5.4 Temporal resolution
 Reference: harmonized 10-s record.
 
-Alternatives:
+Primary alternatives:
+- 15 s,
+- 20 s,
 - 30 s,
 - 1 min,
 - 5 min,
 - 15 min,
 - 30 min.
 
+The core cube also retains 2 min, 10 min, and 60 min as **reserve extraction levels**. They are not primary RQ1 levels unless the study specification is explicitly changed later.
+
 Rules:
-- construct every coarser series from the same cleaned 10-s reference record;
-- use one explicit, deterministic time-binning rule across all sites and configurations;
-- aggregate only observed values within bins and retain explicit missing support;
-- ensure reference and candidate metrics are evaluated over the same admissible underlying support so that apparent fidelity is not driven by configuration-specific missingness;
-- recompute all target metrics from each candidate time series rather than algebraically modifying the 10-s metric output.
+- all candidate series are constructed from the same cleaned 10-s reference record;
+- use the deterministic clock-anchored binning implemented in the core artifact layer across all sites and configurations;
+- aggregate only observed values within bins and retain fully missing bins as missing;
+- reference and candidate metrics must be compared on the same admissible support lattice so apparent fidelity is not driven by configuration-specific missingness;
+- all target metrics are recomputed from each configured time series in the core layer rather than algebraically modified from the 10-s metric output;
+- pulse-family representations are structurally unavailable when the configured epoch is 5 min or coarser under the upstream LightLogR operator definitions and must be marked unavailable rather than assigned extreme distortion.
 
 ### 5.5 Monitoring duration
-Reference: a participant-level representation based on 7 valid near-corneal 10-s `MEDI` monitoring days.
+Reference: a participant-level representation based on an **unambiguous sequence of exactly 7 consecutive valid near-corneal 10-s `MEDI` monitoring days**.
 
-Alternatives: 1–6 valid days.
+Primary alternatives: consecutive 1–6 d windows contained within that fixed 7-day reference.
 
-For the 52 participant-day metrics, first compute the metric separately for each valid day, then define the participant-level `d`-day representation as the mean of the selected daily metric values:
+Do not arbitrarily choose seven days from participants with more than seven valid days when the canonical seven-day protocol window cannot be uniquely resolved. Under the current strict primary rule, such participants are excluded from duration analysis rather than reduced to seven days by convenience.
 
-`M_k^(d,S) = mean_{j in S} M_k(day_j)`
+For each eligible participant and each `d = 1..6`, enumerate all contiguous windows
 
-where `S` is a selected subset of `d` valid days.
+`W_(d,j) = {j, j+1, ..., j+d-1},  j = 1, ..., 8-d`.
 
-The 7-day reference is:
+Window-selection variability is part of the empirical distortion structure. Random sampling is unnecessary because the finite contiguous-window space is small. Enumeration of all non-contiguous `choose(7,d)` subsets is not part of the primary estimand; it may be used only as a specifically motivated secondary robustness analysis.
 
-`M_k^(7) = mean_{j=1..7} M_k(day_j)`
+For the 52 participant-day metrics, first compute the metric separately for each valid day, then aggregate selected daily metric values across the window. Linear metrics use the arithmetic mean. Genuine circular clock-time metrics use the circular mean on the 24-h clock to avoid midnight discontinuities.
 
-For IS and IV, recompute the metric directly from the corresponding selected multi-day time series; do not average daily values.
+The 7-day reference is constructed using the same aggregation rule over all seven days.
 
-Day-window selection variability is part of the empirical distortion structure. With a seven-day reference, enumerate all `choose(7,d)` subsets for `d = 1..6` when the canonical seven-day reference window is unambiguous; this is preferred to Monte Carlo sampling because the finite subset space is small. If local data contain more than seven candidate valid days and the canonical protocol window cannot be resolved from the upstream metadata/cleaning logic, report that ambiguity before choosing an arbitrary window.
+For IS and IV, reconstruct the metric directly from the selected multi-day hourly transformed-light basis stored in `unit_context`; do not average daily values and do not return to the 10-s source.
 
 ### 5.6 Smallest analysis units
 For placement, optical, and temporal-resolution analyses:
@@ -145,7 +164,7 @@ For placement, optical, and temporal-resolution analyses:
 - IS/IV: participant-level multi-day representation on the admissible records available for that comparison.
 
 For monitoring duration:
-- participant × selected day subset for the candidate representation, compared with the same participant’s fixed 7-day reference.
+- participant × contiguous selected day window for the candidate representation, compared with the same participant’s fixed 7-day reference.
 
 Do not average away the smallest-unit error before constructing the empirical distortion distribution.
 
@@ -160,7 +179,7 @@ where:
 
 Use ordinary signed differences for linear metrics. For genuinely circular clock-time representations, use the shortest signed circular difference. The corresponding standardizer must be expressed on a compatible time scale; do not create midnight discontinuities.
 
-For placement, eye–chest and eye–wrist are separate pairwise comparison lattices because their maximum valid supports may differ. For temporal resolution, all candidate levels share one reference support/standardizer within a metric. Optical has one alternative. Duration levels share the same eligible 7-day reference cohort/standardizer within a metric.
+For placement, eye–chest and eye–wrist are separate pairwise comparison lattices because their maximum valid supports may differ. For temporal resolution, all primary candidate levels share one reference support/standardizer within a metric. Optical has one alternative. Duration levels share the same eligible 7-day reference cohort/standardizer within a metric.
 
 If the reference dispersion is zero or numerically degenerate, mark the standardized distortion undefined for that metric/comparison and report it; do not insert an arbitrary epsilon without inspection.
 
@@ -188,7 +207,9 @@ By construction:
 
 This inequality is both a geometric property used in Fig. 1 and a required diagnostic.
 
-Uncertainty for `A` and `B` is estimated with participant-cluster bootstrap stratified by study site. For duration, day-subset selection is already represented within participant; bootstrap resamples participants within site while preserving each selected participant’s subset structure.
+For placement, optical, and temporal resolution, uncertainty for `A` and `B` is estimated with participant-cluster bootstrap stratified by study site. Preserve all rows belonging to a resampled participant.
+
+The current strict duration cohort contains only three eligible participants distributed one per site. A site-stratified participant bootstrap would therefore degenerate and must not be presented as population-level uncertainty. Duration retains its full participant × contiguous-window empirical distribution and point estimates, with the limited population support reported explicitly. Do not manufacture precision by relaxing the frozen cohort rule solely to enable bootstrap inference.
 
 Supplementary representation-retention diagnostics may include Lin’s CCC, Spearman correlation, and clearly meaningful classification agreement. They are secondary diagnostics and do not replace `D(e)`, `A`, or `B` as the RQ1 scientific object.
 
@@ -208,32 +229,37 @@ Panels b–e: `B` on the x-axis and `A` on the y-axis, with the boundaries `A = 
 - d: temporal resolution — main-text example uses 30 min relative to 10 s;
 - e: monitoring duration — main-text example uses 1 d relative to 7 d.
 
-Each point is one target metric. Color encodes the six published metric classes. Only representative/extreme metrics should be labelled. Use participant-cluster bootstrap 95% CIs for `A` and `B`. Other temporal-resolution and monitoring-duration levels belong in supplementary outputs rather than being crowded into the main figure.
+Each point is one target metric. Color encodes the six published metric classes. Only representative/extreme metrics should be labelled. Participant-cluster bootstrap CIs are shown where supported; the duration panel must not display a degenerate population bootstrap CI for the current three-participant cohort. Other temporal-resolution and monitoring-duration levels belong in supplementary outputs rather than being crowded into the main figure.
 
 Panel-a examples must be selected algorithmically from the computed results, not hand-picked to support a narrative. A practical selection rule is documented in `docs/RQ1_EXECUTION.md`.
 
-## 9. RQ2 — retained for study continuity, not current execution
+## 9. RQ2 — Conditionality and separability
 RQ2 asks whether the distortion distribution changes with the actual exposure process/external environment and whether the effects of configuration dimensions are separable.
 
-The primary object remains the RQ1 smallest-unit distortion. Reference-exposure-state models are explanatory; external-only models assess pre-measurement predictability. Cross-dimensional dependence is represented by a second-order distortion contrast. Do not implement RQ2 during the current RQ1 phase.
+The primary object remains the RQ1 smallest-unit distortion. Reference-exposure-state models are explanatory; external-only models assess pre-measurement predictability. ERA5 daily context in `unit_context` and reusable 1-min context in `weather_1min` support later window definitions without another weather preprocessing pass. Cross-dimensional dependence is represented by a second-order distortion contrast constructed only over empirically observable joint configuration/support cells.
 
-## 10. RQ3 — retained for study continuity, not current execution
+Do not put RQ2 model outputs into the core artifacts.
+
+## 10. RQ3 — Measurement sufficiency
 For a target metric `k` and acceptable mean absolute standardized distortion `epsilon`, define a target-specific sufficient set only within the empirically observable domain:
 
 `S_k(epsilon) = {c in C_obs[k] : A_k(c) <= epsilon}`
 
 Sufficiency is conditional on the target representation, the observed exposure-process distribution, the acceptable distortion requirement, and the available measurement constraints.
 
-Do not assume monotonic configuration–distortion responses. For ordered dimensions, a “least-demanding sufficient observed level” can be reported; call it a minimum requirement only when the observed sufficient set is upward-closed. Placement has no artificial total burden ordering. Pareto dominance is defined only over dimensions with justified requirement orderings, with unordered states treated as incomparable/faceted.
+Do not assume monotonic configuration–distortion responses. For ordered dimensions, a “least-demanding sufficient observed level” can be reported; call it a minimum requirement only when the observed sufficient set is upward-closed.
 
-Do not implement RQ3 during the current RQ1 phase.
+Temporal resolution and monitoring duration have justified requirement orderings. Placement has no artificial total burden ordering. The current MEDI/LIGHT optical states are also treated as unordered configuration states for Pareto dominance rather than assigned a universal burden order. Pareto dominance is therefore defined only over justified ordered dimensions, with unordered states treated as incomparable/faceted unless a future application explicitly supplies a cost order.
 
-## 11. Non-goals for the current phase
+Do not put sufficiency or Pareto labels into the core artifacts.
+
+## 11. Non-goals
 Do not:
 - expand the 54-metric system;
-- add machine-learning models;
+- add machine-learning models without a specific RQ2 need;
 - add new universal sufficiency thresholds;
-- download ERA5 for RQ1;
 - create a new taxonomy of exposure representations;
 - add large sensitivity-analysis batteries;
-- optimize figure aesthetics before the RQ1 numerical objects and diagnostics are validated.
+- treat reserve extraction levels as primary results by default;
+- use ERA5 to redefine the RQ1 distortion estimand;
+- optimize figure aesthetics before the numerical objects and diagnostics are validated.
