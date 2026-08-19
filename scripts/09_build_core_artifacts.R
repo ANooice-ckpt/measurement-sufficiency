@@ -44,7 +44,6 @@ if (length(missing_weather)) {
 }
 
 # Stage 0: parse and QC all ERA5 payloads before starting the expensive metric run.
-# This catches wrong CDS output formats/columns and physical-range problems early.
 message("[weather] validate, summarize, and interpolate ERA5")
 weather_build_one <- function(i) {
   site <- site_meta$site[i]
@@ -74,8 +73,6 @@ weather_qc_paths <- vapply(weather_blocks, `[[`, character(1), "qc")
 weather_daily <- map_dfr(weather_daily_paths, readRDS)
 weather_1min <- map_dfr(weather_minute_paths, readRDS)
 weather_qc <- map_dfr(weather_qc_paths, readRDS)
-
-# Global weather artifact: reusable for arbitrary later time-window summaries.
 readr::write_csv(weather_1min, "data/derived/core/weather_1min.csv.gz", na = "")
 readr::write_csv(weather_qc, "logs/era5_qc.csv", na = "")
 
@@ -101,8 +98,7 @@ support_paths <- support_paths[!is.na(support_paths) & file.exists(support_paths
 if (!length(support_paths)) stop("No support blocks were produced")
 
 # Stage 2: compute every observable placement x optical x temporal-resolution
-# configuration. Metric and context blocks persist independently so a pre-empted
-# cloud run can resume without repeating completed blocks.
+# configuration. Blocks persist independently so a pre-empted cloud run can resume.
 compute_one <- function(path) {
   key <- tools::file_path_sans_ext(basename(path))
   metric_out <- file.path("data/interim/core/metrics", paste0(key, "__metrics.rds"))
@@ -137,7 +133,8 @@ metric_key <- c(
   "placement", "optical", "resolution_s", "config_id", "metric"
 )
 duplicate_metric_keys <- metric_cube |>
-  count(across(all_of(metric_key)), name = "n") |>
+  group_by(across(all_of(metric_key))) |>
+  summarise(n = n(), .groups = "drop") |>
   filter(n > 1L)
 if (nrow(duplicate_metric_keys)) {
   write.csv(duplicate_metric_keys, "logs/core_metric_duplicate_keys.csv", row.names = FALSE)
@@ -145,14 +142,27 @@ if (nrow(duplicate_metric_keys)) {
 }
 readr::write_csv(metric_cube, "data/derived/core/metric_cube.csv.gz", na = "")
 
-# Stage 4: configuration-level participant-day context. Join the daily ERA5
-# summaries by official site + local calendar date. The 1-minute weather artifact
-# remains separate to avoid duplicating millions of continuous-context values.
+# Stage 4: configuration-level participant-day context. ERA5 daily summaries are
+# attached by official site + local calendar date. Continuous weather remains in
+# weather_1min to avoid redundant expansion across metric/configuration rows.
 config_context <- map_dfr(context_paths, readRDS)
 unit_context <- config_context |>
   left_join(site_meta, by = "site") |>
   left_join(weather_daily, by = c("site", "Date")) |>
   mutate(
+    # Use the actual number of local hourly accumulation intervals. This is 23/25
+    # on daylight-saving transition days rather than forcing a 24-hour denominator.
+    era5_ssrd_daily_mean_w_m2 = if_else(
+      is.finite(era5_ssrd_sum_mj_m2) & era5_hours_accumulated > 0,
+      era5_ssrd_sum_mj_m2 * 1e6 / (era5_hours_accumulated * 3600), NA_real_
+    ),
+    era5_fdir_daily_mean_w_m2 = if_else(
+      is.finite(era5_fdir_sum_mj_m2) & era5_hours_accumulated > 0,
+      era5_fdir_sum_mj_m2 * 1e6 / (era5_hours_accumulated * 3600), NA_real_
+    ),
+    era5_complete_local_day =
+      era5_hours_instantaneous == era5_hours_accumulated &
+      era5_hours_instantaneous %in% c(23L, 24L, 25L),
     year = lubridate::year(Date),
     month = lubridate::month(Date),
     day_of_year = lubridate::yday(Date),
@@ -162,6 +172,8 @@ unit_context <- config_context |>
   select(
     support_id, site, Id, analysis_unit_type, analysis_unit_id, Date,
     valid_day_index, support_valid_day_count,
+    raw_eye_recording_start, raw_eye_recording_end,
+    raw_eye_span_hours, raw_eye_calendar_day_count,
     support_recording_start, support_recording_end, support_span_hours,
     placement, optical, resolution_s, is_primary_resolution, config_id,
     city, country, timezone, latitude, longitude,
@@ -172,7 +184,8 @@ unit_context <- config_context |>
   )
 context_key <- c("support_id", "site", "Id", "Date", "config_id")
 duplicate_context_keys <- unit_context |>
-  count(across(all_of(context_key)), name = "n") |>
+  group_by(across(all_of(context_key))) |>
+  summarise(n = n(), .groups = "drop") |>
   filter(n > 1L)
 if (nrow(duplicate_context_keys)) {
   write.csv(duplicate_context_keys, "logs/core_context_duplicate_keys.csv", row.names = FALSE)
@@ -186,12 +199,12 @@ missing_study_weather <- unit_context |>
   arrange(site, Date)
 write.csv(missing_study_weather, "logs/era5_missing_study_dates.csv", row.names = FALSE)
 
-# Compact factual diagnostics. Do not bake RQ1/RQ2/RQ3 statistical choices into
-# the extraction artifacts.
+n_metric_participants <- metric_cube |> distinct(site, Id) |> nrow()
+n_context_participants <- unit_context |> distinct(site, Id) |> nrow()
 diag <- tibble(
   artifact = c("metric_cube", "unit_context", "weather_1min"),
   rows = c(nrow(metric_cube), nrow(unit_context), nrow(weather_1min)),
-  participants = c(n_distinct(metric_cube$Id), n_distinct(unit_context$Id), NA_integer_),
+  participants = c(n_metric_participants, n_context_participants, NA_integer_),
   sites = c(n_distinct(metric_cube$site), n_distinct(unit_context$site), n_distinct(weather_1min$site))
 )
 write.csv(diag, "logs/core_artifact_summary.csv", row.names = FALSE)
