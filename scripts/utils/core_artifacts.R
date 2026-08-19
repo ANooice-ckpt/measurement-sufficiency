@@ -15,8 +15,8 @@ core_site_metadata <- function() {
   )
 }
 
-core_primary_resolutions <- function() c(10L, 30L, 60L, 300L, 900L, 1800L)
-core_all_resolutions <- function() c(10L, 30L, 60L, 120L, 300L, 600L, 900L, 1800L, 3600L)
+core_primary_resolutions <- function() c(10L, 15L, 20L, 30L, 60L, 300L, 900L, 1800L)
+core_all_resolutions <- function() c(10L, 15L, 20L, 30L, 60L, 120L, 300L, 600L, 900L, 1800L, 3600L)
 
 core_build_state_intervals <- function(sleep, wear) {
   sleep_adj <- sleep |>
