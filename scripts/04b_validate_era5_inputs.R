@@ -41,27 +41,38 @@ required_aliases <- list(
 rows <- vector("list", nrow(site_meta))
 missing_fields <- list()
 for (i in seq_len(nrow(site_meta))) {
-  site <- site_meta$site[i]
-  timezone <- site_meta$timezone[i]
-  path <- file.path("data", "raw", "era5", paste0(site, ".csv"))
+  site_i <- site_meta$site[i]
+  timezone_i <- site_meta$timezone[i]
+  path <- file.path("data", "raw", "era5", paste0(site_i, ".csv"))
   if (!file.exists(path)) stop("Missing ERA5 file: ", path)
 
   payload <- era5_read_payload(path)
   x <- payload$data
-  dt <- era5_pick_time(x)
-  dt <- sort(unique(dt[!is.na(dt)]))
-  if (length(dt) < 2L) stop("ERA5 has fewer than two valid timestamps for ", site)
+  parsed_time <- era5_pick_time(x)
+  if (any(is.na(parsed_time))) stop("Unparseable ERA5 timestamp(s) for ", site_i)
+  dt <- sort(unique(parsed_time))
+  if (length(dt) < 2L) stop("ERA5 has fewer than two valid timestamps for ", site_i)
 
   miss <- names(required_aliases)[!vapply(required_aliases, function(a) any(a %in% names(x)), logical(1))]
-  if (length(miss)) missing_fields[[site]] <- miss
+  if (length(miss)) missing_fields[[site_i]] <- miss
 
   diffs <- as.numeric(diff(dt), units = "secs")
-  local_dates <- as.Date(lubridate::with_tz(dt, timezone))
-  study <- eye_inv |> filter(site == !!site)
-  if (nrow(study) != 1L) stop("Could not resolve one light_glasses inventory row for ", site)
+  local_dates <- as.Date(lubridate::with_tz(dt, timezone_i))
+  study <- eye_inv |> filter(.data$site == site_i)
+  if (nrow(study) != 1L) stop("Could not resolve one light_glasses inventory row for ", site_i)
+
+  grid_lat_vec <- era5_pick_numeric(x, c("latitude"))
+  grid_lon_vec <- era5_pick_numeric(x, c("longitude"))
+  grid_lat <- if (any(is.finite(grid_lat_vec))) grid_lat_vec[which(is.finite(grid_lat_vec))[1]] else NA_real_
+  grid_lon <- if (any(is.finite(grid_lon_vec))) grid_lon_vec[which(is.finite(grid_lon_vec))[1]] else NA_real_
+  expected_lat <- site_meta$latitude[i]
+  expected_lon <- site_meta$longitude[i]
+  lon_delta <- if (is.finite(grid_lon)) abs(((grid_lon - expected_lon + 180) %% 360) - 180) else Inf
+  grid_matches_site <- is.finite(grid_lat) && is.finite(grid_lon) &&
+    abs(grid_lat - expected_lat) <= 0.26 && lon_delta <= 0.26
 
   rows[[i]] <- tibble(
-    site = site,
+    site = site_i,
     payload_format = payload$payload_format,
     n_rows = nrow(x),
     n_columns = ncol(x),
@@ -72,12 +83,15 @@ for (i in seq_len(nrow(site_meta))) {
     study_date_min = study$light_date_min,
     study_date_max = study$light_date_max,
     covers_study_dates = min(local_dates) <= study$light_date_min & max(local_dates) >= study$light_date_max,
-    n_duplicate_times = nrow(x) - length(unique(era5_pick_time(x))),
+    n_duplicate_times = nrow(x) - length(unique(parsed_time)),
     median_epoch_s = median(diffs),
     n_nonhourly_gaps = sum(diffs != 3600),
     n_missing_required_fields = length(miss),
-    grid_latitude = era5_pick_numeric(x, c("latitude"))[which(is.finite(era5_pick_numeric(x, c("latitude"))))[1]],
-    grid_longitude = era5_pick_numeric(x, c("longitude"))[which(is.finite(era5_pick_numeric(x, c("longitude"))))[1]]
+    grid_latitude = grid_lat,
+    grid_longitude = grid_lon,
+    expected_latitude = expected_lat,
+    expected_longitude = expected_lon,
+    grid_matches_site = grid_matches_site
   )
 }
 
@@ -99,6 +113,9 @@ if (any(audit$n_nonhourly_gaps > 0L)) {
 }
 if (any(!audit$covers_study_dates)) {
   stop("ERA5 date coverage does not span all near-corneal study dates; inspect logs/era5_input_inventory.csv")
+}
+if (any(!audit$grid_matches_site)) {
+  stop("ERA5 grid coordinate does not match the named MeLiDos site for one or more files; inspect logs/era5_input_inventory.csv")
 }
 
 message("ERA5 input preflight passed for all ", nrow(audit), " sites")
