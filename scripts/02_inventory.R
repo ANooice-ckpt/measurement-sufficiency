@@ -4,19 +4,30 @@ suppressPackageStartupMessages({ library(dplyr); library(tidyr) })
 files <- list.files("data/raw/melidos", pattern = "[.]RData$", full.names = TRUE)
 if (!length(files)) stop("No source files found; run scripts/01_download_melidos.R first")
 
+participant_epoch_diffs <- function(x) {
+  if (!all(c("Id", "Datetime") %in% names(x))) return(numeric())
+  by_id <- split(x$Datetime, x$Id)
+  unlist(lapply(by_id, function(z) {
+    z <- sort(unique(z[!is.na(z)]))
+    if (length(z) < 2L) return(numeric())
+    as.numeric(diff(z), units = "secs")
+  }), use.names = FALSE)
+}
+
 inventory <- lapply(files, function(path) {
   bits <- strsplit(tools::file_path_sans_ext(basename(path)), "__", fixed = TRUE)[[1]]
   site <- bits[[1]]; modality <- bits[[2]]; x <- load_raw_file(path, modality)
   ids <- if ("Id" %in% names(x)) unique(x$Id) else character()
   dt <- if ("Datetime" %in% names(x)) x$Datetime else as.POSIXct(character())
   numeric_cols <- names(x)[vapply(x, is.numeric, logical(1))]
-  epochs <- if (length(dt) > 1L) as.numeric(diff(sort(unique(dt))), units = "secs") else numeric()
+  epochs <- participant_epoch_diffs(x)
+  epochs <- epochs[is.finite(epochs) & epochs > 0]
   data.frame(site, modality, n_participants = length(ids), n_rows = nrow(x),
     date_min = if (length(dt)) as.character(min(dt, na.rm = TRUE)) else NA_character_,
     date_max = if (length(dt)) as.character(max(dt, na.rm = TRUE)) else NA_character_,
     n_participant_days = participant_days(x), columns = paste(names(x), collapse = "|"),
     missing_numeric_fraction = if (length(numeric_cols)) mean(is.na(as.matrix(x[numeric_cols]))) else NA_real_,
-    median_epoch_seconds = if (length(epochs)) median(epochs[is.finite(epochs) & epochs > 0], na.rm = TRUE) else NA_real_,
+    median_epoch_seconds = if (length(epochs)) median(epochs, na.rm = TRUE) else NA_real_,
     bytes = file.info(path)$size)
 }) |> bind_rows()
 
@@ -38,6 +49,7 @@ write.csv(intersections, "logs/sample_intersections.csv", row.names = FALSE)
 shown <- inventory[, c("site", "modality", "n_participants", "n_rows", "date_min", "date_max", "n_participant_days", "missing_numeric_fraction", "median_epoch_seconds")]
 lines <- c("# Data inventory", "", sprintf("Generated on %s by `scripts/02_inventory.R`.", format(Sys.time())), "",
   "Machine-readable outputs: `logs/data_inventory.csv` and `logs/sample_intersections.csv`.", "",
+  "`median_epoch_seconds` is computed from within-participant timestamp differences; timestamps from different participants are never interleaved for this diagnostic.", "",
   "## Site × modality", "", paste0("| ", paste(names(shown), collapse = " | "), " |"),
   paste0("|", paste(rep("---", ncol(shown)), collapse = "|"), "|"),
   apply(shown, 1, function(z) paste0("| ", paste(z, collapse = " | "), " |")), "",

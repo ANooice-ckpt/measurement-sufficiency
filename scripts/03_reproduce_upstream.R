@@ -10,6 +10,8 @@ sites <- Reduce(intersect, lapply(required, function(m) {
   available <- melidos_sites()[file.exists(vapply(melidos_sites(), raw_data_path, character(1), modality = m))]
   sites_for_modality(available, m)
 }))
+site_override <- Sys.getenv("REPRO_SITES", "")
+if (nzchar(site_override)) sites <- intersect(sites, trimws(strsplit(site_override, ",", fixed = TRUE)[[1]]))
 if (!length(sites)) stop("No site has all five inputs required by the Zauner three-position reproduction")
 
 load_modality <- function(modality) setNames(lapply(sites, function(site) load_raw_file(raw_data_path(site, modality), modality)), sites)
