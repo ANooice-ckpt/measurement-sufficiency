@@ -107,11 +107,32 @@ p2a <- ggplot(exd, aes(e, color = state_bin_label, fill = state_bin_label)) +
   theme_ms(base_size = 7.4, aspect_ratio = 1, legend_position = "bottom") +
   theme(strip.text = element_text(size = 6.4), legend.text = element_text(size = 6.5))
 
+conditional_panel_data <- function(dim) {
+  finite_all <- cg |>
+    filter(dimension == dim, is.finite(A_conditional), is.finite(B_conditional))
+  anchored <- finite_all |>
+    semi_join(anchors |> filter(dimension == dim), by = c("dimension", "configuration"))
+
+  if (nrow(anchored) || dim != "duration" || !nrow(finite_all)) return(anchored)
+
+  # Duration can be population-sparse even when some configuration-specific
+  # conditional geometry is descriptively estimable. If the predeclared
+  # shortest-duration anchor has no finite cells, use the best-supported
+  # available duration configuration rather than drawing a false empty panel.
+  fallback <- finite_all |>
+    count(configuration, configuration_label, configuration_order, name = "n_finite_cells") |>
+    arrange(desc(n_finite_cells), desc(configuration_order)) |>
+    slice_head(n = 1)
+  message(
+    "Fig. 2 duration anchor has no finite conditional geometry; using ",
+    fallback$configuration_label[[1]], " (", fallback$n_finite_cells[[1]], " finite cells)."
+  )
+  finite_all |>
+    semi_join(fallback, by = c("configuration", "configuration_label", "configuration_order"))
+}
+
 conditional_ab_panel <- function(dim, letter) {
-  d <- cg |>
-    filter(dimension == dim) |>
-    semi_join(anchors |> filter(dimension == dim), by = c("dimension", "configuration")) |>
-    filter(is.finite(A_conditional), is.finite(B_conditional)) |>
+  d <- conditional_panel_data(dim) |>
     arrange(metric, configuration, state_bin)
   if (!nrow(d)) {
     return(
@@ -138,12 +159,13 @@ conditional_ab_panel <- function(dim, letter) {
     base_square_theme
 }
 
+# Keep the right-hand 2 x 2 block homogeneous: all four are conditional A-B geometry.
 p2b <- conditional_ab_panel("placement", "b")
 p2c <- conditional_ab_panel("optical", "c")
-p2d <- conditional_ab_panel("temporal", "d")
 p2e <- conditional_ab_panel("duration", "e")
+p2f <- conditional_ab_panel("temporal", "f")
 
-# Fig. 2f: grouped-CV predictability versus leave-site-out transportability.
+# Fig. 2d: grouped-CV predictability versus leave-site-out transportability.
 perfwide <- perf |>
   filter(is.finite(r2), validation_scheme %in% c("participant_grouped", "leave_site_out")) |>
   select(dimension, configuration, metric, metric_class, outcome, model_family, model_label, validation_scheme, r2) |>
@@ -154,7 +176,7 @@ if (nrow(perfwide)) {
   lims <- range(c(perfwide$participant_grouped, perfwide$leave_site_out), finite = TRUE)
   pad <- .05 * diff(lims); if (!is.finite(pad) || pad == 0) pad <- .1
   lims <- c(lims[1] - pad, lims[2] + pad)
-  p2f <- ggplot(perfwide, aes(participant_grouped, leave_site_out, color = model_label, shape = model_label)) +
+  p2d <- ggplot(perfwide, aes(participant_grouped, leave_site_out, color = model_label, shape = model_label)) +
     geom_abline(slope = 1, intercept = 0, linetype = 2, linewidth = .35, color = "#777777") +
     geom_point(size = 1.0, alpha = .56) +
     facet_wrap(~outcome, ncol = 1) +
@@ -162,20 +184,20 @@ if (nrow(perfwide)) {
     scale_shape_manual(values = c(External = 16, `Exposure state` = 17, Joint = 15)) +
     coord_equal(xlim = lims, ylim = lims) +
     labs(
-      title = "f  Predictability → transportability",
+      title = "d  Predictability → transportability",
       x = "grouped-participant CV R²", y = "leave-site-out R²", color = NULL, shape = NULL
     ) +
     theme_ms(base_size = 7.4, aspect_ratio = 1, legend_position = "bottom") +
     theme(legend.text = element_text(size = 6.5))
 } else {
-  p2f <- ggplot() + annotate("text", x = 0, y = 0, label = "Prediction models not estimable", size = 3) +
-    xlim(-1, 1) + ylim(-1, 1) + labs(title = "f  Predictability → transportability") + base_square_theme
+  p2d <- ggplot() + annotate("text", x = 0, y = 0, label = "Prediction models not estimable", size = 3) +
+    xlim(-1, 1) + ylim(-1, 1) + labs(title = "d  Predictability → transportability") + base_square_theme
 }
 
 fig2body <- plot_grid(p2a, p2b, p2c, p2d, p2e, p2f, ncol = 3, align = "hv", axis = "tblr")
 fig2 <- plot_grid(fig2body, metric_legend, ncol = 1, rel_heights = c(1, .07))
-ggsave(file.path(FIG_DIR, "Fig2_RQ2.pdf"), fig2, width = 12.2, height = 8.4, useDingbats = FALSE)
-ggsave(file.path(FIG_DIR, "Fig2_RQ2.png"), fig2, width = 12.2, height = 8.4, dpi = 220)
+ggsave(file.path(FIG_DIR, "Fig2_RQ2.pdf"), fig2, width = 12.2, height = 8.4, useDingbats = FALSE, bg = "white")
+ggsave(file.path(FIG_DIR, "Fig2_RQ2.png"), fig2, width = 12.2, height = 8.4, dpi = 220, bg = "white")
 
 # Fig. 3a: second-order contrast schematic; schematic keeps the common frame but no grid/axes.
 scells <- tribble(
@@ -269,6 +291,6 @@ p3f <- ggplot(scope, aes(a, b)) +
 
 fig3body <- plot_grid(p3a, p3b, p3c, p3d, p3e, p3f, ncol = 3, align = "hv", axis = "tblr")
 fig3 <- plot_grid(fig3body, metric_legend, ncol = 1, rel_heights = c(1, .07))
-ggsave(file.path(FIG_DIR, "Fig3_RQ2.pdf"), fig3, width = 12.2, height = 8.4, useDingbats = FALSE)
-ggsave(file.path(FIG_DIR, "Fig3_RQ2.png"), fig3, width = 12.2, height = 8.4, dpi = 220)
+ggsave(file.path(FIG_DIR, "Fig3_RQ2.pdf"), fig3, width = 12.2, height = 8.4, useDingbats = FALSE, bg = "white")
+ggsave(file.path(FIG_DIR, "Fig3_RQ2.png"), fig3, width = 12.2, height = 8.4, dpi = 220, bg = "white")
 message("RQ2 figures complete with shared publication style: Fig2_RQ2 + Fig3_RQ2")
