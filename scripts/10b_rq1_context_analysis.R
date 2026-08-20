@@ -86,7 +86,7 @@ parallel_lapply <- function(X, FUN, workers = CONTEXT_WORKERS,
     }, root)
     exports <- intersect(unique(exports), ls(envir = .GlobalEnv))
     if (length(exports)) parallel::clusterExport(cl, exports, envir = .GlobalEnv)
-    ans <- parallel::parLapplyLB(cl, X, safe_runner, fun = FUN, chunk.size = 1L)
+    ans <- parallel::parLapplyLB(cl, X, safe_runner, FUN, chunk.size = 1L)
   }
 
   failed <- which(!vapply(ans, function(z) isTRUE(z$ok), logical(1)))
