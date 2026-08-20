@@ -46,7 +46,7 @@ DIM_TITLES <- c(
   placement = "Placement", optical = "Optical proxy",
   temporal = "Temporal resolution", duration = "Monitoring duration"
 )
-PAIR_LEVELS <- c("placement × optical", "placement × temporal", "optical × temporal")
+PAIR_LEVELS <- c("placement x optical", "placement x temporal", "optical x temporal")
 STATE_LEVELS <- c("Low", "Middle", "High")
 MODEL_LEVELS <- c("external_context", "exposure_state", "joint")
 MODEL_LABELS <- c(external_context = "External", exposure_state = "Exposure state", joint = "Joint")
@@ -83,7 +83,17 @@ gs <- readr::read_csv(GAMMA_SUMMARY_CSV, show_col_types = FALSE) |>
   )
 gp <- readr::read_csv(GAMMA_PAIR_CSV, show_col_types = FALSE) |>
   mutate(dimension_pair = factor(dimension_pair, levels = PAIR_LEVELS))
-ge <- readr::read_csv(GAMMA_EXAMPLE_CSV, show_col_types = FALSE)
+ge <- readr::read_csv(
+  GAMMA_EXAMPLE_CSV,
+  col_types = readr::cols(
+    interaction_lattice = readr::col_character(),
+    a_configuration = readr::col_character(),
+    b_configuration = readr::col_character(),
+    metric = readr::col_character(),
+    .default = readr::col_guess()
+  ),
+  show_col_types = FALSE
+)
 scope <- readr::read_csv(SCOPE_CSV, show_col_types = FALSE)
 ctx <- readr::read_csv(CTX_GEOM_CSV, show_col_types = FALSE)
 ctx_contrast <- readr::read_csv(CTX_CONTRAST_CSV, show_col_types = FALSE)
@@ -284,7 +294,7 @@ p2f <- ggplot(ctx_anchor, aes(context_state_label, metric)) +
   ms_magnitude_size_scale(name = "conditional A", range = c(.22, 2.65)) +
   labs(
     title = "f  Context-specific distortion geometry",
-    x = "civil photoperiod · diary environment · diary activity", y = NULL
+    x = "civil photoperiod | diary environment | diary activity", y = NULL
   ) +
   ms_atlas_theme(base_size = 5.9, x_angle = 55) +
   guides(
@@ -298,8 +308,8 @@ p2f <- ggplot(ctx_anchor, aes(context_state_label, metric)) +
 # bootstrap interval excludes zero; it is an uncertainty cue, not a new estimand.
 binary_labels <- tibble::tribble(
   ~context_family, ~contrast_label, ~contrast_order,
-  "photoperiod", "Day → Night", 1L,
-  "environment", "Indoor → Outdoor", 2L
+  "photoperiod", "Day to Night", 1L,
+  "environment", "Indoor to Outdoor", 2L
 )
 contrast_anchor <- ctx_contrast |>
   semi_join(anchor_table, by = c("dimension", "configuration")) |>
@@ -311,13 +321,13 @@ contrast_long <- bind_rows(
   contrast_anchor |>
     transmute(
       dimension, configuration, anchor_label, metric, metric_class, context_family, contrast_label, contrast_order,
-      quantity = "ΔA", shift = mean_delta_absolute,
+      quantity = "delta A", shift = mean_delta_absolute,
       ci_low = absolute_ci_low, ci_high = absolute_ci_high, bootstrap_supported
     ),
   contrast_anchor |>
     transmute(
       dimension, configuration, anchor_label, metric, metric_class, context_family, contrast_label, contrast_order,
-      quantity = "ΔB", shift = mean_delta_signed,
+      quantity = "delta B", shift = mean_delta_signed,
       ci_low = signed_ci_low, ci_high = signed_ci_high, bootstrap_supported
     )
 ) |>
@@ -326,7 +336,7 @@ contrast_long <- bind_rows(
     contrast_col = paste0(contrast_label, "\n", quantity),
     contrast_col = factor(
       contrast_col,
-      levels = c("Day → Night\nΔA", "Day → Night\nΔB", "Indoor → Outdoor\nΔA", "Indoor → Outdoor\nΔB")
+      levels = c("Day to Night\ndelta A", "Day to Night\ndelta B", "Indoor to Outdoor\ndelta A", "Indoor to Outdoor\ndelta B")
     ),
     anchor_label = factor(anchor_label, levels = anchor_levels),
     ci_excludes_zero = replace_na(bootstrap_supported, FALSE) & is.finite(ci_low) & is.finite(ci_high) & (ci_low > 0 | ci_high < 0)
@@ -342,14 +352,14 @@ binary_valid <- ctx_manifest |>
 
 contrast_cols <- tidyr::crossing(
   binary_labels,
-  quantity = c("ΔA", "ΔB")
+  quantity = c("delta A", "delta B")
 ) |>
-  arrange(contrast_order, match(quantity, c("ΔA", "ΔB"))) |>
+  arrange(contrast_order, match(quantity, c("delta A", "delta B"))) |>
   mutate(
     contrast_row = row_number(),
     contrast_col = factor(
       paste0(contrast_label, "\n", quantity),
-      levels = c("Day → Night\nΔA", "Day → Night\nΔB", "Indoor → Outdoor\nΔA", "Indoor → Outdoor\nΔB")
+      levels = c("Day to Night\ndelta A", "Day to Night\ndelta B", "Indoor to Outdoor\ndelta A", "Indoor to Outdoor\ndelta B")
     )
   )
 contrast_key <- contrast_long |>
@@ -453,7 +463,7 @@ if (nrow(perfwide)) {
     coord_equal(xlim = lims, ylim = lims) +
     labs(
       title = "h  Predictability and cross-site transportability",
-      x = "grouped-participant CV R²", y = "leave-site-out R²", color = NULL, shape = NULL
+      x = "grouped-participant CV R2", y = "leave-site-out R2", color = NULL, shape = NULL
     ) +
     theme_ms(base_size = 7.2, aspect_ratio = .52, legend_position = "bottom") +
     theme(legend.text = element_text(size = 6.5))
@@ -538,7 +548,7 @@ walk(DIMENSIONS, function(dim) {
 gs_atlas <- gs |>
   filter(is.finite(Q_mean_absolute), is.finite(R_mean_signed)) |>
   mutate(
-    interaction_label = paste(a_configuration_label, b_configuration_label, sep = " × "),
+    interaction_label = paste(a_configuration_label, b_configuration_label, sep = " x "),
     direction_ratio = ms_direction_ratio(R_mean_signed, Q_mean_absolute)
   ) |>
   ms_add_metric_order(metric_order)
@@ -551,7 +561,7 @@ p3a <- ggplot(gs_atlas, aes(interaction_label, metric)) +
   ) +
   facet_grid(metric_class ~ dimension_pair, scales = "free", space = "free", switch = "y") +
   ms_direction_scale(name = "R / Q") +
-  ms_magnitude_size_scale(name = "Q = mean |γ|", range = c(.22, 2.85)) +
+  ms_magnitude_size_scale(name = "Q = mean |gamma|", range = c(.22, 2.85)) +
   labs(
     title = "a  Cross-dimensional interaction atlas",
     x = "observed joint configuration", y = NULL
@@ -559,16 +569,16 @@ p3a <- ggplot(gs_atlas, aes(interaction_label, metric)) +
   ms_atlas_theme(base_size = 6.0, x_angle = 50)
 
 # b. Representative empirical D(gamma).
-gids <- ge |> transmute(id = paste(dimension_pair, a_configuration, b_configuration, metric, sep = " | "), example_type)
+gids <- ge |> transmute(id = paste(interaction_lattice, a_configuration, b_configuration, metric, sep = " | "), example_type)
 ged <- gamma |>
   filter(available, is.finite(gamma)) |>
-  mutate(id = paste(dimension_pair, a_configuration, b_configuration, metric, sep = " | ")) |>
+  mutate(id = paste(interaction_lattice, a_configuration, b_configuration, metric, sep = " | ")) |>
   inner_join(gids, by = "id")
 p3b <- ggplot(ged, aes(gamma)) +
   geom_density(fill = MS_PRIMARY, color = MS_PRIMARY, alpha = .18, linewidth = .48, adjust = .85) +
   geom_vline(xintercept = 0, linewidth = .28, color = "#707070") +
   facet_wrap(~example_type, scales = "free", ncol = 2) +
-  labs(title = "b  Representative empirical D(γ)", x = "standardized interaction distortion, γ", y = "density") +
+  labs(title = "b  Representative empirical D(gamma)", x = "standardized interaction distortion, gamma", y = "density") +
   theme_ms(base_size = 7.2, aspect_ratio = 1, legend_position = "none") +
   theme(strip.text = element_text(size = 6.2))
 
@@ -584,7 +594,7 @@ if (nrow(gs)) {
     scale_color_ms_metric() +
     scale_x_continuous(transform = asinh_display, limits = c(-lim, lim), expand = expansion(mult = .025)) +
     scale_y_continuous(transform = asinh_display, limits = c(0, lim), expand = expansion(mult = .025)) +
-    labs(title = "c  Interaction geometry", x = "R: mean signed γ", y = "Q: mean absolute γ") + base_square_theme
+    labs(title = "c  Interaction geometry", x = "R: mean signed gamma", y = "Q: mean absolute gamma") + base_square_theme
 } else {
   p3c <- ggplot() + annotate("text", x = 0, y = 0, label = "No gamma summaries") +
     xlim(-1, 1) + ylim(-1, 1) + labs(title = "c  Interaction geometry") + base_square_theme
@@ -610,16 +620,16 @@ top_couplings <- gs |>
   distinct(dimension_pair, a_configuration, b_configuration, metric, .keep_all = TRUE) |>
   slice_head(n = 8) |>
   mutate(
-    id = paste(dimension_pair, a_configuration, b_configuration, metric, sep = " | "),
+    id = paste(interaction_lattice, a_configuration, b_configuration, metric, sep = " | "),
     profile_label = stringr::str_wrap(
-      paste0(metric, " | ", dimension_pair, " | ", a_configuration_label, " × ", b_configuration_label),
+      paste0(metric, " | ", dimension_pair, " | ", a_configuration_label, " x ", b_configuration_label),
       width = 28
     )
   )
 
 profile_data <- gamma |>
   filter(available, is.finite(marginal_a_ref), is.finite(marginal_a_at_b)) |>
-  mutate(id = paste(dimension_pair, a_configuration, b_configuration, metric, sep = " | ")) |>
+  mutate(id = paste(interaction_lattice, a_configuration, b_configuration, metric, sep = " | ")) |>
   inner_join(top_couplings |> select(id, profile_label), by = "id") |>
   select(profile_label, marginal_a_ref, marginal_a_at_b) |>
   pivot_longer(c(marginal_a_ref, marginal_a_at_b), names_to = "b_state", values_to = "marginal_effect") |>

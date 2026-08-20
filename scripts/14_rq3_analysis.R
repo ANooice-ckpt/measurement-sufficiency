@@ -123,7 +123,14 @@ for (pi in seq_len(nrow(plan))) {
       resolution_s %in% PRIMARY_TEMPORAL_S,
       metric %in% metric_set, !metric %in% ISIV_METRICS
     ) |>
-    inner_join(wm, by = c("support_id", "site", "Id", "Date")) |>
+    # participant-day core rows carry n_days=1; the estimand below needs the
+    # candidate window length from wm, so remove the core field before joining.
+    select(-any_of("n_days")) |>
+    inner_join(
+      wm,
+      by = c("support_id", "site", "Id", "Date"),
+      relationship = "many-to-many"
+    ) |>
     group_by(
       support_id, site, Id, reference_id, window_id, n_days,
       placement, optical, resolution_s,
@@ -168,7 +175,12 @@ for (pi in seq_len(nrow(plan))) {
         support_id == sup, placement == pl$placement, optical == pl$optical,
         resolution_s %in% PRIMARY_TEMPORAL_S
       ) |>
-      inner_join(wm, by = c("support_id", "site", "Id", "Date")) |>
+      select(-any_of("n_days")) |>
+      inner_join(
+        wm,
+        by = c("support_id", "site", "Id", "Date"),
+        relationship = "many-to-many"
+      ) |>
       group_by(support_id, site, Id, reference_id, window_id, n_days, placement, optical, resolution_s) |>
       group_modify(~isiv_basis(.x)) |>
       ungroup() |>
@@ -214,7 +226,7 @@ if(!nrow(joint_pairs)){
   joint_sufficiency<-joint_summary|>group_by(metric,placement,optical)|>group_split(.keep=TRUE)|>map_dfr(pareto_one)
   pareto_ever<-joint_sufficiency|>group_by(metric,metric_class,support_id,placement,optical,resolution_s,temporal_label,n_days,joint_configuration,epsilon_entry,A_mean_absolute)|>summarise(ever_pareto=any(pareto),first_pareto_epsilon=if(any(pareto))min(epsilon[pareto])else NA_real_,last_pareto_epsilon=if(any(pareto))max(epsilon[pareto])else NA_real_,.groups="drop")
   pareto_frequency<-pareto_ever|>group_by(placement,optical,resolution_s,temporal_label,n_days)|>summarise(n_metrics_available=n_distinct(metric),n_metrics_ever_pareto=n_distinct(metric[ever_pareto]),fraction_metrics_ever_pareto=n_metrics_ever_pareto/n_metrics_available,.groups="drop")
-  scores<-joint_summary|>group_by(metric,metric_class)|>summarise(n_joint_configs=n(),median_entry=median(epsilon_entry),entry_range=max(epsilon_entry)-min(epsilon_entry),.groups="drop")|>left_join(pareto_ever|>group_by(metric)|>summarise(n_ever_pareto=sum(ever_pareto),.groups="drop"),by="metric")|>mutate(selection_score=n_ever_pareto+log1p(entry_range));representatives<-scores|>group_by(metric_class)|>slice_max(selection_score,n=1,with_ties=FALSE)|>ungroup()|>slice_max(selection_score,n=min(4L,n()),with_ties=FALSE)|>arrange(desc(selection_score))
+  scores<-joint_summary|>group_by(metric,metric_class)|>summarise(n_joint_configs=n(),median_entry=median(epsilon_entry),entry_range=max(epsilon_entry)-min(epsilon_entry),.groups="drop")|>left_join(pareto_ever|>group_by(metric)|>summarise(n_ever_pareto=sum(ever_pareto),.groups="drop"),by="metric")|>mutate(selection_score=n_ever_pareto+log1p(entry_range));representatives<-scores|>group_by(metric_class)|>slice_max(selection_score,n=1,with_ties=FALSE)|>ungroup()|>slice_max(selection_score,n=4,with_ties=FALSE)|>arrange(desc(selection_score))
 }
 saveRDS(joint_canonical,file.path(OUT_DATA,"rq3_joint_distortion_long.rds"),compress="xz");saveRDS(joint_sufficiency,file.path(OUT_DATA,"rq3_joint_sufficiency_long.rds"),compress="xz");readr::write_csv(joint_summary,file.path(OUT_RESULTS,"rq3_joint_summary.csv"),na="");readr::write_csv(pareto_ever,file.path(OUT_RESULTS,"rq3_pareto_ever.csv"),na="");readr::write_csv(pareto_frequency,file.path(OUT_RESULTS,"rq3_pareto_frequency.csv"),na="");readr::write_csv(representatives,file.path(OUT_RESULTS,"rq3_fig5_representative_metrics.csv"),na="")
 cohort_summary<-bind_rows(map(cohorts,~.x|>summarise(n_total=n(),n_eligible=sum(eligible_protocol_7))))|>mutate(support_id=names(cohorts),.before=1)
