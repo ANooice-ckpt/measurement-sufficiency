@@ -120,7 +120,7 @@ exd <- cond |>
 p2a <- ggplot(exd, aes(e, color = state_bin_label, fill = state_bin_label)) +
   geom_density(alpha = .12, linewidth = .48, adjust = .9) +
   geom_vline(xintercept = 0, linewidth = .28, color = "#737373") +
-  facet_wrap(~example_label, scales = "free", ncol = 2) +
+  facet_wrap(~example_label, scales = "free", nrow = 1) +
   scale_color_manual(values = MS_STATE_COLORS, drop = FALSE) +
   scale_fill_manual(values = MS_STATE_COLORS, drop = FALSE) +
   labs(
@@ -128,8 +128,12 @@ p2a <- ggplot(exd, aes(e, color = state_bin_label, fill = state_bin_label)) +
     x = "standardized signed distortion, e", y = "density",
     color = "reference state", fill = "reference state"
   ) +
-  theme_ms(base_size = 7.4, aspect_ratio = 1, legend_position = "bottom") +
-  theme(strip.text = element_text(size = 6.4), legend.text = element_text(size = 6.5))
+  theme_ms(base_size = 7.4, aspect_ratio = .58, legend_position = "bottom") +
+  theme(
+    strip.text = element_text(size = 6.4),
+    legend.text = element_text(size = 6.5),
+    plot.margin = margin(4, 5, 2, 5)
+  )
 
 # b-e. All-metric A(X)-B(X) geometry for the predeclared RQ2 anchor configurations.
 conditional_panel_data <- function(dim) {
@@ -458,13 +462,17 @@ if (nrow(perfwide)) {
     xlim(-1, 1) + ylim(-1, 1) + labs(title = "h  Predictability and cross-site transportability") + base_square_theme
 }
 
-state_geometry <- plot_grid(p2b, p2c, p2d, p2e, ncol = 2, align = "hv", axis = "tblr")
-fig2top <- plot_grid(p2a, state_geometry, nrow = 1, rel_widths = c(.36, .64), align = "hv", axis = "tblr")
-context_block <- plot_grid(p2f, p2g, nrow = 1, rel_widths = c(.66, .34), align = "v", axis = "lr")
-fig2body <- plot_grid(fig2top, context_block, p2h, ncol = 1, rel_heights = c(1.0, 2.55, .86))
-fig2 <- plot_grid(fig2body, metric_legend, ncol = 1, rel_heights = c(1, .035))
-ggsave(file.path(FIG_DIR, "Fig2_RQ2.pdf"), fig2, width = 15.6, height = 14.2, useDingbats = FALSE, bg = "white")
-ggsave(file.path(FIG_DIR, "Fig2_RQ2.png"), fig2, width = 15.6, height = 14.2, dpi = 240, bg = "white")
+# The top grammar uses two full-width rows. Keeping four square A-B panels in a
+# wide-and-short 2x2 container forces cowplot to shrink their panels and leaves
+# large horizontal voids. A single four-panel row preserves comparable panel
+# sizes, while the three density examples form a compact row above it.
+state_geometry <- plot_grid(p2b, p2c, p2d, p2e, nrow = 1, align = "hv", axis = "tblr")
+fig2top <- plot_grid(p2a, state_geometry, ncol = 1, rel_heights = c(1.02, 1), align = "v", axis = "lr")
+context_block <- plot_grid(p2f, p2g, nrow = 1, rel_widths = c(.60, .40), align = "v", axis = "lr")
+fig2body <- plot_grid(fig2top, context_block, p2h, ncol = 1, rel_heights = c(1.38, 1.90, .82))
+fig2 <- plot_grid(fig2body, metric_legend, ncol = 1, rel_heights = c(1, .04))
+ggsave(file.path(FIG_DIR, "Fig2_RQ2.pdf"), fig2, width = 16.0, height = 13.8, useDingbats = FALSE, bg = "white")
+ggsave(file.path(FIG_DIR, "Fig2_RQ2.png"), fig2, width = 16.0, height = 13.8, dpi = 240, bg = "white")
 
 # Full all-configuration context hypercube slices are exported by measurement
 # dimension as supplementary zoomable atlases. This preserves completeness

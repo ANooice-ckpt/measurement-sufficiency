@@ -14,10 +14,10 @@ Reference 10 s; primary candidates 20 s, 30 s, 1 min, 5 min, 15 min, 30 min. The
 
 ## Duration analysis
 For eye-MEDI reference supports (`eye_medi` for ordinary targets; `eye_full` for MDER/nvRD), use protocol metadata carried by `unit_context`:
-- use protocol calendar Days 1–7 from the trial-start date and require all seven to be valid;
-- require those seven dates consecutive;
-- retain later eighth valid date only as an audit field;
-- enumerate every contiguous 1–6 d window inside the fixed reference.
+- require at least seven valid dates inside the protocol interval;
+- select the first seven valid dates chronologically as the fixed reference;
+- retain later valid dates only as audit fields;
+- enumerate every contiguous 1–6-date subsequence inside the ordered fixed reference.
 
 52 daily targets are aggregated day-first (circular mean for circular-time targets). IS/IV are rebuilt from `isiv_h00..h23` on the exact selected dates.
 

@@ -350,7 +350,7 @@ duration_windows <- make_protocol_duration_windows(eligible_duration, include_re
 
 # Daily context representations are calculated once at the reference measurement
 # configuration. As in the whole-day duration analysis, each candidate window is
-# compared with the participant's fixed protocol seven-day reference. A context
+# compared with the participant's first-seven-valid-date protocol reference. A context
 # that does not occur on a given day is structural absence, not imputed data;
 # n_context_days is retained explicitly in the primitive artifact.
 duration_support_plan <- tidyr::crossing(

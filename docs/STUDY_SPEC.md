@@ -51,14 +51,14 @@ MeLiDos `trial_times` (`datetime_trial_start`, `datetime_trial_end`) defines the
 
 For each comparison support:
 1. restrict valid support dates to the participant's protocol interval;
-2. define protocol calendar Days 1–7 from the local trial-start date and require all seven to be valid;
-3. require those seven dates to be consecutive;
-4. use them as the fixed seven-day reference;
-5. any later eighth valid calendar date is recorded as an extra/return-day date and does not replace one of the selected seven days.
+2. require at least seven valid dates within the participant's protocol interval;
+3. sort the valid protocol-interval dates chronologically and select the first seven;
+4. use those selected dates as the fixed seven-day reference;
+5. retain any later valid dates as audit-only extra dates.
 
-If the selected seven dates are not available/consecutive, the participant is ineligible for primary duration analysis on that support. Do not use Day 8 to repair a missing day and do not choose an arbitrary seven-of-eight subset.
+If fewer than seven valid dates are available within the protocol interval, the participant is ineligible for primary duration analysis on that support. Calendar consecutiveness is audited but is not an eligibility requirement.
 
-For `d=1..6`, enumerate all contiguous windows within the selected seven dates. Window-selection variability remains part of the empirical distortion distribution.
+For `d=1..6`, enumerate all contiguous subsequences within the ordered sequence of seven selected valid dates. Window-selection variability remains part of the empirical distortion distribution.
 
 For 52 daily metrics: calculate daily representations first, then aggregate within a window. Linear representations use arithmetic mean; circular clock-time representations use circular mean. IS/IV are rebuilt directly from the selected multiday hourly basis in `unit_context`.
 

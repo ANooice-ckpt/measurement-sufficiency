@@ -1,8 +1,7 @@
 # Shared protocol-anchored monitoring-duration helpers for RQ1 and RQ3.
-# MeLiDos trial_times define the participant-specific study interval. The primary
-# seven-day reference is protocol calendar Day 1 through Day 7, anchored at the
-# local calendar date of datetime_trial_start. A later Day-8/return-date record is
-# audited but can never replace a missing protocol reference day.
+# MeLiDos trial_times define the participant-specific study interval. Participants
+# with at least seven valid dates inside that interval are eligible; the primary
+# seven-day reference is the first seven valid dates in chronological order.
 
 protocol_reference_cohort <- function(context_daily) {
   required <- c(
@@ -42,9 +41,9 @@ protocol_reference_cohort <- function(context_daily) {
       n_valid_dates_all = length(all_valid_dates),
       n_valid_dates_in_protocol = length(valid_dates_in_protocol),
       reference_dates = list({
-        if (!isTRUE(protocol_metadata_available) || is.na(protocol_start_date)) {
+        if (!isTRUE(protocol_metadata_available) || length(valid_dates_in_protocol) < 7L) {
           as.Date(character())
-        } else protocol_start_date + 0:6
+        } else valid_dates_in_protocol[seq_len(7L)]
       }),
       reference_days_all_valid = {
         z <- reference_dates
@@ -62,17 +61,15 @@ protocol_reference_cohort <- function(context_daily) {
       reference_end = if (length(reference_dates) == 7L) max(reference_dates) else as.Date(NA),
       extra_dates = list({
         z <- valid_dates_in_protocol
-        if (length(reference_dates) == 7L) z[z > max(reference_dates)] else as.Date(character())
+        if (length(z) > 7L) z[-seq_len(7L)] else as.Date(character())
       }),
       n_extra_valid_dates = length(extra_dates),
       eligible_protocol_7 =
         isTRUE(protocol_metadata_available) &&
-        reference_dates_consecutive && protocol_covers_reference && reference_days_all_valid,
+        n_valid_dates_in_protocol >= 7L && reference_days_all_valid,
       exclusion_reason = dplyr::case_when(
         !isTRUE(protocol_metadata_available) ~ "trial_times metadata unavailable",
-        !protocol_covers_reference ~ "protocol interval does not cover calendar Days 1-7",
-        !reference_days_all_valid ~ "one or more protocol calendar Days 1-7 are invalid on this support",
-        !reference_dates_consecutive ~ "protocol calendar Days 1-7 are not consecutive",
+        n_valid_dates_in_protocol < 7L ~ "fewer than seven valid dates within the protocol interval on this support",
         TRUE ~ NA_character_
       ),
       reference_id = if (eligible_protocol_7) {

@@ -45,7 +45,7 @@ data/interim/core/protocol_participant_metadata.rds
 logs/protocol_participant_metadata.csv
 ```
 
-`unit_context` carries protocol start/end timestamps and dates, protocol day index, and flags for protocol days 1–7 / return date. Final selection of eligible seven-day duration references remains downstream because validity is support-specific.
+`unit_context` carries protocol start/end timestamps and dates, protocol day index, and flags for protocol days 1–7 / return date. Final selection remains downstream because validity is support-specific: participants need at least seven valid protocol-interval dates, and the first seven chronologically are fixed as the reference.
 
 ## Versioned cache
 Interim blocks live under:
