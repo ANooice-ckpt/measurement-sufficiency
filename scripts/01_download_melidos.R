@@ -4,7 +4,7 @@ options(timeout = max(3600, getOption("timeout")))
 sites <- melidos_sites()
 modalities <- c(
   "light_glasses", "light_chest", "light_wrist",
-  "wearlog", "sleepdiaries", "trial_times"
+  "wearlog", "sleepdiaries", "lightexposurediary", "trial_times"
 )
 optional_modalities <- "trial_times"
 site_override <- Sys.getenv("MELIDOS_SITES", "")
@@ -40,7 +40,7 @@ for (modality in modalities) {
       })
     } else {
       # Existing files are still validated so a partial/stale metadata payload does
-      # not silently survive into the protocol-window analysis.
+      # not silently survive into downstream analysis.
       tryCatch(
         load_raw_file(destination, modality),
         error = function(e) status <<- paste0("failed validation: ", conditionMessage(e))
