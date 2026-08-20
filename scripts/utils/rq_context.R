@@ -29,8 +29,6 @@ rq_context_prepare_diary <- function(diary) {
       )
     )
 
-  # Match the public MeLiDos placement-analysis grammar, retaining only the
-  # prespecified primary environment and four-state activity axes.
   x |>
     dplyr::mutate(
       environment = dplyr::case_when(
@@ -70,8 +68,6 @@ rq_context_annotate_support <- function(support, diary, coords) {
     LightLogR::add_photoperiod(coords) |>
     dplyr::mutate(
       photoperiod = tolower(as.character(.data$photoperiod.state)),
-      # Civil night is one continuous scene from dusk to the following dawn.
-      # Morning-night timestamps are therefore anchored to the preceding date.
       photoperiod_anchor_date = dplyr::case_when(
         photoperiod == "day" ~ as.Date(Datetime),
         photoperiod == "night" & !is.na(dawn) & Datetime < dawn ~ as.Date(Datetime) - 1L,
@@ -89,9 +85,7 @@ rq_context_annotate_support <- function(support, diary, coords) {
     ) |>
     dplyr::select(-dplyr::any_of(c("start", "end")))
 
-  if (nrow(out) != base_n) {
-    stop("Context diary interval join duplicated support timestamps")
-  }
+  if (nrow(out) != base_n) stop("Context diary interval join duplicated support timestamps")
   out
 }
 
@@ -103,20 +97,17 @@ rq_context_make_series <- function(support_annotated, placement, optical, resolu
       photoperiod, photoperiod_anchor_date, environment, activity
     ) |>
     dplyr::distinct()
-
   out <- series |>
     dplyr::left_join(labels, by = c("site", "Id", "Date", "Datetime"))
   if (nrow(out) != nrow(series)) stop("Context label join changed sparse-series row count")
   out
 }
 
-# Operator-validity manifest. The full-day analysis remains all 54 target
-# representations. Context analyses use natural subsets defined by whether the
-# original operator remains interpretable after restricting the time series.
-# Photoperiod is a continuous interval and therefore supports threshold periods,
-# pulse structure, and crossing dynamics. Indoor/outdoor and activity can occur
-# in multiple disjoint episodes; only additive or distributional operators that
-# can be reconstructed without joining those episodes are retained there.
+# Operator-validity manifest. Full-day analysis remains all 54 target
+# representations. Day/night keeps operators that remain interpretable on a
+# continuous civil photoperiod interval. Indoor/outdoor and activity are often
+# disjoint episodes, so only additive or distributional operators that can be
+# reconstructed without concatenating episodes are admitted.
 rq_context_metric_manifest <- function(metric_meta) {
   required <- c("metric", "metric_class", "metric_scope", "metric_geometry")
   missing <- setdiff(required, names(metric_meta))
@@ -129,25 +120,27 @@ rq_context_metric_manifest <- function(metric_meta) {
       is_daily_linear = metric_scope == "daily" & metric_geometry == "linear",
       photoperiod_family_valid = stringr::str_detect(
         metric,
-        "^(duration_above_|period_above_|pulses_above_|frequency_crossing_|disparity_index$|mean_MEDI$|dose$|MDER$|nvRD$)"
+        "(^duration_above_|^period_above_|pulses_above_|^frequency_crossing_|^disparity_index$|^mean_MEDI$|^dose$|^MDER$)"
       ),
       fragmented_family_valid = stringr::str_detect(
         metric,
-        "^(duration_above_|disparity_index$|mean_MEDI$|dose$|MDER$)"
+        "(^duration_above_|^mean_MEDI$|^dose$|^MDER$)"
       ),
       photoperiod_valid = is_daily_linear & photoperiod_family_valid,
       fragmented_context_valid = is_daily_linear & fragmented_family_valid,
       validity_reason = dplyr::case_when(
         photoperiod_valid & fragmented_context_valid ~
-          "operator valid on both continuous photoperiod intervals and disjoint context episodes",
+          "operator preserved on both continuous photoperiod intervals and disjoint context episodes",
         photoperiod_valid ~
-          "operator valid on continuous photoperiod intervals only",
+          "operator preserved on a continuous photoperiod interval but not after concatenating disjoint context episodes",
+        metric == "nvRD" ~
+          "response-dynamics operator depends on preceding regular time-series history and is not reset at context boundaries",
         metric_scope == "multiday" ~
           "requires a multiday/full-day temporal structure",
         metric_geometry == "circular_time" | metric_class == "timing" ~
           "timing construct changes meaning after context restriction",
         TRUE ~
-          "operator depends on a whole-day or continuous structure not preserved by the prespecified context analysis"
+          "operator depends on whole-day or continuous structure not preserved by the prespecified context analysis"
       )
     ) |>
     dplyr::select(
@@ -173,10 +166,7 @@ rq_context_safe_numeric <- function(expr) {
 rq_context_datetime_2_numeric <- function(x) {
   x |>
     dplyr::mutate(
-      dplyr::across(
-        where(is.POSIXct),
-        function(y) as.numeric(hms::as_hms(y))
-      )
+      dplyr::across(where(is.POSIXct), function(y) as.numeric(hms::as_hms(y)))
     )
 }
 
@@ -238,11 +228,7 @@ rq_context_photoperiod_metrics <- function(series, include_spectral = FALSE, inc
   if (include_spectral) {
     spectral <- x |>
       dplyr::group_by(site, Id, Date, configuration) |>
-      dplyr::summarise(
-        nvRD = mean(LightLogR::nvRD(MEDI, LIGHT, Datetime), na.rm = TRUE),
-        MDER = median(MEDI / LIGHT, na.rm = TRUE),
-        .groups = "drop"
-      ) |>
+      dplyr::summarise(MDER = median(MEDI / LIGHT, na.rm = TRUE), .groups = "drop") |>
       tidyr::pivot_longer(-c(site, Id, Date, configuration), names_to = "metric", values_to = "value")
     blocks[[length(blocks) + 1L]] <- spectral
   }
@@ -289,10 +275,9 @@ rq_context_fragmented_metrics <- function(series, context_family, context_col,
     dplyr::group_by(site, Id, Date, context_state) |>
     dplyr::summarise(
       mean_MEDI = mean(LightLogR::log_zero_inflated(MEDI), na.rm = TRUE),
-      disparity_index = rq_context_safe_numeric(LightLogR::disparity_index(MEDI, TRUE, TRUE)),
       .groups = "drop"
     ) |>
-    tidyr::pivot_longer(c(mean_MEDI, disparity_index), names_to = "metric", values_to = "value")
+    tidyr::pivot_longer(mean_MEDI, names_to = "metric", values_to = "value")
 
   if (include_spectral) {
     mder <- z |>
@@ -303,8 +288,7 @@ rq_context_fragmented_metrics <- function(series, context_family, context_col,
   }
 
   # Additive operators are calculated within each continuous episode and only
-  # then summed across episodes, so separated indoor/activity bouts are never
-  # stitched together into an artificial continuous trajectory.
+  # then summed, so separated bouts are never stitched into a false trajectory.
   epoch_txt <- paste0(as.integer(resolution_s), " sec")
   additive <- z |>
     dplyr::group_by(site, Id, Date, context_state, context_episode) |>
@@ -321,9 +305,7 @@ rq_context_fragmented_metrics <- function(series, context_family, context_col,
         LightLogR::duration_above_threshold(.x$MEDI, .x$Datetime, "above", 1000,
                                             epoch = epoch_txt, na.rm = TRUE)
       ),
-      dose = rq_context_safe_numeric(
-        LightLogR::dose(.x$MEDI, .x$Datetime, na.rm = TRUE)
-      )
+      dose = rq_context_safe_numeric(LightLogR::dose(.x$MEDI, .x$Datetime, na.rm = TRUE))
     )) |>
     dplyr::ungroup() |>
     tidyr::pivot_longer(
@@ -385,7 +367,6 @@ rq_context_pair_values <- function(reference_values, candidate_values) {
       dplyr::all_of(keys),
       candidate_value = value, candidate_n_observations = n_observations
     )
-
   dplyr::inner_join(can, ref, by = keys) |>
     dplyr::mutate(delta_native = candidate_value - reference_value)
 }
