@@ -3,13 +3,17 @@ suppressPackageStartupMessages({
   library(cowplot)
 })
 source("scripts/utils/figure_style.R")
+source("scripts/utils/figure_atlas.R")
 
-# Fig. 1 only. Reads frozen RQ1 outputs; no distortion/statistical recomputation.
+# Fig. 1: RQ1 empirical distortion distributions + all-representation atlas + A/B geometry.
+# Plot-only: reads frozen RQ1 outputs and does not recompute any scientific estimand.
 DISTORTION_RDS <- "data/derived/rq1/rq1_distortion_long.rds"
 SUMMARY_CSV <- "results/rq1/rq1_summary.csv"
 MANIFEST_CSV <- "results/rq1/rq1_configuration_manifest.csv"
+AVAILABILITY_CSV <- "results/rq1/rq1_metric_availability.csv"
+RETENTION_CSV <- "results/rq1/rq1_retention_diagnostics.csv"
 FIG_DIR <- "results/figures"
-for (p in c(DISTORTION_RDS, SUMMARY_CSV, MANIFEST_CSV)) {
+for (p in c(DISTORTION_RDS, SUMMARY_CSV, MANIFEST_CSV, AVAILABILITY_CSV, RETENTION_CSV)) {
   if (!file.exists(p)) stop("Missing RQ1 artifact: ", p, ". Run scripts/10_rq1_analysis.R first.")
 }
 dir.create(FIG_DIR, recursive = TRUE, showWarnings = FALSE)
@@ -20,7 +24,6 @@ DIM_TITLES <- c(
   placement = "Placement", optical = "Optical proxy",
   temporal = "Temporal resolution", duration = "Monitoring duration"
 )
-PANEL_LETTERS <- matrix(letters[1:8], nrow = 2, byrow = TRUE)
 TRAJECTORY_DIMS <- c("temporal", "duration")
 base_panel_theme <- theme_ms(aspect_ratio = 1, legend_position = "none")
 asinh_display <- scales::transform_asinh()
@@ -31,8 +34,15 @@ dist <- readRDS(DISTORTION_RDS) |>
 summary <- readr::read_csv(SUMMARY_CSV, show_col_types = FALSE) |>
   mutate(metric_class = factor(metric_class, levels = METRIC_CLASSES))
 manifest <- readr::read_csv(MANIFEST_CSV, show_col_types = FALSE)
+availability <- readr::read_csv(AVAILABILITY_CSV, show_col_types = FALSE)
+retention <- readr::read_csv(RETENTION_CSV, show_col_types = FALSE)
+metric_order <- ms_metric_order(summary)
+readr::write_csv(metric_order, "results/rq1/figure_metric_order.csv", na = "")
 
+# -----------------------------------------------------------------------------
+# a-d. Pooled empirical D(e): retain the distributional object explicitly.
 # Equal representation weighting: every metric x configuration carries total weight 1.
+# -----------------------------------------------------------------------------
 density_input <- dist |>
   group_by(dimension, configuration, metric) |>
   mutate(unit_weight = 1 / n()) |>
@@ -55,7 +65,6 @@ weighted_density <- function(x, w, n = 512L) {
   tibble(x = d$x, density = d$y)
 }
 
-# Top row displays central 90% only; q5-q95, IQR and median make the zoom explicit.
 ridge_stats <- density_input |>
   group_by(dimension, configuration, configuration_label, configuration_order) |>
   group_modify(~{
@@ -140,6 +149,57 @@ top_panel <- function(dim, letter) {
     theme(panel.grid.major.y = element_blank(), axis.text.y = element_text(size = 6.9), axis.ticks.y = element_blank())
 }
 
+# -----------------------------------------------------------------------------
+# e. Full metric x configuration atlas.
+# Orthogonal visual channels: bubble area = A; diverging fill = B/A.
+# The same fixed metric order is reused in RQ2/RQ3 plots.
+# -----------------------------------------------------------------------------
+atlas <- summary |>
+  filter(is.finite(A_mean_absolute), is.finite(B_mean_signed)) |>
+  mutate(
+    direction_ratio = ms_direction_ratio(B_mean_signed, A_mean_absolute),
+    dimension = factor(dimension, levels = DIMENSIONS)
+  ) |>
+  ms_add_metric_order(metric_order)
+
+atlas_bg <- availability |>
+  mutate(dimension = factor(dimension, levels = DIMENSIONS)) |>
+  ms_add_metric_order(metric_order)
+
+p1e <- ggplot(atlas, aes(configuration_label, metric)) +
+  geom_tile(
+    data = atlas_bg |> filter(representation_available),
+    fill = "#F3F3F3", color = "white", linewidth = .12
+  ) +
+  geom_point(
+    data = atlas_bg |> filter(!representation_available),
+    shape = 4, size = .55, stroke = .24, color = "#B8B8B8"
+  ) +
+  geom_point(
+    aes(size = A_mean_absolute, fill = direction_ratio),
+    shape = 21, color = "#3B3B3B", stroke = .16, alpha = .94
+  ) +
+  facet_grid(metric_class ~ dimension, scales = "free", space = "free", switch = "y") +
+  ms_direction_scale(name = "B / A") +
+  ms_magnitude_size_scale(name = "A = mean |e|", range = c(.28, 3.15)) +
+  labs(
+    title = "e  All-representation distortion atlas",
+    x = "observed non-reference configuration", y = NULL
+  ) +
+  ms_atlas_theme(base_size = 6.4, x_angle = 42) +
+  guides(
+    size = guide_legend(order = 1, title.position = "top"),
+    fill = guide_colorbar(order = 2, title.position = "top", barwidth = grid::unit(28, "mm"))
+  )
+readr::write_csv(
+  atlas |>
+    mutate(metric = as.character(metric), metric_class = as.character(metric_class)),
+  "results/rq1/fig1_distortion_atlas.csv", na = ""
+)
+
+# -----------------------------------------------------------------------------
+# f-i. A-B geometry: structural projection of the same distributions.
+# -----------------------------------------------------------------------------
 extreme_metric_rows <- function(d, n = 3L) {
   d |>
     group_by(metric) |>
@@ -225,15 +285,36 @@ placement_legend_source <- ggplot(
   theme_void(base_family = MS_FONT, base_size = 8) + theme(legend.position = "bottom")
 placement_legend <- cowplot::get_legend(placement_legend_source)
 
-top <- map2(DIMENSIONS, PANEL_LETTERS[1, ], top_panel)
-bottom <- map2(DIMENSIONS, PANEL_LETTERS[2, ], bottom_panel)
-panel_grid <- cowplot::plot_grid(
-  plotlist = c(top, bottom), ncol = 4, align = "hv", axis = "tblr",
-  rel_widths = rep(1, 4), rel_heights = c(1, 1)
-)
+# Main Fig. 1: distribution -> exhaustive representation atlas -> structural geometry.
+top <- map2(DIMENSIONS, letters[1:4], top_panel)
+bottom <- map2(DIMENSIONS, letters[6:9], bottom_panel)
+top_grid <- cowplot::plot_grid(plotlist = top, ncol = 4, align = "hv", axis = "tblr")
+bottom_grid <- cowplot::plot_grid(plotlist = bottom, ncol = 4, align = "hv", axis = "tblr")
+fig1body <- cowplot::plot_grid(top_grid, p1e, bottom_grid, ncol = 1, rel_heights = c(.82, 2.25, 1.02))
 legend_row <- cowplot::plot_grid(metric_legend, placement_legend, nrow = 1, rel_widths = c(4.6, 1.4))
-fig1 <- cowplot::plot_grid(panel_grid, legend_row, ncol = 1, rel_heights = c(1, .075))
+fig1 <- cowplot::plot_grid(fig1body, legend_row, ncol = 1, rel_heights = c(1, .045))
 
-ggsave(file.path(FIG_DIR, "Fig1_RQ1.pdf"), fig1, width = 15.6, height = 8.4, units = "in", device = cairo_pdf, bg = "white")
-ggsave(file.path(FIG_DIR, "Fig1_RQ1.png"), fig1, width = 15.6, height = 8.4, units = "in", dpi = 220, bg = "white")
-message("Fig. 1 complete with shared publication style.")
+ggsave(file.path(FIG_DIR, "Fig1_RQ1.pdf"), fig1, width = 15.6, height = 11.6, units = "in", device = cairo_pdf, bg = "white")
+ggsave(file.path(FIG_DIR, "Fig1_RQ1.png"), fig1, width = 15.6, height = 11.6, units = "in", dpi = 240, bg = "white")
+
+# Supplementary retention atlas: RQ1's representation-preservation axis is kept
+# separate from A/B so the main atlas does not overload a third within-cell channel.
+ret_long <- retention |>
+  select(dimension, configuration, configuration_label, metric, metric_class, lin_ccc, spearman_rho) |>
+  pivot_longer(c(lin_ccc, spearman_rho), names_to = "retention_measure", values_to = "retention") |>
+  mutate(
+    retention_measure = recode(retention_measure, lin_ccc = "Lin CCC", spearman_rho = "Spearman rho"),
+    dimension = factor(dimension, levels = DIMENSIONS)
+  ) |>
+  ms_add_metric_order(metric_order)
+
+p_ret <- ggplot(ret_long |> filter(is.finite(retention)), aes(configuration_label, metric, fill = retention)) +
+  geom_tile(color = "white", linewidth = .12) +
+  facet_grid(metric_class ~ dimension + retention_measure, scales = "free", space = "free", switch = "y") +
+  scale_fill_ms_diverging(1, name = "retention", breaks = c(-1, -.5, 0, .5, 1)) +
+  labs(title = "Representation-retention diagnostics across all observed configurations", x = NULL, y = NULL) +
+  ms_atlas_theme(base_size = 6.1, x_angle = 42)
+
+ggsave(file.path(FIG_DIR, "FigS_RQ1_retention_atlas.pdf"), p_ret, width = 18, height = 10.5, units = "in", bg = "white")
+ggsave(file.path(FIG_DIR, "FigS_RQ1_retention_atlas.png"), p_ret, width = 18, height = 10.5, units = "in", dpi = 240, bg = "white")
+message("Fig. 1 complete: empirical distributions + metric-level distortion atlas + A/B geometry; retention atlas exported separately.")
