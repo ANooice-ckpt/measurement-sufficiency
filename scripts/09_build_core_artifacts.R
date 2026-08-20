@@ -1,6 +1,7 @@
 source("scripts/utils/melidos_io.R")
 source("scripts/utils/rq1_metrics.R")
 source("scripts/utils/core_artifacts.R")
+source("scripts/utils/core_temporal_sampling.R")
 source("scripts/utils/core_context.R")
 source("scripts/utils/weather_era5.R")
 suppressPackageStartupMessages({
@@ -96,7 +97,8 @@ support_paths <- support_paths[!is.na(support_paths) & file.exists(support_paths
 if (!length(support_paths)) stop("No support blocks were produced")
 
 # Smoke-test the scientific temporal operator before any expensive metric block.
-# A coarse series must be an exact timestamp/value subset of the 10-s source.
+# A coarse series must be an exact timestamp/value subset of the 10-s source and
+# retain the participant-specific phase of that harmonized source grid.
 message("[temporal] sparse-sampling invariants")
 smoke_support <- readRDS(support_paths[[1]])
 ref <- core_make_series(smoke_support, "eye", "MEDI", 10L)
@@ -106,13 +108,15 @@ temporal_audit <- map_dfr(setdiff(core_all_resolutions(), 10L), function(r) {
   key_can <- paste(can$site, can$Id, as.numeric(can$Datetime), sep = "|")
   ii <- match(key_can, key_ref)
   subset_pass <- !anyNA(ii)
-  clock_anchor_pass <- all(round(as.numeric(can$Datetime)) %% r == 0L)
+  can_sec <- round(as.numeric(can$Datetime))
+  phase10 <- core_source_grid_phase(can$site, can$Id, can_sec)
+  clock_anchor_pass <- all(((can_sec - phase10) %% r) == 0L)
   same_num <- function(a, b) all((is.na(a) & is.na(b)) | (!is.na(a) & !is.na(b) & a == b))
   medi_value_pass <- subset_pass && same_num(can$MEDI, ref$MEDI[ii])
   light_value_pass <- subset_pass && same_num(can$LIGHT, ref$LIGHT[ii])
   value_pass <- medi_value_pass && light_value_pass
   if (!subset_pass) stop("Temporal invariant failed: candidate is not a source subset at ", r, " s")
-  if (!clock_anchor_pass) stop("Temporal clock anchoring failed at ", r, " s")
+  if (!clock_anchor_pass) stop("Temporal source-grid anchoring failed at ", r, " s")
   if (!value_pass) stop("Temporal retained-value invariant failed at ", r, " s")
   tibble(
     resolution_s = r, source_rows = nrow(ref), candidate_rows = nrow(can),
@@ -233,7 +237,7 @@ manifest <- tibble(
   ),
   value = c(
     CORE_VERSION,
-    "clock-anchored systematic sparse subsampling; retained source values unchanged; no bin averaging or interpolation",
+    "participant-source-grid-phase-anchored systematic sparse subsampling; retained source values unchanged; no bin averaging or interpolation",
     "10",
     paste(core_primary_resolutions(), collapse = ","),
     paste(core_reserve_resolutions(), collapse = ","),
