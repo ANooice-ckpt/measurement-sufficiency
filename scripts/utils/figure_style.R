@@ -83,7 +83,10 @@ theme_ms <- function(base_size = 8.3, aspect_ratio = NULL, legend_position = "bo
       axis.ticks.length = grid::unit(1.3, "mm"),
       strip.background = ggplot2::element_rect(fill = "white", colour = NA),
       strip.text = ggplot2::element_text(colour = "#202020", margin = ggplot2::margin(2, 2, 2, 2)),
-      plot.title = ggplot2::element_text(size = base_size + .8, colour = "#151515", margin = ggplot2::margin(b = 4)),
+      plot.title = ggplot2::element_text(
+        size = base_size + .8, face = "bold", colour = "#151515",
+        margin = ggplot2::margin(b = 4)
+      ),
       plot.margin = ggplot2::margin(4, 5, 4, 5),
       legend.position = legend_position,
       legend.key = ggplot2::element_blank(),
