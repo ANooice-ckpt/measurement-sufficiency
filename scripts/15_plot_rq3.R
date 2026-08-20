@@ -6,8 +6,8 @@ source("scripts/utils/figure_style.R")
 source("scripts/utils/figure_atlas.R")
 
 # RQ3 plotting only: inverse single-dimension sufficiency + multidimensional
-# entry tolerance/Pareto. The main plots retain the 54 target representations
-# rather than collapsing them prematurely to class-level coverage curves.
+# entry tolerance/Pareto. Main plots retain all target representations rather
+# than collapsing them prematurely to class-level coverage curves.
 RQ1_SUMMARY_CSV <- "results/rq1/rq1_summary.csv"
 SINGLE_RDS <- "data/derived/rq3/rq3_single_dimension_sufficiency.rds"
 REQ_CSV <- "results/rq3/rq3_single_dimension_requirement.csv"
@@ -70,7 +70,7 @@ EPS_MAX <- if (length(all_eps)) max(all_eps) * 1.04 + 1e-9 else 1
 # Ordered dimensions are rendered as metric-level requirement strips over epsilon.
 # Rank 1 is the high-information reference (10 s or 7 d); larger ranks are
 # progressively less demanding observed levels. Hollow marks flag epsilon states
-# whose empirical sufficient set is not threshold-like.
+# whose empirical sufficient set is explicitly non-threshold-like.
 ordered_atlas <- function(dim, letter, title, level_labels) {
   d <- req |>
     filter(dimension == dim, is.finite(epsilon)) |>
@@ -91,9 +91,10 @@ ordered_atlas <- function(dim, letter, title, level_labels) {
 
   pal <- setNames(
     grDevices::colorRampPalette(c(MS_PRIMARY, "#DDEAF4"))(length(level_labels)),
-    seq_along(level_labels)
+    as.character(seq_along(level_labels))
   )
-  bad <- d |> filter(!replace_na(minimum_requirement_interpretable, FALSE), is.finite(epsilon))
+  bad <- d |>
+    filter(!is.na(minimum_requirement_interpretable), !minimum_requirement_interpretable, is.finite(epsilon))
 
   ggplot(d |> filter(is.finite(epsilon_next)), aes(y = metric)) +
     geom_segment(
@@ -108,7 +109,10 @@ ordered_atlas <- function(dim, letter, title, level_labels) {
       shape = 1, size = .72, stroke = .28, color = "#303030"
     ) +
     facet_grid(metric_class ~ ., scales = "free_y", space = "free_y", switch = "y") +
-    scale_color_manual(values = pal, breaks = seq_along(level_labels), labels = level_labels, name = "least-demanding\nsufficient level") +
+    scale_color_manual(
+      values = pal, breaks = as.character(seq_along(level_labels)), labels = level_labels,
+      name = "least-demanding\nsufficient level"
+    ) +
     scale_x_continuous(
       transform = asinh_display, limits = c(0, EPS_MAX),
       breaks = scales::breaks_extended(n = 5), expand = expansion(mult = c(0, .01))
@@ -146,7 +150,7 @@ p4c <- ggplot(optical_d, aes(y = metric)) +
 
 placement_d <- unordered_plot |> filter(dimension == "placement")
 placement_range <- placement_d |>
-  group_by(metric) |>
+  group_by(metric, metric_class) |>
   summarise(xmin = min(epsilon_entry), xmax = max(epsilon_entry), .groups = "drop") |>
   ms_add_metric_order(metric_order)
 p4d <- ggplot(placement_d, aes(y = metric)) +
@@ -173,7 +177,7 @@ ggsave(file.path(FIG_DIR, "Fig4_RQ3.pdf"), fig4, width = 13.2, height = 12.4, us
 ggsave(file.path(FIG_DIR, "Fig4_RQ3.png"), fig4, width = 13.2, height = 12.4, dpi = 240, bg = "white")
 
 # Preserve the original class/all-metric coverage projection as a supplementary
-# summary. It is useful, but it is downstream of the metric-level decision map.
+# summary. It is useful, but downstream of the metric-level decision map.
 oc <- coverage |>
   filter(dimension == "optical", metric_class != "All") |>
   mutate(metric_class = factor(metric_class, levels = METRIC_CLASSES))
@@ -283,7 +287,7 @@ if (!estimable) {
   # class heterogeneity without adding another configuration axis to b-e.
   top_cfg <- global_cfg |>
     arrange(desc(fraction_metrics_ever_pareto), median_epsilon_entry, desc(resolution_s), n_days) |>
-    slice_head(n = min(12L, n())) |>
+    slice_head(n = 12L) |>
     mutate(
       config_id = paste(placement, optical, resolution_s, n_days, sep = "|"),
       config_label = paste0(
