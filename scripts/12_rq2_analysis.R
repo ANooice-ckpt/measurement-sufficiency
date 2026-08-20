@@ -72,7 +72,14 @@ if(anyDuplicated(duration_units[c("support_id","site","Id","analysis_unit_id")])
 # Vectorized window feature construction: join each protocol reference once, then
 # summarize reference and selected-window states without thousands of repeated filters.
 duration_features<-feature_daily|>
-  inner_join(duration_units,by=c("support_id","site","Id","config_id"))|>
+  # Intentional date x candidate-window expansion within each participant/config.
+  # The exact reference/window dates are filtered immediately below before the
+  # features are collapsed back to one row per analysis_unit_id.
+  inner_join(
+    duration_units,
+    by=c("support_id","site","Id","config_id"),
+    relationship="many-to-many"
+  )|>
   filter(Date>=reference_window_start,Date<=reference_window_end)|>
   group_by(support_id,site,Id,analysis_unit_id)|>
   summarise(
