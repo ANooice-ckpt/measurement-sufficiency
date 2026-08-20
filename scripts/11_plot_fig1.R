@@ -234,6 +234,6 @@ panel_grid <- cowplot::plot_grid(
 legend_row <- cowplot::plot_grid(metric_legend, placement_legend, nrow = 1, rel_widths = c(4.6, 1.4))
 fig1 <- cowplot::plot_grid(panel_grid, legend_row, ncol = 1, rel_heights = c(1, .075))
 
-ggsave(file.path(FIG_DIR, "Fig1_RQ1.pdf"), fig1, width = 15.6, height = 8.4, units = "in", device = cairo_pdf)
-ggsave(file.path(FIG_DIR, "Fig1_RQ1.png"), fig1, width = 15.6, height = 8.4, units = "in", dpi = 220)
+ggsave(file.path(FIG_DIR, "Fig1_RQ1.pdf"), fig1, width = 15.6, height = 8.4, units = "in", device = cairo_pdf, bg = "white")
+ggsave(file.path(FIG_DIR, "Fig1_RQ1.png"), fig1, width = 15.6, height = 8.4, units = "in", dpi = 220, bg = "white")
 message("Fig. 1 complete with shared publication style.")
