@@ -20,6 +20,11 @@ ms_metric_order <- function(rq1_summary, classes = MS_METRIC_CLASSES) {
 }
 
 ms_add_metric_order <- function(data, order_table) {
+  # Some plotting summaries (e.g. a per-metric range table) intentionally carry
+  # only `metric`. Reconstruct metric class from the frozen order table in that
+  # case instead of requiring every derived plotting table to retain it.
+  if (!"metric_class" %in% names(data)) data$metric_class <- NA_character_
+
   data |>
     dplyr::left_join(
       order_table |>
