@@ -26,6 +26,8 @@ external environment: radiation / cloud / solar geometry
 
 Cross-dimensional interaction adds a second-order dimension-pair axis, and RQ3 adds the acceptable-distortion tolerance `epsilon` plus Pareto status. The resulting object is too large for one literal hypercube rendering. Main figures therefore show mutually interpretable projections, while exhaustive slices are exported as supplementary atlases.
 
+A plotting projection may expose only axes for which the upstream analysis defines an estimand. In particular, the real-world context axes are visualized in RQ2 because `10b/12b` estimate context-specific geometry and paired binary contrasts. They are not crossed into RQ3 sufficiency/Pareto figures unless a future analysis explicitly defines context-specific sufficiency estimands.
+
 ## 2. Invariants across figures
 
 ### Metric is the inferential unit
@@ -34,7 +36,7 @@ All 54 target representations remain visible whenever the figure is intended to 
 
 ### Frozen metric order
 
-`scripts/utils/figure_atlas.R::ms_metric_order()` defines one row order for the manuscript figures: metric class first, then descending median RQ1 absolute distortion across observed non-reference configurations. The same order is reused across RQ1, RQ2, and RQ3 so a reader can trace one representation vertically across figures.
+`scripts/utils/figure_atlas.R::ms_metric_order()` defines one row order for the manuscript figures. Metrics are grouped by class; within each class, the display score is the median of dimension-specific median RQ1 absolute distortions. This two-stage summary gives placement, optical, temporal, and duration equal structural weight despite different numbers of sampled configurations. The same order is reused across RQ1, RQ2, and RQ3 so a reader can trace one representation vertically across figures.
 
 This is a display order only. It is never used in estimation, testing, model fitting, sufficiency classification, or Pareto dominance.
 
