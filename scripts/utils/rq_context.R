@@ -68,7 +68,17 @@ rq_context_annotate_support <- function(support, diary, coords) {
   out <- support |>
     dplyr::ungroup() |>
     LightLogR::add_photoperiod(coords) |>
-    dplyr::mutate(photoperiod = tolower(as.character(.data$photoperiod.state))) |>
+    dplyr::mutate(
+      photoperiod = tolower(as.character(.data$photoperiod.state)),
+      # Civil night is one continuous scene from dusk to the following dawn.
+      # Morning-night timestamps are therefore anchored to the preceding date.
+      photoperiod_anchor_date = dplyr::case_when(
+        photoperiod == "day" ~ as.Date(Datetime),
+        photoperiod == "night" & !is.na(dawn) & Datetime < dawn ~ as.Date(Datetime) - 1L,
+        photoperiod == "night" ~ as.Date(Datetime),
+        TRUE ~ as.Date(NA)
+      )
+    ) |>
     dplyr::select(-dplyr::any_of(c("dawn", "dusk", "photoperiod.state")))
 
   diary2 <- rq_context_prepare_diary(diary)
@@ -88,7 +98,10 @@ rq_context_annotate_support <- function(support, diary, coords) {
 rq_context_make_series <- function(support_annotated, placement, optical, resolution_s) {
   series <- core_make_series(support_annotated, placement, optical, resolution_s)
   labels <- support_annotated |>
-    dplyr::select(site, Id, Date, Datetime, photoperiod, environment, activity) |>
+    dplyr::select(
+      site, Id, Date, Datetime,
+      photoperiod, photoperiod_anchor_date, environment, activity
+    ) |>
     dplyr::distinct()
 
   out <- series |>
@@ -167,27 +180,21 @@ rq_context_datetime_2_numeric <- function(x) {
     )
 }
 
-# Assign one date to each continuous civil photoperiod. A night that starts at
-# dusk and crosses midnight remains one unit and is anchored to its starting
-# calendar date, avoiding an artificial midnight split.
 rq_context_photoperiod_series <- function(series) {
   series |>
-    dplyr::filter(photoperiod %in% c("day", "night")) |>
-    dplyr::arrange(site, Id, Datetime) |>
-    dplyr::group_by(site, Id) |>
-    dplyr::mutate(
-      new_photoperiod = dplyr::row_number() == 1L |
-        tidyr::replace_na(photoperiod != dplyr::lag(photoperiod), TRUE),
-      photoperiod_episode = cumsum(new_photoperiod)
+    dplyr::filter(
+      photoperiod %in% c("day", "night"),
+      !is.na(photoperiod_anchor_date)
     ) |>
-    dplyr::group_by(site, Id, photoperiod_episode, photoperiod) |>
-    dplyr::mutate(context_date = as.Date(min(Datetime, na.rm = TRUE))) |>
-    dplyr::ungroup()
+    dplyr::mutate(
+      context_date = as.Date(photoperiod_anchor_date),
+      Date = context_date,
+      configuration = paste0("ctx__", photoperiod)
+    )
 }
 
 rq_context_photoperiod_metrics <- function(series, include_spectral = FALSE, include_pulses = TRUE) {
-  x <- rq_context_photoperiod_series(series) |>
-    dplyr::mutate(Date = context_date, configuration = paste0("ctx__", photoperiod))
+  x <- rq_context_photoperiod_series(series)
   if (!nrow(x)) return(tibble::tibble())
 
   nobs <- x |>
