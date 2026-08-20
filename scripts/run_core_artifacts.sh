@@ -16,12 +16,13 @@ if [[ "${R_VERSION}" != "4.5.0" ]]; then
   exit 1
 fi
 
-echo "[preflight] Parse all changed scientific entry points before any expensive work"
+echo "[preflight] Parse all changed scientific and figure entry points before expensive work"
 Rscript --vanilla -e 'files <- c(
   "scripts/utils/melidos_io.R", "scripts/utils/protocol_windows.R",
   "scripts/utils/core_artifacts.R", "scripts/utils/core_context.R",
+  "scripts/utils/figure_style.R",
   "scripts/01_download_melidos.R", "scripts/04c_prepare_raw_eye_spans.R",
-  "scripts/09_build_core_artifacts.R", "scripts/10_rq1_analysis.R",
+  "scripts/09_build_core_artifacts.R", "scripts/10_rq1_analysis.R", "scripts/11_plot_fig1.R",
   "scripts/12_rq2_analysis.R", "scripts/13_plot_rq2.R",
   "scripts/14_rq3_analysis.R", "scripts/15_plot_rq3.R"
 ); invisible(lapply(files, parse)); cat("R parse preflight passed for", length(files), "files\n")'
