@@ -14,7 +14,7 @@ RQ2_RUN_MODELS <- !identical(Sys.getenv("RQ2_RUN_MODELS", unset="1"),"0")
 RQ2_FORCE <- identical(Sys.getenv("RQ2_FORCE", unset="0"),"1")
 physical <- suppressWarnings(parallel::detectCores(logical=FALSE)); logical <- suppressWarnings(parallel::detectCores(logical=TRUE))
 if(!is.finite(physical)||physical<1) physical<-ifelse(is.finite(logical),logical,2L)
-auto_workers <- max(1L,min(12L,as.integer(physical)-2L))
+auto_workers <- max(1L,min(32L,as.integer(physical)-2L))
 RQ2_WORKERS <- suppressWarnings(as.integer(Sys.getenv("RQ2_WORKERS",unset=as.character(auto_workers)))); if(!is.finite(RQ2_WORKERS)||RQ2_WORKERS<1)RQ2_WORKERS<-auto_workers
 if(is.finite(logical)) RQ2_WORKERS<-min(RQ2_WORKERS,logical)
 BOOT_SEED<-20260820L; MODEL_SEED<-20260821L
@@ -143,7 +143,18 @@ run_model_task<-function(task){
     tmp<-paste0(task$checkpoint_path,".tmp_",Sys.getpid());saveRDS(obj,tmp,compress=FALSE);if(file.exists(task$checkpoint_path))unlink(task$checkpoint_path);if(!file.rename(tmp,task$checkpoint_path)){if(!file.copy(tmp,task$checkpoint_path,overwrite=TRUE))stop("checkpoint write failed");unlink(tmp)};list(ok=TRUE,path=task$checkpoint_path,error=NA_character_)
   },error=function(e)list(ok=FALSE,path=task$checkpoint_path,error=conditionMessage(e)))
 }
-run_parallel_batches<-function(tasks,runner,workers,label){if(!length(tasks))return(list());workers<-min(max(1L,workers),length(tasks));chunks<-split(seq_along(tasks),ceiling(seq_along(tasks)/(workers*2L)));out<-vector("list",length(tasks));cl<-if(workers>1)parallel::makePSOCKcluster(workers)else NULL;if(!is.null(cl))parallel::clusterCall(cl,function(){Sys.setenv(OMP_NUM_THREADS="1",OPENBLAS_NUM_THREADS="1",MKL_NUM_THREADS="1");NULL});on.exit(if(!is.null(cl))parallel::stopCluster(cl),add=TRUE);done<-0L;for(ch in chunks){ans<-if(is.null(cl))lapply(tasks[ch],runner)else parallel::parLapplyLB(cl,tasks[ch],runner);out[ch]<-ans;done<-done+length(ch);message(sprintf("[%s] %d/%d pending tasks completed",label,done,length(tasks)))};out}
+run_parallel_batches<-function(tasks,runner,workers,label){
+  if(!length(tasks))return(list())
+  workers<-min(max(1L,workers),length(tasks))
+  message(sprintf("[%s] dispatching %d pending tasks across %d workers",label,length(tasks),workers))
+  if(workers==1L)return(lapply(tasks,runner))
+  cl<-parallel::makePSOCKcluster(workers)
+  on.exit(parallel::stopCluster(cl),add=TRUE)
+  parallel::clusterCall(cl,function(){Sys.setenv(OMP_NUM_THREADS="1",OPENBLAS_NUM_THREADS="1",MKL_NUM_THREADS="1",VECLIB_MAXIMUM_THREADS="1",NUMEXPR_NUM_THREADS="1");NULL})
+  out<-parallel::parLapplyLB(cl,tasks,runner,chunk.size=1L)
+  message(sprintf("[%s] %d/%d pending tasks completed",label,length(out),length(tasks)))
+  out
+}
 
 model_anchor<-condition|>filter(available,is.finite(e))|>semi_join(anchor_manifest|>filter(prediction_eligible),by=c("dimension","configuration"))
 model_groups<-model_anchor|>distinct(dimension,configuration,configuration_label,metric,metric_class)|>arrange(dimension,configuration,metric)|>mutate(group_index=row_number())
