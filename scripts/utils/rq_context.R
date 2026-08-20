@@ -183,9 +183,11 @@ rq_context_photoperiod_series <- function(series) {
     )
 }
 
-rq_context_photoperiod_metrics <- function(series, include_spectral = FALSE, include_pulses = TRUE) {
+rq_context_photoperiod_metrics <- function(series, include_spectral = FALSE,
+                                           include_pulses = TRUE, resolution_s = 10L) {
   x <- rq_context_photoperiod_series(series)
   if (!nrow(x)) return(tibble::tibble())
+  epoch_txt <- paste0(as.integer(resolution_s), " sec")
 
   nobs <- x |>
     dplyr::group_by(site, Id, Date, configuration) |>
@@ -203,7 +205,7 @@ rq_context_photoperiod_metrics <- function(series, include_spectral = FALSE, inc
       LightLogR::frequency_crossing_threshold(MEDI, 250, na.rm = TRUE, as.df = TRUE),
       LightLogR::disparity_index(MEDI, TRUE, TRUE),
       mean_MEDI = mean(LightLogR::log_zero_inflated(MEDI), na.rm = TRUE),
-      LightLogR::dose(MEDI, Datetime, na.rm = TRUE, as.df = TRUE),
+      LightLogR::dose(MEDI, Datetime, epoch = epoch_txt, na.rm = TRUE, as.df = TRUE),
       .groups = "drop"
     ) |>
     dplyr::mutate(dplyr::across(where(lubridate::is.duration), as.numeric)) |>
@@ -330,7 +332,8 @@ rq_context_compute_values <- function(series, metric_manifest,
                                       include_pulses = TRUE,
                                       resolution_s = 10L) {
   photo <- rq_context_photoperiod_metrics(
-    series, include_spectral = include_spectral, include_pulses = include_pulses
+    series, include_spectral = include_spectral, include_pulses = include_pulses,
+    resolution_s = resolution_s
   ) |>
     dplyr::left_join(metric_manifest, by = "metric") |>
     dplyr::filter(tidyr::replace_na(photoperiod_valid, FALSE))
