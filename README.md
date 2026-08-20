@@ -11,7 +11,7 @@ Run from the repository root under **R 4.5.0**. LightLogR 0.10.3 and melidosData
 Rscript scripts/00_setup.R
 ```
 
-MeLiDos source files are stored under `data/raw/melidos/`; `scripts/01_download_melidos.R` now downloads the harmonized light/wear/sleep inputs **and the site-level `trial_times` metadata** used to anchor monitoring-duration references. ERA5 files remain under `data/raw/era5/`.
+MeLiDos source files are stored under `data/raw/melidos/`; `scripts/01_download_melidos.R` downloads the harmonized light/wear/sleep inputs, site-level `trial_times` metadata used to anchor monitoring-duration references, and the light-exposure diaries used by the real-world context extension. ERA5 files remain under `data/raw/era5/`.
 
 ## Core v2: sparse temporal sampling + protocol duration metadata
 The current core artifact version is `v2_sparse_sampling_protocol7`.
@@ -44,19 +44,50 @@ data/derived/core/core_manifest.csv
 ```
 
 ## Downstream execution
-After the new core completes, regenerate every downstream artifact because temporal and duration estimands changed:
+After the current core completes, regenerate every downstream artifact because temporal, duration, and real-world-context estimands feed the manuscript figures.
 
 ```bash
+# RQ1: whole-day distortion object and Fig. 1
 RQ1_BOOT=1000 Rscript scripts/10_rq1_analysis.R
 Rscript scripts/11_plot_fig1.R
 
+# RQ1 context extension: civil day/night, diary indoor/outdoor, and activity
+# (home / working / vehicle / outdoors), restricted to operator-valid metrics.
+RQ1_CONTEXT_WORKERS=12 RQ1_BOOT=1000 Rscript scripts/10b_rq1_context_analysis.R
+
+# RQ2: reference-exposure-state + external-context models and gamma interactions
 RQ2_WORKERS=12 RQ2_CV_FOLDS=5 RQ2_BOOT=1000 Rscript scripts/12_rq2_analysis.R
+
+# RQ2 context extension: state-specific context geometry and paired binary contrasts
+RQ2_BOOT=1000 Rscript scripts/12b_rq2_context_analysis.R
 Rscript scripts/13_plot_rq2.R
 
+# RQ3: inverse sufficiency and multidimensional Pareto frontiers
 Rscript scripts/14_rq3_analysis.R
 Rscript scripts/15_plot_rq3.R
 ```
 
-RQ2 checkpoints include the upstream RQ1 analysis version, so stale checkpoints from an older core are rejected automatically.
+RQ2 checkpoints include the upstream RQ1 analysis version, so stale checkpoints from an older core are rejected automatically. The context extensions are post-core analyses: they read frozen support artifacts and do not redefine the whole-day RQ1 estimand.
+
+## Manuscript figure architecture
+The plotting layer uses a common 54-representation row order and deliberately separates orthogonal information channels:
+
+- **position/facets** identify target representation, measurement dimension/configuration, context, or tolerance;
+- **bubble area or x-position** carries distortion/interdependence magnitude (`A` or `Q`);
+- **diverging fill** carries directionality (`B/A` or `R/Q`), not a second magnitude scale;
+- **grey/white/x states** distinguish operator-valid support, structurally invalid context restriction, and valid-but-unestimated cells;
+- metric classes organize the atlas visually but are never substituted for the metric-level inferential object.
+
+Main outputs:
+
+```text
+results/figures/Fig1_RQ1.pdf
+results/figures/Fig2_RQ2.pdf
+results/figures/Fig3_RQ2.pdf
+results/figures/Fig4_RQ3.pdf
+results/figures/Fig5_RQ3.pdf
+```
+
+High-dimensional supporting views are exported separately, including the full real-world-context hypercube split by measurement dimension, the RQ1 retention atlas, and the RQ3 class-level coverage projection. See `docs/FIGURE_ARCHITECTURE.md` for the mapping between scientific estimands and visual channels.
 
 See `docs/STUDY_SPEC.md`, `docs/CORE_ARTIFACTS.md`, and `docs/RQ1_EXECUTION.md` for the frozen definitions.
