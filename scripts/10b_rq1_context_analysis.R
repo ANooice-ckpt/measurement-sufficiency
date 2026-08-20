@@ -87,8 +87,8 @@ get_annotated_support <- function(site, support_id) {
   }
   path <- file.path(SUPPORT_DIR, paste0(key, ".rds"))
   if (!file.exists(path)) return(NULL)
-  meta <- site_meta |> filter(.data$site == site)
-  if (nrow(meta) != 1L) stop("Missing site metadata for ", site)
+  meta <- site_meta |> filter(.data$site == .env$site)
+  if (nrow(meta) != 1L) stop("Missing or non-unique site metadata for ", site)
   support <- readRDS(path)
   diary <- load_raw_file(diary_paths[[site]], "lightexposurediary")
   out <- rq_context_annotate_support(support, diary, c(meta$latitude, meta$longitude))
