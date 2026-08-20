@@ -26,7 +26,30 @@ PRIMARY_TEMPORAL_S <- c(20L, 30L, 60L, 300L, 900L, 1800L)
 DUAL_CHANNEL_METRICS <- c("MDER", "nvRD")
 B_BOOT <- suppressWarnings(as.integer(Sys.getenv("RQ1_BOOT", unset = "1000")))
 if (!is.finite(B_BOOT) || B_BOOT < 0L) B_BOOT <- 1000L
+CONTEXT_WORKERS <- suppressWarnings(as.integer(Sys.getenv("RQ1_CONTEXT_WORKERS", unset = "16")))
+if (!is.finite(CONTEXT_WORKERS) || CONTEXT_WORKERS < 1L) CONTEXT_WORKERS <- 1L
+if (.Platform$OS.type == "windows" && CONTEXT_WORKERS > 1L) {
+  message("RQ1_CONTEXT_WORKERS>1 uses forked workers only on Unix-like systems; falling back to 1 on Windows.")
+  CONTEXT_WORKERS <- 1L
+}
 BOOT_SEED <- 20260822L
+Sys.setenv(
+  OMP_NUM_THREADS = "1", OPENBLAS_NUM_THREADS = "1", MKL_NUM_THREADS = "1",
+  VECLIB_MAXIMUM_THREADS = "1", NUMEXPR_NUM_THREADS = "1"
+)
+
+parallel_lapply <- function(X, FUN, workers = CONTEXT_WORKERS) {
+  if (.Platform$OS.type != "windows" && workers > 1L && length(X) > 1L) {
+    parallel::mclapply(
+      X, FUN,
+      mc.cores = min(as.integer(workers), length(X)),
+      mc.preschedule = FALSE,
+      mc.set.seed = TRUE
+    )
+  } else {
+    lapply(X, FUN)
+  }
+}
 
 for (p in c(RQ1_DISTORTION, CORE_CONTEXT)) if (!file.exists(p)) stop("Missing required upstream artifact: ", p)
 for (d in c(OUT_DATA, OUT_RESULTS, OUT_DIAG)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
@@ -40,6 +63,7 @@ CORE_VERSION <- core_versions[[1]]
 RQ1_CONTEXT_VERSION <- paste0("rq1_context_v2__", RQ1_VERSION)
 SUPPORT_DIR <- file.path("data", "interim", "core", CORE_VERSION, "supports")
 if (!dir.exists(SUPPORT_DIR)) stop("Missing cached core support directory: ", SUPPORT_DIR)
+message("RQ1 context runtime: workers=", CONTEXT_WORKERS, ", boot=", B_BOOT)
 
 metric_meta <- rq1 |>
   distinct(metric, metric_class, metric_scope, metric_geometry)
@@ -158,63 +182,88 @@ pair_support_values <- function(site, support_id,
     )
 }
 
+# Parallelize at the site x support level. This preserves within-support caching
+# while exposing dozens of independent work units on Linux/ECS.
 message("RQ1 context: placement, optical, and temporal operator-valid representations")
-blocks <- list(); b <- 0L
+pair_plan <- list(); pk <- 0L
 for (site_i in melidos_sites()) {
-  if (site_i != "MPI") {
-    for (pos in c("chest", "wrist")) {
-      medi_support <- paste0("eye_", pos, "_medi")
-      full_support <- paste0("eye_", pos, "_full")
+  supports_i <- if (site_i == "MPI") {
+    c("eye_medi", "eye_full")
+  } else {
+    c("eye_chest_medi", "eye_chest_full", "eye_wrist_medi", "eye_wrist_full", "eye_medi", "eye_full")
+  }
+  for (support_id in supports_i) {
+    path <- file.path(SUPPORT_DIR, paste0(site_i, "__", support_id, ".rds"))
+    if (!file.exists(path)) next
+    pk <- pk + 1L
+    pair_plan[[pk]] <- list(site = site_i, support_id = support_id)
+  }
+}
 
-      nondual <- pair_support_values(
-        site_i, medi_support,
-        "eye", "MEDI", 10L, pos, "MEDI", 10L,
-        "placement", pos, stringr::str_to_title(pos), match(pos, c("chest", "wrist")),
-        paste0("placement_", pos), "Eye MEDI, 10 s"
-      ) |>
-        filter(!metric %in% DUAL_CHANNEL_METRICS)
-      dual <- pair_support_values(
-        site_i, full_support,
-        "eye", "MEDI", 10L, pos, "MEDI", 10L,
-        "placement", pos, stringr::str_to_title(pos), match(pos, c("chest", "wrist")),
-        paste0("placement_", pos), "Eye MEDI, 10 s"
-      ) |>
-        filter(metric %in% DUAL_CHANNEL_METRICS)
+run_pair_support <- function(task) {
+  site_i <- task$site
+  support_id <- task$support_id
+  out <- list(); k <- 0L
 
-      b <- b + 1L; blocks[[b]] <- bind_rows(nondual, dual)
+  if (support_id %in% c("eye_chest_medi", "eye_chest_full", "eye_wrist_medi", "eye_wrist_full")) {
+    pos <- if (grepl("chest", support_id, fixed = TRUE)) "chest" else "wrist"
+    branch_dual <- grepl("_full$", support_id)
+    z <- pair_support_values(
+      site_i, support_id,
+      "eye", "MEDI", 10L, pos, "MEDI", 10L,
+      "placement", pos, stringr::str_to_title(pos), match(pos, c("chest", "wrist")),
+      paste0("placement_", pos), "Eye MEDI, 10 s"
+    )
+    if (nrow(z)) {
+      z <- if (branch_dual) z |> filter(metric %in% DUAL_CHANNEL_METRICS) else z |> filter(!metric %in% DUAL_CHANNEL_METRICS)
+      k <- k + 1L; out[[k]] <- z
     }
   }
 
-  optical <- pair_support_values(
-    site_i, "eye_full",
-    "eye", "MEDI", 10L, "eye", "LIGHT", 10L,
-    "optical", "LIGHT", "Photopic illuminance", 1L,
-    "optical", "Eye MEDI, 10 s"
-  )
-  if (nrow(optical)) { b <- b + 1L; blocks[[b]] <- optical }
+  if (support_id == "eye_full") {
+    z <- pair_support_values(
+      site_i, support_id,
+      "eye", "MEDI", 10L, "eye", "LIGHT", 10L,
+      "optical", "LIGHT", "Photopic illuminance", 1L,
+      "optical", "Eye MEDI, 10 s"
+    )
+    if (nrow(z)) { k <- k + 1L; out[[k]] <- z }
 
-  for (j in seq_along(PRIMARY_TEMPORAL_S)) {
-    r <- PRIMARY_TEMPORAL_S[[j]]
-    label <- if (r < 60L) paste0(r, " s") else paste0(r %/% 60L, " min")
-    code <- if (r < 60L) paste0(r, "s") else paste0(r %/% 60L, "min")
-
-    nondual <- pair_support_values(
-      site_i, "eye_medi",
-      "eye", "MEDI", 10L, "eye", "MEDI", r,
-      "temporal", code, label, j, "temporal", "Eye MEDI, 10 s"
-    ) |>
-      filter(!metric %in% DUAL_CHANNEL_METRICS)
-    dual <- pair_support_values(
-      site_i, "eye_full",
-      "eye", "MEDI", 10L, "eye", "MEDI", r,
-      "temporal", code, label, j, "temporal", "Eye MEDI, 10 s"
-    ) |>
-      filter(metric %in% DUAL_CHANNEL_METRICS)
-
-    b <- b + 1L; blocks[[b]] <- bind_rows(nondual, dual)
+    for (j in seq_along(PRIMARY_TEMPORAL_S)) {
+      r <- PRIMARY_TEMPORAL_S[[j]]
+      label <- if (r < 60L) paste0(r, " s") else paste0(r %/% 60L, " min")
+      code <- if (r < 60L) paste0(r, "s") else paste0(r %/% 60L, "min")
+      z <- pair_support_values(
+        site_i, support_id,
+        "eye", "MEDI", 10L, "eye", "MEDI", r,
+        "temporal", code, label, j, "temporal", "Eye MEDI, 10 s"
+      ) |>
+        filter(metric %in% DUAL_CHANNEL_METRICS)
+      if (nrow(z)) { k <- k + 1L; out[[k]] <- z }
+    }
   }
+
+  if (support_id == "eye_medi") {
+    for (j in seq_along(PRIMARY_TEMPORAL_S)) {
+      r <- PRIMARY_TEMPORAL_S[[j]]
+      label <- if (r < 60L) paste0(r, " s") else paste0(r %/% 60L, " min")
+      code <- if (r < 60L) paste0(r, "s") else paste0(r %/% 60L, "min")
+      z <- pair_support_values(
+        site_i, support_id,
+        "eye", "MEDI", 10L, "eye", "MEDI", r,
+        "temporal", code, label, j, "temporal", "Eye MEDI, 10 s"
+      ) |>
+        filter(!metric %in% DUAL_CHANNEL_METRICS)
+      if (nrow(z)) { k <- k + 1L; out[[k]] <- z }
+    }
+  }
+
+  bind_rows(out)
 }
-raw_pairs <- bind_rows(blocks)
+
+message("RQ1 context: parallel extraction across ", length(pair_plan), " site-support tasks")
+pair_blocks <- parallel_lapply(pair_plan, run_pair_support)
+raw_pairs <- bind_rows(pair_blocks)
 if (!nrow(raw_pairs)) stop("No context-conditioned placement/optical/temporal rows were produced")
 
 message("RQ1 context: protocol-anchored duration operator-valid representations")
@@ -233,14 +282,26 @@ duration_windows <- make_protocol_duration_windows(eligible_duration, include_re
 # compared with the participant's fixed protocol seven-day reference. A context
 # that does not occur on a given day is structural absence, not imputed data;
 # n_context_days is retained explicitly in the primitive artifact.
-duration_daily_context <- map_dfr(melidos_sites(), function(site_i) {
-  medi <- get_context_values(site_i, "eye_medi", "eye", "MEDI", 10L)
-  full <- get_context_values(site_i, "eye_full", "eye", "MEDI", 10L)
-  bind_rows(
-    if (!is.null(medi)) medi |> filter(!metric %in% DUAL_CHANNEL_METRICS) |> mutate(support_id = "eye_medi") else tibble(),
-    if (!is.null(full)) full |> filter(metric %in% DUAL_CHANNEL_METRICS) |> mutate(support_id = "eye_full") else tibble()
-  )
-})
+duration_support_plan <- tidyr::crossing(
+  site = melidos_sites(),
+  support_id = c("eye_medi", "eye_full")
+) |>
+  mutate(path = file.path(SUPPORT_DIR, paste0(site, "__", support_id, ".rds"))) |>
+  filter(file.exists(path))
+
+run_duration_support <- function(i) {
+  row <- duration_support_plan[i, ]
+  z <- get_context_values(row$site, row$support_id, "eye", "MEDI", 10L)
+  if (is.null(z) || !nrow(z)) return(tibble())
+  if (row$support_id == "eye_full") {
+    z <- z |> filter(metric %in% DUAL_CHANNEL_METRICS)
+  } else {
+    z <- z |> filter(!metric %in% DUAL_CHANNEL_METRICS)
+  }
+  z |> mutate(support_id = row$support_id)
+}
+message("RQ1 context: parallel duration context extraction across ", nrow(duration_support_plan), " site-support tasks")
+duration_daily_context <- bind_rows(parallel_lapply(seq_len(nrow(duration_support_plan)), run_duration_support))
 
 duration_blocks <- vector("list", nrow(duration_windows))
 for (i in seq_len(nrow(duration_windows))) {
@@ -350,7 +411,8 @@ canonical <- raw_pairs |>
 saveRDS(canonical, file.path(OUT_DATA, "rq1_context_distortion_long.rds"), compress = "xz")
 
 safe_q <- rq_context_safe_quantile
-bootstrap_ci <- function(g, B = B_BOOT) {
+bootstrap_ci <- function(g, B = B_BOOT, seed = NULL) {
+  if (!is.null(seed)) set.seed(seed)
   clusters <- g |>
     group_by(site, Id) |>
     summarise(sum_e = sum(e), sum_abs_e = sum(abs_e), n = n(), .groups = "drop")
@@ -395,11 +457,17 @@ summary_base <- x |>
     B_mean_signed = mean(e), A_mean_absolute = mean(abs_e),
     .groups = "drop"
   )
-set.seed(BOOT_SEED)
-cis <- x |>
+
+message("RQ1 context: parallel bootstrap")
+bootstrap_groups <- x |>
   group_by(across(all_of(group_vars))) |>
-  group_modify(~bootstrap_ci(.x, B_BOOT)) |>
-  ungroup()
+  group_split(.keep = TRUE)
+bootstrap_one <- function(i) {
+  g <- bootstrap_groups[[i]]
+  key <- g |> slice(1L) |> select(all_of(group_vars)) |> ungroup()
+  bind_cols(key, bootstrap_ci(g, B_BOOT, seed = BOOT_SEED + i))
+}
+cis <- bind_rows(parallel_lapply(seq_along(bootstrap_groups), bootstrap_one))
 context_summary <- summary_base |>
   left_join(cis, by = group_vars) |>
   mutate(
@@ -438,6 +506,7 @@ writeLines(c(
   paste0("Core artifact version: ", CORE_VERSION),
   paste0("RQ1 upstream version: ", RQ1_VERSION),
   paste0("RQ1 context version: ", RQ1_CONTEXT_VERSION),
+  paste0("Workers: ", CONTEXT_WORKERS),
   paste0("Whole-day target representations upstream: ", n_distinct(metric_meta$metric)),
   paste0("Photoperiod-valid context representations: ", n_photo),
   paste0("Indoor/outdoor and activity-valid representations: ", n_fragmented),
@@ -446,6 +515,7 @@ writeLines(c(
   "Contexts: civil day/night; diary-derived indoor/outdoor; diary-derived home/working/vehicle/outdoors.",
   "Photoperiod keeps continuous-interval-valid metric families. Fragmented contexts keep only additive/distributional operators and calculate additive metrics within episodes before summing, never by stitching separated episodes.",
   "Reference standardization is fixed within comparison lattice x metric x context family and shared across context states.",
+  "Parallel execution changes only scheduling; scientific operators and estimands are unchanged.",
   "This script reads cached support artifacts only; it does not rebuild core."
 ), file.path(OUT_RESULTS, "RQ1_CONTEXT_RUN_REPORT.md"))
 
