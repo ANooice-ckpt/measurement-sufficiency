@@ -19,7 +19,7 @@ fi
 echo "[preflight] Parse all changed scientific and figure entry points before expensive work"
 Rscript --vanilla -e 'files <- c(
   "scripts/utils/melidos_io.R", "scripts/utils/protocol_windows.R",
-  "scripts/utils/core_artifacts.R", "scripts/utils/core_context.R",
+  "scripts/utils/core_artifacts.R", "scripts/utils/core_temporal_sampling.R", "scripts/utils/core_context.R",
   "scripts/utils/figure_style.R",
   "scripts/01_download_melidos.R", "scripts/04c_prepare_raw_eye_spans.R",
   "scripts/09_build_core_artifacts.R", "scripts/10_rq1_analysis.R", "scripts/11_plot_fig1.R",
