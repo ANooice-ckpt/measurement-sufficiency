@@ -305,7 +305,9 @@ rq_context_fragmented_metrics <- function(series, context_family, context_col,
         LightLogR::duration_above_threshold(.x$MEDI, .x$Datetime, "above", 1000,
                                             epoch = epoch_txt, na.rm = TRUE)
       ),
-      dose = rq_context_safe_numeric(LightLogR::dose(.x$MEDI, .x$Datetime, na.rm = TRUE))
+      dose = rq_context_safe_numeric(
+        LightLogR::dose(.x$MEDI, .x$Datetime, epoch = epoch_txt, na.rm = TRUE)
+      )
     )) |>
     dplyr::ungroup() |>
     tidyr::pivot_longer(
