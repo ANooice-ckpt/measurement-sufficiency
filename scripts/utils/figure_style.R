@@ -1,12 +1,17 @@
 # Shared publication-style visual system for all manuscript figures.
 # Purely visual: no data filtering, statistics, or figure-specific transformations.
 
-MS_FONT <- Sys.getenv("MS_FIG_FONT", unset = "Source Sans 3")
+MS_FONT_REQUESTED <- Sys.getenv("MS_FIG_FONT", unset = "Source Sans 3")
+MS_FONT <- if (requireNamespace("systemfonts", quietly = TRUE) &&
+               MS_FONT_REQUESTED %in% unique(systemfonts::system_fonts()$family)) {
+  MS_FONT_REQUESTED
+} else {
+  "sans"
+}
 
 MS_PRIMARY <- "#2F5D7E"
 MS_SECONDARY <- "#C67C2E"
 MS_NEUTRAL <- "#6E7479"
-
 MS_TWO_COLORS <- c(primary = MS_PRIMARY, secondary = MS_SECONDARY)
 MS_THREE_COLORS <- c(MS_PRIMARY, MS_SECONDARY, "#5F8F84")
 
@@ -28,41 +33,39 @@ MS_STATE_COLORS <- c(
   "Middle" = "#6F9CBD",
   "High" = MS_PRIMARY
 )
-
 MS_SEQUENTIAL <- c("#F7FBFF", "#DDEAF4", "#A9C7DB", "#6F9CBD", MS_PRIMARY)
 MS_DIVERGING <- c("#27577F", "#7FA8C7", "#F7F7F4", "#E3AE79", "#B96828")
 
 scale_color_ms_metric <- function(...) {
   ggplot2::scale_color_manual(values = MS_METRIC_COLORS, limits = MS_METRIC_CLASSES, drop = FALSE, ...)
 }
-
 scale_fill_ms_metric <- function(...) {
   ggplot2::scale_fill_manual(values = MS_METRIC_COLORS, limits = MS_METRIC_CLASSES, drop = FALSE, ...)
 }
-
 scale_fill_ms_sequential <- function(...) {
   ggplot2::scale_fill_gradientn(colours = MS_SEQUENTIAL, ...)
 }
-
 scale_color_ms_sequential <- function(...) {
   ggplot2::scale_color_gradientn(colours = MS_SEQUENTIAL, ...)
 }
 
-scale_fill_ms_diverging <- function(limits = NULL, ...) {
+# Diverging scales are always symmetric around zero; pass the largest absolute value.
+scale_fill_ms_diverging <- function(max_abs, ...) {
+  max_abs <- abs(as.numeric(max_abs)[1])
+  if (!is.finite(max_abs) || max_abs <= 0) stop("max_abs must be a positive finite number")
   ggplot2::scale_fill_gradientn(
     colours = MS_DIVERGING,
-    values = scales::rescale(c(-1, -.45, 0, .45, 1)),
-    limits = limits,
-    ...
+    values = c(0, .275, .5, .725, 1),
+    limits = c(-max_abs, max_abs), ...
   )
 }
-
-scale_color_ms_diverging <- function(limits = NULL, ...) {
+scale_color_ms_diverging <- function(max_abs, ...) {
+  max_abs <- abs(as.numeric(max_abs)[1])
+  if (!is.finite(max_abs) || max_abs <= 0) stop("max_abs must be a positive finite number")
   ggplot2::scale_color_gradientn(
     colours = MS_DIVERGING,
-    values = scales::rescale(c(-1, -.45, 0, .45, 1)),
-    limits = limits,
-    ...
+    values = c(0, .275, .5, .725, 1),
+    limits = c(-max_abs, max_abs), ...
   )
 }
 
