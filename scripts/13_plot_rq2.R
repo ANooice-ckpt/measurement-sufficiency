@@ -5,10 +5,10 @@ suppressPackageStartupMessages({
 source("scripts/utils/figure_style.R")
 source("scripts/utils/figure_atlas.R")
 
-# RQ2 plotting only. Fig. 2 now covers all three conditionality axes in the
-# research question: reference exposure state, real-world context, and external
-# context predictability/transportability. Fig. 3 carries the cross-dimensional
-# separability result at full metric x configuration resolution.
+# RQ2 plotting only. Fig. 2 covers all three conditionality axes in the research
+# question: reference exposure state, real-world context, and external-context
+# predictability/transportability. Fig. 3 carries cross-dimensional separability
+# at full metric x joint-configuration resolution.
 RQ1_SUMMARY_CSV <- "results/rq1/rq1_summary.csv"
 COND_RDS <- "data/derived/rq2/rq2_condition_long.rds"
 GAMMA_RDS <- "data/derived/rq2/rq2_gamma_long.rds"
@@ -187,12 +187,9 @@ p2c <- conditional_ab_panel("optical", "c")
 p2d <- conditional_ab_panel("duration", "d")
 p2e <- conditional_ab_panel("temporal", "e")
 
-# f. Real-world context hypercube slice at the same anchor configurations.
-# Axes/channels are deliberately orthogonal:
-#   y = target representation; x = context state; facet = measurement anchor;
-#   bubble area = A(context); bubble fill = B(context)/A(context).
-# Light-grey background cells are operator-valid states; empty white cells are
-# target/context combinations for which context restriction changes the operator's meaning.
+# Shared anchor table for the real-world-context panels. Placement intentionally
+# retains chest and wrist as separate anchor facets; ordered dimensions retain
+# their predeclared most-degraded primary anchor from 12_rq2_analysis.R.
 anchor_table <- anchors |>
   mutate(
     dimension = factor(dimension, levels = DIMENSIONS),
@@ -206,7 +203,28 @@ anchor_table <- anchors |>
   ) |>
   arrange(dimension, configuration_order)
 anchor_levels <- unique(anchor_table$anchor_label)
+anchor_index <- anchor_table |>
+  transmute(
+    anchor_row = row_number(), dimension = as.character(dimension),
+    configuration, anchor_label
+  ) |>
+  distinct()
+context_index <- ctx_states |>
+  transmute(
+    context_row = row_number(), context_family, context_state,
+    context_state_label, context_order
+  )
 
+operator_valid <- ctx_manifest |>
+  distinct(context_family, context_state, metric) |>
+  mutate(operator_valid = TRUE)
+
+# f. State-specific real-world context geometry.
+# Orthogonal visual grammar:
+#   y = target representation; x = context state; facet = measurement anchor;
+#   bubble area = A(context); bubble fill = B(context)/A(context).
+# Grey = operator-valid support; white = operator-invalid context restriction;
+# x = operator-valid but no finite estimate on that anchor/support.
 ctx_anchor <- ctx |>
   semi_join(anchor_table, by = c("dimension", "configuration")) |>
   left_join(ctx_states, by = c("context_family", "context_state")) |>
@@ -219,23 +237,21 @@ ctx_anchor <- ctx |>
   ) |>
   ms_add_metric_order(metric_order)
 
-operator_valid <- ctx_manifest |>
-  distinct(context_family, context_state, metric) |>
-  mutate(operator_valid = TRUE)
 ctx_key <- ctx_anchor |>
   transmute(
     dimension = as.character(dimension), configuration, anchor_label = as.character(anchor_label),
     context_family, context_state, metric = as.character(metric), estimated = TRUE
   ) |>
   distinct()
+
 ctx_grid <- tidyr::crossing(
   metric = metric_order$metric,
-  anchor_table |>
-    transmute(dimension = as.character(dimension), configuration, anchor_label) |>
-    distinct(),
-  ctx_states |>
-    select(context_family, context_state, context_state_label, context_order)
+  anchor_row = anchor_index$anchor_row,
+  context_row = context_index$context_row
 ) |>
+  left_join(anchor_index, by = "anchor_row") |>
+  left_join(context_index, by = "context_row") |>
+  select(-anchor_row, -context_row) |>
   left_join(operator_valid, by = c("context_family", "context_state", "metric")) |>
   left_join(ctx_key, by = c("dimension", "configuration", "anchor_label", "context_family", "context_state", "metric")) |>
   mutate(
@@ -263,8 +279,8 @@ p2f <- ggplot(ctx_anchor, aes(context_state_label, metric)) +
   ms_direction_scale(name = "conditional B / A") +
   ms_magnitude_size_scale(name = "conditional A", range = c(.22, 2.65)) +
   labs(
-    title = "f  Real-world context dependence across target representations",
-    x = "civil photoperiod, diary environment, and diary activity state", y = NULL
+    title = "f  Context-specific distortion geometry",
+    x = "civil photoperiod · diary environment · diary activity", y = NULL
   ) +
   ms_atlas_theme(base_size = 5.9, x_angle = 55) +
   guides(
@@ -272,13 +288,128 @@ p2f <- ggplot(ctx_anchor, aes(context_state_label, metric)) +
     fill = guide_colorbar(order = 2, title.position = "top", barwidth = grid::unit(28, "mm"))
   )
 
+# g. Paired contextual shifts for the two naturally paired binary contexts.
+# A and B have the same standardized-distortion units, so ΔA and ΔB share one
+# diverging fill scale. A small black dot means the site-stratified participant
+# bootstrap interval excludes zero; it is an uncertainty cue, not a new estimand.
+binary_labels <- tibble::tribble(
+  ~context_family, ~contrast_label, ~contrast_order,
+  "photoperiod", "Day → Night", 1L,
+  "environment", "Indoor → Outdoor", 2L
+)
+contrast_anchor <- ctx_contrast |>
+  semi_join(anchor_table, by = c("dimension", "configuration")) |>
+  left_join(anchor_table |> select(dimension, configuration, anchor_label), by = c("dimension", "configuration")) |>
+  left_join(binary_labels, by = "context_family") |>
+  filter(!is.na(contrast_label))
+
+contrast_long <- bind_rows(
+  contrast_anchor |>
+    transmute(
+      dimension, configuration, anchor_label, metric, metric_class, context_family, contrast_label, contrast_order,
+      quantity = "ΔA", shift = mean_delta_absolute,
+      ci_low = absolute_ci_low, ci_high = absolute_ci_high, bootstrap_supported
+    ),
+  contrast_anchor |>
+    transmute(
+      dimension, configuration, anchor_label, metric, metric_class, context_family, contrast_label, contrast_order,
+      quantity = "ΔB", shift = mean_delta_signed,
+      ci_low = signed_ci_low, ci_high = signed_ci_high, bootstrap_supported
+    )
+) |>
+  filter(is.finite(shift)) |>
+  mutate(
+    contrast_col = paste0(contrast_label, "\n", quantity),
+    contrast_col = factor(
+      contrast_col,
+      levels = c("Day → Night\nΔA", "Day → Night\nΔB", "Indoor → Outdoor\nΔA", "Indoor → Outdoor\nΔB")
+    ),
+    anchor_label = factor(anchor_label, levels = anchor_levels),
+    ci_excludes_zero = replace_na(bootstrap_supported, FALSE) & is.finite(ci_low) & is.finite(ci_high) & (ci_low > 0 | ci_high < 0)
+  ) |>
+  ms_add_metric_order(metric_order)
+
+binary_valid <- ctx_manifest |>
+  filter(context_family %in% binary_labels$context_family) |>
+  distinct(context_family, context_state, metric) |>
+  count(context_family, metric, name = "n_valid_states") |>
+  mutate(operator_valid = n_valid_states >= 2L) |>
+  select(context_family, metric, operator_valid)
+
+contrast_cols <- tidyr::crossing(
+  binary_labels,
+  quantity = c("ΔA", "ΔB")
+) |>
+  arrange(contrast_order, match(quantity, c("ΔA", "ΔB"))) |>
+  mutate(
+    contrast_row = row_number(),
+    contrast_col = factor(
+      paste0(contrast_label, "\n", quantity),
+      levels = c("Day → Night\nΔA", "Day → Night\nΔB", "Indoor → Outdoor\nΔA", "Indoor → Outdoor\nΔB")
+    )
+  )
+contrast_key <- contrast_long |>
+  transmute(
+    dimension = as.character(dimension), configuration, anchor_label = as.character(anchor_label),
+    context_family, metric = as.character(metric), quantity, estimated = TRUE
+  ) |>
+  distinct()
+contrast_grid <- tidyr::crossing(
+  metric = metric_order$metric,
+  anchor_row = anchor_index$anchor_row,
+  contrast_row = contrast_cols$contrast_row
+) |>
+  left_join(anchor_index, by = "anchor_row") |>
+  left_join(contrast_cols |> select(contrast_row, context_family, quantity, contrast_col), by = "contrast_row") |>
+  select(-anchor_row, -contrast_row) |>
+  left_join(binary_valid, by = c("context_family", "metric")) |>
+  left_join(contrast_key, by = c("dimension", "configuration", "anchor_label", "context_family", "metric", "quantity")) |>
+  mutate(
+    operator_valid = replace_na(operator_valid, FALSE),
+    estimated = replace_na(estimated, FALSE),
+    anchor_label = factor(anchor_label, levels = anchor_levels)
+  ) |>
+  ms_add_metric_order(metric_order)
+
+contrast_lim <- max(abs(contrast_long$shift), na.rm = TRUE)
+if (!is.finite(contrast_lim) || contrast_lim <= 0) contrast_lim <- 1
+
+p2g <- ggplot(contrast_long, aes(contrast_col, metric)) +
+  geom_tile(
+    data = contrast_grid |> filter(operator_valid),
+    fill = "#F2F2F2", color = "white", linewidth = .10
+  ) +
+  geom_point(
+    data = contrast_grid |> filter(operator_valid, !estimated),
+    shape = 4, size = .44, stroke = .20, color = "#B5B5B5"
+  ) +
+  geom_tile(aes(fill = shift), color = "white", linewidth = .10) +
+  geom_point(
+    data = contrast_long |> filter(ci_excludes_zero),
+    shape = 16, size = .42, color = "#111111"
+  ) +
+  facet_grid(metric_class ~ anchor_label, scales = "free_y", space = "free_y", switch = "y") +
+  scale_fill_ms_diverging(
+    contrast_lim,
+    transform = asinh_display,
+    name = "mean paired shift\n(standardized e)"
+  ) +
+  labs(title = "g  Paired contextual shifts", x = "paired context and geometry component", y = NULL) +
+  ms_atlas_theme(base_size = 5.9, x_angle = 55) +
+  guides(fill = guide_colorbar(title.position = "top", barwidth = grid::unit(28, "mm")))
+
 readr::write_csv(
   ctx_anchor |>
     mutate(metric = as.character(metric), metric_class = as.character(metric_class), anchor_label = as.character(anchor_label)),
   "results/rq2/fig2_context_anchor_atlas.csv", na = ""
 )
+readr::write_csv(
+  contrast_long |>
+    mutate(metric = as.character(metric), metric_class = as.character(metric_class), anchor_label = as.character(anchor_label)),
+  "results/rq2/fig2_context_binary_shift_atlas.csv", na = ""
+)
 
-# g. External/exposure/joint predictability and leave-site-out transportability.
+# h. External/exposure/joint predictability and leave-site-out transportability.
 perfwide <- perf |>
   filter(is.finite(r2), validation_scheme %in% c("participant_grouped", "leave_site_out")) |>
   select(dimension, configuration, metric, metric_class, outcome, model_family, model_label, validation_scheme, r2) |>
@@ -297,7 +428,7 @@ if (nrow(perfwide)) {
       .groups = "drop"
     )
 
-  p2g <- ggplot(perfwide, aes(participant_grouped, leave_site_out, color = model_label, shape = model_label)) +
+  p2h <- ggplot(perfwide, aes(participant_grouped, leave_site_out, color = model_label, shape = model_label)) +
     geom_abline(slope = 1, intercept = 0, linetype = 2, linewidth = .35, color = "#777777") +
     geom_point(size = .90, alpha = .34) +
     geom_segment(
@@ -317,26 +448,27 @@ if (nrow(perfwide)) {
     scale_shape_manual(values = c(External = 16, `Exposure state` = 17, Joint = 15)) +
     coord_equal(xlim = lims, ylim = lims) +
     labs(
-      title = "g  Predictability and cross-site transportability",
+      title = "h  Predictability and cross-site transportability",
       x = "grouped-participant CV R²", y = "leave-site-out R²", color = NULL, shape = NULL
     ) +
     theme_ms(base_size = 7.2, aspect_ratio = .52, legend_position = "bottom") +
     theme(legend.text = element_text(size = 6.5))
 } else {
-  p2g <- ggplot() + annotate("text", x = 0, y = 0, label = "Prediction models not estimable", size = 3) +
-    xlim(-1, 1) + ylim(-1, 1) + labs(title = "g  Predictability and cross-site transportability") + base_square_theme
+  p2h <- ggplot() + annotate("text", x = 0, y = 0, label = "Prediction models not estimable", size = 3) +
+    xlim(-1, 1) + ylim(-1, 1) + labs(title = "h  Predictability and cross-site transportability") + base_square_theme
 }
 
 state_geometry <- plot_grid(p2b, p2c, p2d, p2e, ncol = 2, align = "hv", axis = "tblr")
 fig2top <- plot_grid(p2a, state_geometry, nrow = 1, rel_widths = c(.36, .64), align = "hv", axis = "tblr")
-fig2body <- plot_grid(fig2top, p2f, p2g, ncol = 1, rel_heights = c(1.0, 2.45, .86))
+context_block <- plot_grid(p2f, p2g, nrow = 1, rel_widths = c(.66, .34), align = "v", axis = "lr")
+fig2body <- plot_grid(fig2top, context_block, p2h, ncol = 1, rel_heights = c(1.0, 2.55, .86))
 fig2 <- plot_grid(fig2body, metric_legend, ncol = 1, rel_heights = c(1, .035))
-ggsave(file.path(FIG_DIR, "Fig2_RQ2.pdf"), fig2, width = 15.2, height = 14.0, useDingbats = FALSE, bg = "white")
-ggsave(file.path(FIG_DIR, "Fig2_RQ2.png"), fig2, width = 15.2, height = 14.0, dpi = 240, bg = "white")
+ggsave(file.path(FIG_DIR, "Fig2_RQ2.pdf"), fig2, width = 15.6, height = 14.2, useDingbats = FALSE, bg = "white")
+ggsave(file.path(FIG_DIR, "Fig2_RQ2.png"), fig2, width = 15.6, height = 14.2, dpi = 240, bg = "white")
 
 # Full all-configuration context hypercube slices are exported by measurement
 # dimension as supplementary zoomable atlases. This preserves completeness
-# without forcing all 15 configurations x 8 contexts into the main panel.
+# without forcing all configurations x all states into the main panel.
 make_context_hypercube <- function(dim) {
   cfg <- ctx |>
     filter(dimension == dim) |>
@@ -354,11 +486,18 @@ make_context_hypercube <- function(dim) {
     ) |>
     ms_add_metric_order(metric_order)
 
+  cfg_index <- cfg |>
+    transmute(cfg_row = row_number(), dimension, configuration, configuration_label)
+  state_index <- ctx_states |>
+    transmute(context_row = row_number(), context_family, context_state, context_state_label)
   grid <- tidyr::crossing(
     metric = metric_order$metric,
-    cfg |> transmute(dimension, configuration, configuration_label),
-    ctx_states |> select(context_family, context_state, context_state_label)
+    cfg_row = cfg_index$cfg_row,
+    context_row = state_index$context_row
   ) |>
+    left_join(cfg_index, by = "cfg_row") |>
+    left_join(state_index, by = "context_row") |>
+    select(-cfg_row, -context_row) |>
     left_join(operator_valid, by = c("context_family", "context_state", "metric")) |>
     mutate(
       operator_valid = replace_na(operator_valid, FALSE),
@@ -443,7 +582,7 @@ if (nrow(gs)) {
     xlim(-1, 1) + ylim(-1, 1) + labs(title = "c  Interaction geometry") + base_square_theme
 }
 
-# d. Pair-level summary preserves both total interaction magnitude and directional component.
+# d. Pair-level summary preserves total interaction magnitude and directional component.
 p3d <- ggplot(gp, aes(y = dimension_pair)) +
   geom_segment(aes(x = q25_Q, xend = q75_Q, yend = dimension_pair), linewidth = .7, color = MS_PRIMARY, alpha = .62) +
   geom_point(aes(x = median_Q), size = 2.25, color = MS_PRIMARY) +
