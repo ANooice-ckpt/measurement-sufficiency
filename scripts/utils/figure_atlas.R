@@ -3,15 +3,25 @@
 # No inferential estimand is changed here.
 
 ms_metric_order <- function(rq1_summary, classes = MS_METRIC_CLASSES) {
-  required <- c("metric", "metric_class", "A_mean_absolute")
+  required <- c("metric", "metric_class", "dimension", "A_mean_absolute")
   missing <- setdiff(required, names(rq1_summary))
   if (length(missing)) stop("RQ1 summary missing metric-order columns: ", paste(missing, collapse = ", "))
 
+  # Configuration counts differ strongly by measurement dimension (e.g. one
+  # optical alternative versus several temporal/duration levels). Build a
+  # dimension-balanced display score so the row order is not implicitly weighted
+  # by how densely a dimension happened to be sampled in the configuration grid.
   rq1_summary |>
     dplyr::filter(is.finite(A_mean_absolute)) |>
+    dplyr::group_by(metric, metric_class, dimension) |>
+    dplyr::summarise(
+      dimension_median_A = stats::median(A_mean_absolute, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
     dplyr::group_by(metric, metric_class) |>
     dplyr::summarise(
-      rq1_sensitivity = stats::median(A_mean_absolute, na.rm = TRUE),
+      rq1_sensitivity = stats::median(dimension_median_A, na.rm = TRUE),
+      n_dimensions_in_order = dplyr::n(),
       .groups = "drop"
     ) |>
     dplyr::mutate(metric_class = factor(metric_class, levels = classes)) |>
