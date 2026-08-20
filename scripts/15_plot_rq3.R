@@ -4,7 +4,7 @@ suppressPackageStartupMessages({
 })
 source("scripts/utils/figure_style.R")
 
-# RQ3 plotting only: Fig. 4 inverse sufficiency + Fig. 5 multidimensional entry tolerance/Pareto.
+# RQ3 plotting only: Fig. 4 single-dimension sufficiency + Fig. 5 multidimensional entry tolerance/Pareto.
 SINGLE_RDS <- "data/derived/rq3/rq3_single_dimension_sufficiency.rds"
 REQ_CSV <- "results/rq3/rq3_single_dimension_requirement.csv"
 UNORDERED_CSV <- "results/rq3/rq3_unordered_sufficiency_thresholds.csv"
@@ -38,19 +38,6 @@ pf <- readr::read_csv(PARETO_FREQ_CSV, show_col_types = FALSE)
 reps <- readr::read_csv(REP_CSV, show_col_types = FALSE)
 scope <- readr::read_csv(SCOPE_CSV, show_col_types = FALSE)
 
-# Fig. 4a: inverse-problem schematic.
-p4a <- ggplot() +
-  annotate("segment", x = .08, xend = .92, y = .66, yend = .66, linewidth = .62, color = MS_PRIMARY) +
-  annotate("point", x = c(.18, .38, .58, .78), y = .66, size = c(1.6, 1.8, 2, 2.2), color = MS_PRIMARY) +
-  annotate("segment", x = .15, xend = .82, y = .28, yend = .28, linewidth = .62, color = MS_PRIMARY) +
-  annotate("segment", x = .55, xend = .55, y = .16, yend = .4, linetype = 2, linewidth = .45, color = MS_SECONDARY) +
-  annotate("text", x = .5, y = .84, label = "RQ1: configuration → distortion", size = 3.1) +
-  annotate("text", x = .5, y = .48, label = "acceptable distortion ε", size = 2.9, color = MS_SECONDARY) +
-  annotate("text", x = .5, y = .1, label = "RQ3: ε → sufficient measurement requirement", size = 3.1) +
-  annotate("text", x = .05, y = .97, label = "a", hjust = 0, vjust = 1, size = 3.2) +
-  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1), clip = "off") +
-  theme_ms_blank(aspect_ratio = 1)
-
 extend_req <- function(d) {
   if (!nrow(d)) return(d)
   mx <- max(d$epsilon, na.rm = TRUE)
@@ -64,7 +51,15 @@ ordered_panel <- function(dim, letter, title, ylab) {
   d <- req |>
     filter(dimension == dim, is.finite(epsilon), is.finite(least_demanding_rank)) |>
     extend_req()
-  if (!nrow(d)) return(ggplot() + annotate("text", x = .5, y = .5, label = "Not estimable") + theme_ms_blank(aspect_ratio = 1))
+  if (!nrow(d)) {
+    return(
+      ggplot() +
+        annotate("text", x = .5, y = .5, label = "Not estimable") +
+        xlim(0, 1) + ylim(0, 1) +
+        labs(title = paste0(letter, "  ", title)) +
+        theme_ms_blank(aspect_ratio = 1)
+    )
+  }
 
   ggplot(d, aes(epsilon, least_demanding_rank, group = metric, color = metric_class)) +
     geom_step(alpha = .38, linewidth = .44, direction = "hv") +
@@ -84,31 +79,32 @@ ordered_panel <- function(dim, letter, title, ylab) {
     theme(panel.grid.major.y = element_line(colour = "#E8E8E8", linewidth = .24, linetype = "22"))
 }
 
-p4b <- ordered_panel("temporal", "b", "Temporal resolution", TEMPORAL_LEVELS)
-p4c <- ordered_panel("duration", "c", "Monitoring duration", DURATION_LEVELS)
+# Fig. 4: four substantive sufficiency panels in a homogeneous 2 x 2 layout.
+p4a <- ordered_panel("temporal", "a", "Temporal resolution", TEMPORAL_LEVELS)
+p4b <- ordered_panel("duration", "b", "Monitoring duration", DURATION_LEVELS)
 
 oc <- coverage |>
   filter(dimension == "optical", metric_class != "All") |>
   mutate(metric_class = factor(metric_class, levels = METRIC_CLASSES))
 oa <- coverage |> filter(dimension == "optical", metric_class == "All")
-p4d <- ggplot(oc, aes(epsilon, fraction_metrics_sufficient, color = metric_class)) +
+p4c <- ggplot(oc, aes(epsilon, fraction_metrics_sufficient, color = metric_class)) +
   geom_step(linewidth = .46, alpha = .65, na.rm = TRUE) +
   geom_step(data = oa, aes(epsilon, fraction_metrics_sufficient), inherit.aes = FALSE, linewidth = .85, color = MS_PRIMARY) +
   scale_x_continuous(transform = asinh_display, expand = expansion(mult = c(.01, .03))) +
   scale_y_continuous(limits = c(0, 1), labels = scales::percent_format(accuracy = 1)) +
   scale_color_ms_metric() +
-  labs(title = "d  Optical proxy", x = "acceptable distortion, ε", y = "observable target representations sufficient") +
+  labs(title = "c  Optical proxy", x = "acceptable distortion, ε", y = "observable target representations sufficient") +
   theme_ms(aspect_ratio = 1, legend_position = "none")
 
 pc <- coverage |> filter(dimension == "placement", metric_class == "All")
 placement_levels <- unique(pc$configuration_label)
 placement_colors <- setNames(rep(MS_TWO_COLORS, length.out = length(placement_levels)), placement_levels)
-p4e <- ggplot(pc, aes(epsilon, fraction_metrics_sufficient, color = configuration_label, linetype = configuration_label)) +
+p4d <- ggplot(pc, aes(epsilon, fraction_metrics_sufficient, color = configuration_label, linetype = configuration_label)) +
   geom_step(linewidth = .82) +
   scale_color_manual(values = placement_colors) +
   scale_x_continuous(transform = asinh_display, expand = expansion(mult = c(.01, .03))) +
   scale_y_continuous(limits = c(0, 1), labels = scales::percent_format(accuracy = 1)) +
-  labs(title = "e  Placement", x = "acceptable distortion, ε", y = "observable target representations sufficient", color = NULL, linetype = NULL) +
+  labs(title = "d  Placement", x = "acceptable distortion, ε", y = "observable target representations sufficient", color = NULL, linetype = NULL) +
   theme_ms(aspect_ratio = 1, legend_position = "bottom") +
   theme(legend.text = element_text(size = 6.5))
 
@@ -123,10 +119,10 @@ metric_legend <- cowplot::get_legend(
     theme_void(base_family = MS_FONT, base_size = 8) + theme(legend.position = "bottom")
 )
 
-fig4body <- plot_grid(p4a, p4b, p4c, p4d, p4e, NULL, ncol = 3, align = "hv", axis = "tblr")
+fig4body <- plot_grid(p4a, p4b, p4c, p4d, ncol = 2, align = "hv", axis = "tblr")
 fig4 <- plot_grid(fig4body, metric_legend, ncol = 1, rel_heights = c(1, .08))
-ggsave(file.path(FIG_DIR, "Fig4_RQ3.pdf"), fig4, width = 12.2, height = 8.2, useDingbats = FALSE)
-ggsave(file.path(FIG_DIR, "Fig4_RQ3.png"), fig4, width = 12.2, height = 8.2, dpi = 240)
+ggsave(file.path(FIG_DIR, "Fig4_RQ3.pdf"), fig4, width = 9.4, height = 9.6, useDingbats = FALSE, bg = "white")
+ggsave(file.path(FIG_DIR, "Fig4_RQ3.png"), fig4, width = 9.4, height = 9.6, dpi = 240, bg = "white")
 
 # Fig. 5: epsilon_entry=A(c) compresses all tolerances; Pareto within fixed placement/optical facets.
 est <- scope |> filter(object == "multidimensional_joint") |> pull(estimable)
@@ -137,8 +133,8 @@ if (!estimable) {
     annotate("text", x = .5, y = .56, label = "Multidimensional frontier not estimable\non facet-specific protocol-anchored supports", size = 4, lineheight = 1.1) +
     annotate("text", x = .5, y = .36, label = "No supported seven-day joint configuration lattice was available.", size = 2.8, color = "#555555") +
     xlim(0, 1) + ylim(0, 1) + theme_ms_blank()
-  ggsave(file.path(FIG_DIR, "Fig5_RQ3.pdf"), p5, width = 10, height = 6, useDingbats = FALSE)
-  ggsave(file.path(FIG_DIR, "Fig5_RQ3.png"), p5, width = 10, height = 6, dpi = 240)
+  ggsave(file.path(FIG_DIR, "Fig5_RQ3.pdf"), p5, width = 10, height = 6, useDingbats = FALSE, bg = "white")
+  ggsave(file.path(FIG_DIR, "Fig5_RQ3.png"), p5, width = 10, height = 6, dpi = 240, bg = "white")
 } else {
   to <- tibble(
     resolution_s = c(10L, 20L, 30L, 60L, 300L, 900L, 1800L),
@@ -217,8 +213,8 @@ if (!estimable) {
   fig5top <- plot_grid(p5a, panels[[1]], panels[[2]], nrow = 1, align = "hv", axis = "tblr")
   fig5bot <- plot_grid(panels[[3]], panels[[4]], p5f, nrow = 1, align = "hv", axis = "tblr")
   fig5 <- plot_grid(fig5top, fig5bot, ncol = 1, rel_heights = c(1, 1))
-  ggsave(file.path(FIG_DIR, "Fig5_RQ3.pdf"), fig5, width = 13, height = 8.6, useDingbats = FALSE)
-  ggsave(file.path(FIG_DIR, "Fig5_RQ3.png"), fig5, width = 13, height = 8.6, dpi = 240)
+  ggsave(file.path(FIG_DIR, "Fig5_RQ3.pdf"), fig5, width = 13, height = 8.6, useDingbats = FALSE, bg = "white")
+  ggsave(file.path(FIG_DIR, "Fig5_RQ3.png"), fig5, width = 13, height = 8.6, dpi = 240, bg = "white")
 }
 
 message("RQ3 figures complete with shared publication style: Fig4_RQ3 + Fig5_RQ3")
