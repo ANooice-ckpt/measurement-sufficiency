@@ -15,13 +15,12 @@ if (getRversion() != required_r) {
   stop(sprintf("Core artifact build is pinned to R 4.5.0; current runtime is %s", getRversion()))
 }
 
-Sys.setenv(OMP_NUM_THREADS = "1", OPENBLAS_NUM_THREADS = "1", MKL_NUM_THREADS = "1")
+Sys.setenv(
+  OMP_NUM_THREADS = "1", OPENBLAS_NUM_THREADS = "1", MKL_NUM_THREADS = "1",
+  VECLIB_MAXIMUM_THREADS = "1", NUMEXPR_NUM_THREADS = "1"
+)
 workers <- suppressWarnings(as.integer(Sys.getenv("CORE_WORKERS", unset = "16")))
 if (!is.finite(workers) || workers < 1L) workers <- 1L
-if (.Platform$OS.type == "windows" && workers > 1L) {
-  message("CORE_WORKERS>1 uses forked workers only on Unix-like systems; falling back to 1 on Windows.")
-  workers <- 1L
-}
 force_rebuild <- identical(Sys.getenv("CORE_FORCE", unset = "0"), "1")
 CORE_VERSION <- core_artifact_version()
 INTERIM_ROOT <- file.path("data", "interim", "core", CORE_VERSION)
@@ -34,6 +33,46 @@ for (d in c(SUPPORT_DIR, METRIC_DIR, CONTEXT_DIR, WEATHER_DIR, "data/derived/cor
   dir.create(d, recursive = TRUE, showWarnings = FALSE)
 }
 message("Core artifact build: version=", CORE_VERSION, ", R ", getRversion(), ", workers=", workers, ", force=", force_rebuild)
+
+# Dynamic fork workers remain the lightest path on Unix. Windows uses PSOCK
+# workers initialized from the same pinned repository code, so the scientific
+# functions and task granularity stay identical across local and ECS runs.
+parallel_core_lapply <- function(X, FUN, exports = character()) {
+  if (!length(X)) return(list())
+  n_workers <- min(max(1L, as.integer(workers)), length(X))
+  if (n_workers <= 1L) return(lapply(X, FUN))
+  if (.Platform$OS.type != "windows") {
+    return(parallel::mclapply(
+      X, FUN, mc.cores = n_workers, mc.preschedule = FALSE, mc.set.seed = TRUE
+    ))
+  }
+
+  cl <- parallel::makePSOCKcluster(n_workers)
+  on.exit(parallel::stopCluster(cl), add = TRUE)
+  root <- normalizePath(".", winslash = "/", mustWork = TRUE)
+  parallel::clusterCall(cl, function(root) {
+    setwd(root)
+    Sys.setenv(
+      OMP_NUM_THREADS = "1", OPENBLAS_NUM_THREADS = "1", MKL_NUM_THREADS = "1",
+      VECLIB_MAXIMUM_THREADS = "1", NUMEXPR_NUM_THREADS = "1"
+    )
+    suppressPackageStartupMessages({
+      library(tidyverse)
+      library(melidosData)
+      library(readxl)
+    })
+    source("scripts/utils/melidos_io.R")
+    source("scripts/utils/rq1_metrics.R")
+    source("scripts/utils/core_artifacts.R")
+    source("scripts/utils/core_temporal_sampling.R")
+    source("scripts/utils/core_context.R")
+    source("scripts/utils/weather_era5.R")
+    NULL
+  }, root)
+  exports <- intersect(unique(exports), ls(envir = .GlobalEnv))
+  if (length(exports)) parallel::clusterExport(cl, exports, envir = .GlobalEnv)
+  parallel::parLapplyLB(cl, X, FUN, chunk.size = 1L)
+}
 
 metric_types <- read_excel("external/zauner_position/data/metric_types.xlsx") |>
   transmute(metric = name, metric_class = metric_type)
@@ -89,9 +128,10 @@ prepare_one <- function(i) {
   path
 }
 idx <- seq_len(nrow(support_grid))
-support_paths <- if (workers > 1L) {
-  parallel::mclapply(idx, prepare_one, mc.cores = min(workers, length(idx)), mc.preschedule = FALSE)
-} else lapply(idx, prepare_one)
+support_paths <- parallel_core_lapply(
+  idx, prepare_one,
+  exports = c("site_meta", "support_grid", "SUPPORT_DIR", "force_rebuild")
+)
 support_paths <- unlist(support_paths, use.names = FALSE)
 support_paths <- support_paths[!is.na(support_paths) & file.exists(support_paths)]
 if (!length(support_paths)) stop("No support blocks were produced")
@@ -142,12 +182,10 @@ compute_one <- function(path) {
   }
   c(metric = metric_out, context = context_out)
 }
-block_paths <- if (workers > 1L) {
-  parallel::mclapply(
-    support_paths, compute_one,
-    mc.cores = min(workers, length(support_paths)), mc.preschedule = FALSE
-  )
-} else lapply(support_paths, compute_one)
+block_paths <- parallel_core_lapply(
+  support_paths, compute_one,
+  exports = c("METRIC_DIR", "CONTEXT_DIR", "force_rebuild")
+)
 metric_paths <- vapply(block_paths, `[[`, character(1), "metric")
 context_paths <- vapply(block_paths, `[[`, character(1), "context")
 
