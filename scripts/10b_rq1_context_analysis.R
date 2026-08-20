@@ -28,27 +28,90 @@ B_BOOT <- suppressWarnings(as.integer(Sys.getenv("RQ1_BOOT", unset = "1000")))
 if (!is.finite(B_BOOT) || B_BOOT < 0L) B_BOOT <- 1000L
 CONTEXT_WORKERS <- suppressWarnings(as.integer(Sys.getenv("RQ1_CONTEXT_WORKERS", unset = "16")))
 if (!is.finite(CONTEXT_WORKERS) || CONTEXT_WORKERS < 1L) CONTEXT_WORKERS <- 1L
-if (.Platform$OS.type == "windows" && CONTEXT_WORKERS > 1L) {
-  message("RQ1_CONTEXT_WORKERS>1 uses forked workers only on Unix-like systems; falling back to 1 on Windows.")
-  CONTEXT_WORKERS <- 1L
-}
 BOOT_SEED <- 20260822L
 Sys.setenv(
   OMP_NUM_THREADS = "1", OPENBLAS_NUM_THREADS = "1", MKL_NUM_THREADS = "1",
   VECLIB_MAXIMUM_THREADS = "1", NUMEXPR_NUM_THREADS = "1"
 )
 
-parallel_lapply <- function(X, FUN, workers = CONTEXT_WORKERS) {
-  if (.Platform$OS.type != "windows" && workers > 1L && length(X) > 1L) {
-    parallel::mclapply(
-      X, FUN,
-      mc.cores = min(as.integer(workers), length(X)),
-      mc.preschedule = FALSE,
-      mc.set.seed = TRUE
+# Cross-platform execution wrapper. Unix-like systems use fork workers; Windows
+# uses a PSOCK cluster initialized from the same repository code. Each worker is
+# single-threaded internally, so RQ1_CONTEXT_WORKERS controls process-level
+# parallelism without nested BLAS/OpenMP oversubscription. Worker exceptions are
+# returned explicitly with task identity instead of being allowed to surface as
+# secondary bind_rows() failures.
+parallel_lapply <- function(X, FUN, workers = CONTEXT_WORKERS,
+                            exports = character(), label = "tasks") {
+  if (!length(X)) return(list())
+  n_workers <- min(max(1L, as.integer(workers)), length(X))
+  message(sprintf("RQ1 context [%s]: dispatching %d tasks across %d worker%s",
+                  label, length(X), n_workers, ifelse(n_workers == 1L, "", "s")))
+
+  safe_runner <- function(x, fun) {
+    tryCatch(
+      list(ok = TRUE, value = fun(x), error = NA_character_),
+      error = function(e) list(ok = FALSE, value = NULL, error = conditionMessage(e))
+    )
+  }
+
+  if (n_workers <= 1L) {
+    ans <- lapply(X, safe_runner, fun = FUN)
+  } else if (.Platform$OS.type != "windows") {
+    ans <- parallel::mclapply(
+      X, safe_runner, fun = FUN,
+      mc.cores = n_workers, mc.preschedule = FALSE, mc.set.seed = TRUE
     )
   } else {
-    lapply(X, FUN)
+    cl <- parallel::makePSOCKcluster(n_workers)
+    on.exit(parallel::stopCluster(cl), add = TRUE)
+    root <- normalizePath(".", winslash = "/", mustWork = TRUE)
+    parallel::clusterCall(cl, function(root) {
+      setwd(root)
+      Sys.setenv(
+        OMP_NUM_THREADS = "1", OPENBLAS_NUM_THREADS = "1", MKL_NUM_THREADS = "1",
+        VECLIB_MAXIMUM_THREADS = "1", NUMEXPR_NUM_THREADS = "1"
+      )
+      suppressPackageStartupMessages({
+        library(tidyverse)
+        library(LightLogR)
+      })
+      source("scripts/utils/melidos_io.R")
+      source("scripts/utils/core_artifacts.R")
+      source("scripts/utils/core_temporal_sampling.R")
+      source("scripts/utils/protocol_windows.R")
+      source("scripts/utils/rq_context.R")
+      assign("annotated_cache", new.env(parent = emptyenv()), envir = .GlobalEnv)
+      assign("value_cache", new.env(parent = emptyenv()), envir = .GlobalEnv)
+      NULL
+    }, root)
+    exports <- intersect(unique(exports), ls(envir = .GlobalEnv))
+    if (length(exports)) parallel::clusterExport(cl, exports, envir = .GlobalEnv)
+    ans <- parallel::parLapplyLB(cl, X, safe_runner, fun = FUN, chunk.size = 1L)
   }
+
+  failed <- which(!vapply(ans, function(z) isTRUE(z$ok), logical(1)))
+  if (length(failed)) {
+    describe_task <- function(i) {
+      task <- X[[i]]
+      if (is.list(task) && all(c("site", "support_id") %in% names(task))) {
+        paste0(task$site, "__", task$support_id)
+      } else {
+        paste0("task ", i)
+      }
+    }
+    details <- vapply(
+      failed,
+      function(i) paste0("  - ", describe_task(i), ": ", ans[[i]]$error),
+      character(1)
+    )
+    stop(
+      sprintf("RQ1 context [%s] failed for %d/%d tasks:\n%s",
+              label, length(failed), length(X), paste(details, collapse = "\n")),
+      call. = FALSE
+    )
+  }
+  message(sprintf("RQ1 context [%s]: completed %d/%d tasks", label, length(ans), length(X)))
+  lapply(ans, `[[`, "value")
 }
 
 for (p in c(RQ1_DISTORTION, CORE_CONTEXT)) if (!file.exists(p)) stop("Missing required upstream artifact: ", p)
@@ -183,7 +246,7 @@ pair_support_values <- function(site, support_id,
 }
 
 # Parallelize at the site x support level. This preserves within-support caching
-# while exposing dozens of independent work units on Linux/ECS.
+# while exposing dozens of independent work units on Linux/ECS and Windows.
 message("RQ1 context: placement, optical, and temporal operator-valid representations")
 pair_plan <- list(); pk <- 0L
 for (site_i in melidos_sites()) {
@@ -262,7 +325,15 @@ run_pair_support <- function(task) {
 }
 
 message("RQ1 context: parallel extraction across ", length(pair_plan), " site-support tasks")
-pair_blocks <- parallel_lapply(pair_plan, run_pair_support)
+pair_blocks <- parallel_lapply(
+  pair_plan, run_pair_support,
+  exports = c(
+    "SUPPORT_DIR", "site_meta", "diary_paths", "metric_manifest",
+    "PRIMARY_TEMPORAL_S", "DUAL_CHANNEL_METRICS",
+    "get_annotated_support", "get_context_values", "pair_support_values", "run_pair_support"
+  ),
+  label = "pair extraction"
+)
 raw_pairs <- bind_rows(pair_blocks)
 if (!nrow(raw_pairs)) stop("No context-conditioned placement/optical/temporal rows were produced")
 
@@ -301,7 +372,14 @@ run_duration_support <- function(i) {
   z |> mutate(support_id = row$support_id)
 }
 message("RQ1 context: parallel duration context extraction across ", nrow(duration_support_plan), " site-support tasks")
-duration_daily_context <- bind_rows(parallel_lapply(seq_len(nrow(duration_support_plan)), run_duration_support))
+duration_daily_context <- bind_rows(parallel_lapply(
+  seq_len(nrow(duration_support_plan)), run_duration_support,
+  exports = c(
+    "duration_support_plan", "SUPPORT_DIR", "site_meta", "diary_paths", "metric_manifest",
+    "DUAL_CHANNEL_METRICS", "get_annotated_support", "get_context_values", "run_duration_support"
+  ),
+  label = "duration context extraction"
+))
 
 duration_blocks <- vector("list", nrow(duration_windows))
 for (i in seq_len(nrow(duration_windows))) {
@@ -467,7 +545,14 @@ bootstrap_one <- function(i) {
   key <- g |> slice(1L) |> select(all_of(group_vars)) |> ungroup()
   bind_cols(key, bootstrap_ci(g, B_BOOT, seed = BOOT_SEED + i))
 }
-cis <- bind_rows(parallel_lapply(seq_along(bootstrap_groups), bootstrap_one))
+cis <- bind_rows(parallel_lapply(
+  seq_along(bootstrap_groups), bootstrap_one,
+  exports = c(
+    "bootstrap_groups", "group_vars", "B_BOOT", "BOOT_SEED",
+    "safe_q", "bootstrap_ci", "bootstrap_one"
+  ),
+  label = "bootstrap"
+))
 context_summary <- summary_base |>
   left_join(cis, by = group_vars) |>
   mutate(
