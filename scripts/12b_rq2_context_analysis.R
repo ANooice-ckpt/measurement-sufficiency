@@ -3,11 +3,13 @@ suppressPackageStartupMessages({
 })
 source("scripts/utils/rq_context.R")
 
-# Compact RQ2 extension for real-world context conditionality.
+# RQ2 extension for real-world context conditionality.
 # The existing 12_rq2_analysis.R remains responsible for exposure-state,
 # external-context prediction, grouped CV/LOSO transportability, and gamma
 # separability. This script uses the frozen primitive context distortions from
 # 10b and asks only how their empirical distributions change across context.
+# Diary context remains explanatory and is not added to the prediction-model
+# competition.
 
 RQ1_CONTEXT <- "data/derived/rq1/rq1_context_distortion_long.rds"
 OUT_DATA <- "data/derived/rq2"
@@ -26,20 +28,22 @@ core_versions <- unique(x$core_artifact_version); core_versions <- core_versions
 if (length(ctx_versions) != 1L || length(core_versions) != 1L) stop("RQ1 context/core version mismatch")
 RQ1_CONTEXT_VERSION <- ctx_versions[[1]]
 CORE_VERSION <- core_versions[[1]]
-RQ2_CONTEXT_VERSION <- paste0("rq2_context_v1__", RQ1_CONTEXT_VERSION)
+RQ2_CONTEXT_VERSION <- paste0("rq2_context_v2__", RQ1_CONTEXT_VERSION)
 
 safe_q <- rq_context_safe_quantile
 
-message("RQ2 context: empirical conditional geometry")
+message("RQ2 context: empirical conditional geometry across valid target representations")
 conditional_geometry <- x |>
   group_by(
     dimension, configuration, configuration_label, configuration_order,
-    comparison_lattice, context_family, context_state, metric, metric_class
+    comparison_lattice, context_family, context_state,
+    metric, metric_class, metric_geometry
   ) |>
   summarise(
     n_participants = n_distinct(paste(site, Id, sep = "|")),
     n_units = n(),
-    median_e = median(e), q25_e = safe_q(e, .25), q75_e = safe_q(e, .75),
+    median_e = median(e),
+    q25_e = safe_q(e, .25), q75_e = safe_q(e, .75),
     p025_e = safe_q(e, .025), p975_e = safe_q(e, .975),
     B_conditional = mean(e), A_conditional = mean(abs_e),
     .groups = "drop"
@@ -49,11 +53,15 @@ conditional_geometry <- x |>
     rq1_context_analysis_version = RQ1_CONTEXT_VERSION,
     rq2_context_analysis_version = RQ2_CONTEXT_VERSION
   )
-readr::write_csv(conditional_geometry, file.path(OUT_RESULTS, "rq2_context_conditional_geometry.csv"), na = "")
+readr::write_csv(
+  conditional_geometry,
+  file.path(OUT_RESULTS, "rq2_context_conditional_geometry.csv"),
+  na = ""
+)
 
 # Preserve the paired smallest-unit structure for the two naturally binary
 # contexts. Activity remains a four-state empirical distribution and is not
-# converted into an arbitrary set of pairwise tests.
+# converted into an arbitrary collection of pairwise tests.
 base <- x |>
   mutate(
     base_unit_id = case_when(
@@ -67,7 +75,9 @@ make_binary_contrast <- function(df, family, state0, state1) {
     filter(context_family == family, context_state %in% c(state0, state1)) |>
     select(
       dimension, configuration, configuration_label, configuration_order,
-      comparison_lattice, site, Id, base_unit_id, context_state, e, abs_e
+      comparison_lattice, site, Id, base_unit_id,
+      metric, metric_class, metric_geometry,
+      context_state, e, abs_e
     ) |>
     distinct() |>
     pivot_wider(names_from = context_state, values_from = c(e, abs_e))
@@ -77,7 +87,10 @@ make_binary_contrast <- function(df, family, state0, state1) {
   if (!all(c(e0, e1, a0, a1) %in% names(z))) return(tibble())
 
   z |>
-    filter(is.finite(.data[[e0]]), is.finite(.data[[e1]]), is.finite(.data[[a0]]), is.finite(.data[[a1]])) |>
+    filter(
+      is.finite(.data[[e0]]), is.finite(.data[[e1]]),
+      is.finite(.data[[a0]]), is.finite(.data[[a1]])
+    ) |>
     mutate(
       context_family = family,
       reference_state = state0,
@@ -88,6 +101,7 @@ make_binary_contrast <- function(df, family, state0, state1) {
     select(
       dimension, configuration, configuration_label, configuration_order,
       comparison_lattice, site, Id, base_unit_id,
+      metric, metric_class, metric_geometry,
       context_family, reference_state, comparison_state,
       delta_signed_distortion, delta_absolute_distortion
     )
@@ -102,7 +116,11 @@ binary_long <- bind_rows(
     rq1_context_analysis_version = RQ1_CONTEXT_VERSION,
     rq2_context_analysis_version = RQ2_CONTEXT_VERSION
   )
-saveRDS(binary_long, file.path(OUT_DATA, "rq2_context_binary_contrasts_long.rds"), compress = "xz")
+saveRDS(
+  binary_long,
+  file.path(OUT_DATA, "rq2_context_binary_contrasts_long.rds"),
+  compress = "xz"
+)
 
 bootstrap_contrast <- function(g, B = B_BOOT) {
   clusters <- g |>
@@ -131,14 +149,17 @@ bootstrap_contrast <- function(g, B = B_BOOT) {
   })
   tibble(
     bootstrap_supported = TRUE,
-    signed_ci_low = safe_q(vals["signed", ], .025), signed_ci_high = safe_q(vals["signed", ], .975),
-    absolute_ci_low = safe_q(vals["absolute", ], .025), absolute_ci_high = safe_q(vals["absolute", ], .975)
+    signed_ci_low = safe_q(vals["signed", ], .025),
+    signed_ci_high = safe_q(vals["signed", ], .975),
+    absolute_ci_low = safe_q(vals["absolute", ], .025),
+    absolute_ci_high = safe_q(vals["absolute", ], .975)
   )
 }
 
 contrast_vars <- c(
   "dimension", "configuration", "configuration_label", "configuration_order",
-  "comparison_lattice", "context_family", "reference_state", "comparison_state"
+  "comparison_lattice", "metric", "metric_class", "metric_geometry",
+  "context_family", "reference_state", "comparison_state"
 )
 if (nrow(binary_long)) {
   contrast_base <- binary_long |>
@@ -167,16 +188,20 @@ if (nrow(binary_long)) {
 } else {
   contrast_summary <- tibble()
 }
-readr::write_csv(contrast_summary, file.path(OUT_RESULTS, "rq2_context_binary_contrasts.csv"), na = "")
+readr::write_csv(
+  contrast_summary,
+  file.path(OUT_RESULTS, "rq2_context_binary_contrasts.csv"),
+  na = ""
+)
 
 context_manifest <- conditional_geometry |>
-  distinct(context_family, context_state) |>
-  arrange(context_family, context_state) |>
+  distinct(context_family, context_state, metric, metric_class, metric_geometry) |>
+  arrange(context_family, context_state, metric) |>
   mutate(
     role = case_when(
-      context_family == "photoperiod" ~ "civil day/night context",
-      context_family == "environment" ~ "diary-derived indoor/outdoor context",
-      context_family == "activity" ~ "diary-derived four-state activity context",
+      context_family == "photoperiod" ~ "civil day/night; continuous-interval-valid target representation",
+      context_family == "environment" ~ "diary-derived indoor/outdoor; fragmented-context-valid target representation",
+      context_family == "activity" ~ "diary-derived four-state activity; fragmented-context-valid target representation",
       TRUE ~ "context"
     )
   )
@@ -184,7 +209,7 @@ readr::write_csv(context_manifest, file.path(OUT_RESULTS, "rq2_context_manifest.
 
 geometry_audit <- conditional_geometry |>
   transmute(
-    dimension, configuration, context_family, context_state,
+    dimension, configuration, context_family, context_state, metric,
     A_conditional, B_conditional,
     pass = A_conditional + 1e-12 >= abs(B_conditional)
   )
@@ -196,9 +221,11 @@ writeLines(c(
   paste0("Core artifact version: ", CORE_VERSION),
   paste0("RQ1 context upstream: ", RQ1_CONTEXT_VERSION),
   paste0("RQ2 context version: ", RQ2_CONTEXT_VERSION),
+  paste0("Target representations entering context conditionality: ", n_distinct(x$metric)),
   "Conditionality axes: photoperiod, indoor/outdoor environment, four-state activity.",
-  "Photoperiod and environment retain paired smallest-unit contrasts; activity is reported as state-specific empirical geometry without arbitrary pairwise testing.",
-  "Diary context is explanatory only and is not added to the external/exposure/joint prediction competition in 12_rq2_analysis.R."
+  "Photoperiod and environment retain paired smallest-unit contrasts metric by metric; activity is reported as state-specific empirical geometry without arbitrary pairwise testing.",
+  "Diary context is explanatory only and is not added to the external/exposure/joint prediction competition in 12_rq2_analysis.R.",
+  "No metric-class averaging is performed before metric-level conditional geometry is estimated."
 ), file.path(OUT_RESULTS, "RQ2_CONTEXT_RUN_REPORT.md"))
 
 message("RQ2 context complete: ", RQ2_CONTEXT_VERSION)
