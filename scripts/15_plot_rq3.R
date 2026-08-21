@@ -4,331 +4,165 @@ suppressPackageStartupMessages({
 })
 source("scripts/utils/figure_style.R")
 source("scripts/utils/figure_atlas.R")
+source("scripts/utils/plot_contracts.R")
 
-# RQ3 plotting only: inverse single-dimension sufficiency + multidimensional
-# entry tolerance/Pareto. Main plots retain all target representations rather
-# than collapsing them prematurely to class-level coverage curves.
-RQ1_SUMMARY_CSV <- "results/rq1/rq1_summary.csv"
-SINGLE_RDS <- "data/derived/rq3/rq3_single_dimension_sufficiency.rds"
-REQ_CSV <- "results/rq3/rq3_single_dimension_requirement.csv"
-UNORDERED_CSV <- "results/rq3/rq3_unordered_sufficiency_thresholds.csv"
-COVERAGE_CSV <- "results/rq3/rq3_unordered_coverage_curves.csv"
-JOINT_SUMMARY_CSV <- "results/rq3/rq3_joint_summary.csv"
-PARETO_EVER_CSV <- "results/rq3/rq3_pareto_ever.csv"
-PARETO_FREQ_CSV <- "results/rq3/rq3_pareto_frequency.csv"
-REP_CSV <- "results/rq3/rq3_fig5_representative_metrics.csv"
-SCOPE_CSV <- "results/rq3/rq3_scope.csv"
-FIG_DIR <- "results/figures"
-
-reqfiles <- c(
-  RQ1_SUMMARY_CSV, SINGLE_RDS, REQ_CSV, UNORDERED_CSV, COVERAGE_CSV,
-  JOINT_SUMMARY_CSV, PARETO_EVER_CSV, PARETO_FREQ_CSV, REP_CSV, SCOPE_CSV
-)
-for (p in reqfiles) if (!file.exists(p)) stop("Missing RQ3 artifact: ", p, ". Run scripts/14_rq3_analysis.R first.")
-dir.create(FIG_DIR, recursive = TRUE, showWarnings = FALSE)
+# RQ3 is plotted as observed stability, tolerance projection, unordered
+# substitutability, and facet-specific Pareto occupancy. No universal burden
+# order is imposed on placement or optical states.
+RQ1_SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
+OBSERVED_RDS <- file.path("results", "rq3", "rq3_sufficiency_long.rds")
+SUFFICIENCY_CSV <- file.path("results", "rq3", "rq3_sufficiency_long.csv")
+REQUIREMENT_CSV <- file.path("results", "rq3", "rq3_single_dimension_requirement.csv")
+UNORDERED_CSV <- file.path("results", "rq3", "rq3_unordered_substitutability.csv")
+COVERAGE_CSV <- file.path("results", "rq3", "rq3_unordered_coverage_curves.csv")
+CONVERGENCE_CSV <- file.path("results", "rq3", "rq3_convergence_profile.csv")
+JOINT_CSV <- file.path("results", "rq3", "rq3_joint_summary.csv")
+PARETO_CSV <- file.path("results", "rq3", "rq3_pareto_frontiers.csv")
+FREQUENCY_CSV <- file.path("results", "rq3", "rq3_pareto_frequency.csv")
+OUT_DIR <- file.path("results", "rq3", "figures")
+ms_plot_require_files(c(RQ1_SUMMARY_CSV, OBSERVED_RDS, SUFFICIENCY_CSV, REQUIREMENT_CSV,
+                        UNORDERED_CSV, COVERAGE_CSV, CONVERGENCE_CSV, JOINT_CSV,
+                        PARETO_CSV, FREQUENCY_CSV), "RQ3 plotting inputs")
+dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
 METRIC_CLASSES <- MS_METRIC_CLASSES
-TEMPORAL_LEVELS <- c("10 s", "20 s", "30 s", "1 min", "5 min", "15 min", "30 min")
-DURATION_LEVELS <- paste0(7:1, " d")
-base_square_theme <- theme_ms(aspect_ratio = 1, legend_position = "none")
-asinh_display <- scales::transform_asinh()
-tlabel <- function(x) case_when(x < 60 ~ paste0(x, " s"), x %% 60 == 0 ~ paste0(x %/% 60, " min"), TRUE ~ paste0(x, " s"))
+rq1_summary <- readr::read_csv(RQ1_SUMMARY_CSV, show_col_types = FALSE, progress = FALSE)
+observed <- readRDS(OBSERVED_RDS)
+sufficiency <- readr::read_csv(SUFFICIENCY_CSV, show_col_types = FALSE, progress = FALSE)
+requirement <- readr::read_csv(REQUIREMENT_CSV, show_col_types = FALSE, progress = FALSE)
+unordered <- readr::read_csv(UNORDERED_CSV, show_col_types = FALSE, progress = FALSE)
+coverage <- readr::read_csv(COVERAGE_CSV, show_col_types = FALSE, progress = FALSE)
+convergence <- readr::read_csv(CONVERGENCE_CSV, show_col_types = FALSE, progress = FALSE)
+joint <- readr::read_csv(JOINT_CSV, show_col_types = FALSE, progress = FALSE)
+pareto <- readr::read_csv(PARETO_CSV, show_col_types = FALSE, progress = FALSE)
+frequency <- readr::read_csv(FREQUENCY_CSV, show_col_types = FALSE, progress = FALSE)
 
-rq1_summary <- readr::read_csv(RQ1_SUMMARY_CSV, show_col_types = FALSE)
+ms_plot_require_columns(rq1_summary, c("metric", "metric_class", "dimension", "A_mean_absolute"), "rq1_pairwise_summary.csv")
+ms_plot_require_columns(observed, c("core_artifact_version", "rq1_analysis_version", "rq3_analysis_version", "dimension", "metric", "R_obs", "status"), "rq3_sufficiency_long.rds")
+ms_plot_require_columns(sufficiency, c("dimension", "metric", "metric_class", "epsilon", "sufficient"), "rq3_sufficiency_long.csv")
+ms_plot_require_columns(requirement, c("dimension", "metric", "epsilon", "sufficient_states", "sufficient_set_threshold_like"), "rq3_single_dimension_requirement.csv")
+ms_plot_require_columns(unordered, c("dimension", "comparison_pair_id", "metric", "metric_class", "epsilon_entry", "A", "B"), "rq3_unordered_substitutability.csv")
+ms_plot_require_columns(coverage, c("dimension", "comparison_pair_id", "epsilon", "fraction_metrics_substitutable"), "rq3_unordered_coverage_curves.csv")
+ms_plot_require_columns(convergence, c("dimension", "metric", "G", "requirement_position", "boundary_proximity"), "rq3_convergence_profile.csv")
+ms_plot_require_columns(joint, c("core_artifact_version", "rq1_analysis_version", "rq3_analysis_version", "placement", "optical", "resolution_s", "n_days", "metric", "status", "epsilon_entry"), "rq3_joint_summary.csv")
+ms_plot_require_columns(pareto, c("placement", "optical", "metric", "metric_class", "resolution_s", "n_days", "ever_pareto", "pareto_persistence"), "rq3_pareto_frontiers.csv")
+ms_plot_require_columns(frequency, c("placement", "optical", "resolution_s", "n_days", "fraction_metrics_ever_pareto"), "rq3_pareto_frequency.csv")
+
+RQ1_VERSION <- ms_plot_one_version(c(observed$rq1_analysis_version, joint$rq1_analysis_version), "rq1_analysis_version")
+RQ3_VERSION <- ms_plot_one_version(c(observed$rq3_analysis_version, joint$rq3_analysis_version), "rq3_analysis_version")
+CORE_VERSION <- ms_plot_assert_core(c(observed$core_artifact_version, joint$core_artifact_version))
+ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
+ms_plot_assert_prefix(RQ3_VERSION, "rq3_v4_", "rq3_analysis_version")
+
 metric_order <- ms_metric_order(rq1_summary)
-single <- readRDS(SINGLE_RDS) |> mutate(metric_class = factor(metric_class, levels = METRIC_CLASSES))
-req <- readr::read_csv(REQ_CSV, show_col_types = FALSE) |> mutate(metric_class = factor(metric_class, levels = METRIC_CLASSES))
-unordered <- readr::read_csv(UNORDERED_CSV, show_col_types = FALSE) |> mutate(metric_class = factor(metric_class, levels = METRIC_CLASSES))
-coverage <- readr::read_csv(COVERAGE_CSV, show_col_types = FALSE)
-js <- readr::read_csv(JOINT_SUMMARY_CSV, show_col_types = FALSE)
-pe <- readr::read_csv(PARETO_EVER_CSV, show_col_types = FALSE)
-pf <- readr::read_csv(PARETO_FREQ_CSV, show_col_types = FALSE)
-reps <- readr::read_csv(REP_CSV, show_col_types = FALSE)
-scope <- readr::read_csv(SCOPE_CSV, show_col_types = FALSE)
+metric_classes <- METRIC_CLASSES
 
-extend_req <- function(d) {
-  if (!nrow(d)) return(d)
-  mx <- max(d$epsilon, na.rm = TRUE)
-  bind_rows(
-    d,
-    d |>
-      group_by(metric) |>
-      slice_max(epsilon, n = 1, with_ties = FALSE) |>
-      mutate(epsilon = mx * 1.035 + 1e-9)
-  ) |>
-    arrange(metric, epsilon)
-}
-
-all_eps <- c(req$epsilon, unordered$epsilon_entry)
-all_eps <- all_eps[is.finite(all_eps) & all_eps >= 0]
-EPS_MAX <- if (length(all_eps)) max(all_eps) * 1.04 + 1e-9 else 1
-
-# =============================================================================
-# Fig. 4 | Inverse single-dimension sufficiency maps
-# =============================================================================
-
-# Ordered dimensions are rendered as metric-level requirement strips over epsilon.
-# Rank 1 is the high-information reference (10 s or 7 d); larger ranks are
-# progressively less demanding observed levels. Hollow marks flag epsilon states
-# whose empirical sufficient set is explicitly non-threshold-like.
-ordered_atlas <- function(dim, letter, title, level_labels) {
-  d <- req |>
-    filter(dimension == dim, is.finite(epsilon)) |>
-    extend_req() |>
-    group_by(metric) |>
-    arrange(epsilon, .by_group = TRUE) |>
-    mutate(epsilon_next = lead(epsilon)) |>
-    ungroup() |>
-    filter(is.finite(least_demanding_rank)) |>
-    ms_add_metric_order(metric_order)
-
-  if (!nrow(d)) {
-    return(
-      ggplot() + annotate("text", x = .5, y = .5, label = "Not estimable") +
-        xlim(0, 1) + ylim(0, 1) + labs(title = paste0(letter, "  ", title)) + theme_ms_blank(aspect_ratio = 1)
-    )
-  }
-
-  pal <- setNames(
-    grDevices::colorRampPalette(c(MS_PRIMARY, "#DDEAF4"))(length(level_labels)),
-    as.character(seq_along(level_labels))
-  )
-  bad <- d |>
-    filter(!is.na(minimum_requirement_interpretable), !minimum_requirement_interpretable, is.finite(epsilon))
-
-  ggplot(d |> filter(is.finite(epsilon_next)), aes(y = metric)) +
-    geom_segment(
-      aes(
-        x = epsilon, xend = epsilon_next,
-        yend = metric, color = factor(least_demanding_rank)
-      ),
-      linewidth = 3.2, lineend = "butt"
-    ) +
-    geom_point(
-      data = bad, aes(x = epsilon, y = metric), inherit.aes = FALSE,
-      shape = 1, size = .72, stroke = .28, color = "#303030"
-    ) +
-    facet_grid(metric_class ~ ., scales = "free_y", space = "free_y", switch = "y") +
-    scale_color_manual(
-      values = pal, breaks = as.character(seq_along(level_labels)), labels = level_labels,
-      name = "least-demanding\nsufficient level"
-    ) +
-    scale_x_continuous(
-      transform = asinh_display, limits = c(0, EPS_MAX),
-      breaks = scales::breaks_extended(n = 5), expand = expansion(mult = c(0, .01))
-    ) +
-    labs(
-      title = paste0(letter, "  ", title),
-      x = "acceptable mean absolute standardized distortion, ε", y = NULL
-    ) +
-    ms_atlas_theme(base_size = 6.2, x_angle = 0) +
-    theme(axis.text.x = element_text(angle = 0, hjust = .5), legend.text = element_text(size = 5.8)) +
-    guides(color = guide_legend(nrow = 1, byrow = TRUE, title.position = "top"))
-}
-
-p4a <- ordered_atlas("temporal", "a", "Temporal resolution", TEMPORAL_LEVELS)
-p4b <- ordered_atlas("duration", "b", "Monitoring duration", DURATION_LEVELS)
-
-# Unordered dimensions: x-position is epsilon_entry=A(c); bubble fill retains
-# signed-direction structure through B/A. Placement is shown as paired points.
-unordered_plot <- unordered |>
-  filter(is.finite(epsilon_entry), is.finite(B_at_entry)) |>
-  mutate(direction_ratio = ms_direction_ratio(B_at_entry, epsilon_entry)) |>
+# Fig. 4a: tolerance projection of observed residual instability. This is a
+# metric-level summary of sufficient states, not a universal threshold claim.
+sufficiency_plot <- sufficiency |>
+  filter(dimension %in% c("temporal", "duration")) |>
+  group_by(dimension, metric, metric_class, epsilon) |>
+  summarise(fraction_sufficient = mean(sufficient, na.rm = TRUE), .groups = "drop") |>
+  mutate(dimension = factor(dimension, levels = c("temporal", "duration"))) |>
+  mutate(dimension = as.character(dimension)) |>
   ms_add_metric_order(metric_order)
-
-optical_d <- unordered_plot |> filter(dimension == "optical")
-p4c <- ggplot(optical_d, aes(y = metric)) +
-  geom_segment(aes(x = 0, xend = epsilon_entry, yend = metric), linewidth = .28, color = "#C8C8C8") +
-  geom_point(aes(x = epsilon_entry, fill = direction_ratio), shape = 21, size = 1.75, color = "#343434", stroke = .20) +
-  facet_grid(metric_class ~ ., scales = "free_y", space = "free_y", switch = "y") +
-  scale_x_continuous(transform = asinh_display, limits = c(0, EPS_MAX), breaks = scales::breaks_extended(n = 5), expand = expansion(mult = c(0, .01))) +
-  ms_direction_scale(name = "B / A") +
-  labs(title = "c  Optical proxy", x = "entry tolerance, εentry = A(c)", y = NULL) +
-  ms_atlas_theme(base_size = 6.2, x_angle = 0) +
-  theme(axis.text.x = element_text(angle = 0, hjust = .5)) +
-  guides(fill = "none")
-
-placement_d <- unordered_plot |> filter(dimension == "placement")
-placement_range <- placement_d |>
-  group_by(metric, metric_class) |>
-  summarise(xmin = min(epsilon_entry), xmax = max(epsilon_entry), .groups = "drop") |>
-  ms_add_metric_order(metric_order)
-p4d <- ggplot(placement_d, aes(y = metric)) +
-  geom_segment(
-    data = placement_range,
-    aes(x = xmin, xend = xmax, y = metric, yend = metric), inherit.aes = FALSE,
-    linewidth = .35, color = "#BDBDBD"
-  ) +
-  geom_point(
-    aes(x = epsilon_entry, fill = direction_ratio, shape = configuration_label),
-    size = 1.85, color = "#343434", stroke = .22
-  ) +
-  facet_grid(metric_class ~ ., scales = "free_y", space = "free_y", switch = "y") +
-  scale_x_continuous(transform = asinh_display, limits = c(0, EPS_MAX), breaks = scales::breaks_extended(n = 5), expand = expansion(mult = c(0, .01))) +
-  ms_direction_scale(name = "B / A") +
-  scale_shape_manual(values = c(Chest = 21, Wrist = 24), name = "placement") +
-  labs(title = "d  Placement", x = "entry tolerance, εentry = A(c)", y = NULL) +
-  ms_atlas_theme(base_size = 6.2, x_angle = 0) +
-  theme(axis.text.x = element_text(angle = 0, hjust = .5), legend.text = element_text(size = 5.8)) +
-  guides(fill = guide_colorbar(order = 1, title.position = "top"), shape = guide_legend(order = 2, title.position = "top"))
-
-fig4 <- plot_grid(p4a, p4b, p4c, p4d, ncol = 2, align = "hv", axis = "tblr")
-ggsave(file.path(FIG_DIR, "Fig4_RQ3.pdf"), fig4, width = 13.2, height = 12.4, useDingbats = FALSE, bg = "white")
-ggsave(file.path(FIG_DIR, "Fig4_RQ3.png"), fig4, width = 13.2, height = 12.4, dpi = 240, bg = "white")
-
-# Preserve the original class/all-metric coverage projection as a supplementary
-# summary. It is useful, but downstream of the metric-level decision map.
-oc <- coverage |>
-  filter(dimension == "optical", metric_class != "All") |>
-  mutate(metric_class = factor(metric_class, levels = METRIC_CLASSES))
-oa <- coverage |> filter(dimension == "optical", metric_class == "All")
-ps4a <- ggplot(oc, aes(epsilon, fraction_metrics_sufficient, color = metric_class)) +
-  geom_step(linewidth = .46, alpha = .65, na.rm = TRUE) +
-  geom_step(data = oa, aes(epsilon, fraction_metrics_sufficient), inherit.aes = FALSE, linewidth = .85, color = "#202020") +
-  scale_x_continuous(transform = asinh_display) +
-  scale_y_continuous(limits = c(0, 1), labels = scales::percent_format(accuracy = 1)) +
+p4a <- ggplot(sufficiency_plot, aes(epsilon, fraction_sufficient, group = metric, color = metric_class)) +
+  geom_hline(yintercept = c(0, 1), linewidth = .25, color = "#C5C5C5") +
+  geom_line(alpha = .62, linewidth = .42) +
+  facet_wrap(~dimension, nrow = 1, scales = "free_x") +
   scale_color_ms_metric() +
-  labs(title = "a  Optical coverage summary", x = "acceptable distortion, ε", y = "fraction sufficient") +
-  theme_ms(aspect_ratio = .7, legend_position = "bottom")
+  scale_x_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
+  scale_y_continuous(limits = c(0, 1), labels = scales::label_percent(accuracy = 25)) +
+  labs(title = "a  Ordered-dimension sufficiency projection", x = "tolerance ε", y = "fraction of observed states sufficient") +
+  theme_ms(base_size = 6.6, legend_position = "bottom")
 
-pc <- coverage |> filter(dimension == "placement", metric_class == "All")
-placement_levels <- unique(pc$configuration_label)
-placement_colors <- setNames(rep(MS_TWO_COLORS, length.out = length(placement_levels)), placement_levels)
-ps4b <- ggplot(pc, aes(epsilon, fraction_metrics_sufficient, color = configuration_label, linetype = configuration_label)) +
-  geom_step(linewidth = .82) +
-  scale_color_manual(values = placement_colors) +
-  scale_x_continuous(transform = asinh_display) +
-  scale_y_continuous(limits = c(0, 1), labels = scales::percent_format(accuracy = 1)) +
-  labs(title = "b  Placement coverage summary", x = "acceptable distortion, ε", y = "fraction sufficient", color = NULL, linetype = NULL) +
-  theme_ms(aspect_ratio = .7, legend_position = "bottom")
+# Fig. 4b: local convergence profile, retaining boundary proximity rather than
+# inventing a continuous burden order for unordered dimensions.
+convergence_plot <- convergence |>
+  filter(dimension %in% c("temporal", "duration")) |>
+  left_join(metric_order |> select(metric, metric_class_order = metric_class), by = "metric") |>
+  mutate(metric_class = factor(coalesce(as.character(metric_class), as.character(metric_class_order)), levels = METRIC_CLASSES))
+p4b <- ggplot(convergence_plot, aes(requirement_position, G, group = metric, color = metric_class)) +
+  geom_hline(yintercept = 0, linewidth = .25, color = "#C5C5C5") +
+  geom_line(alpha = .64, linewidth = .45) +
+  geom_point(size = .55, alpha = .72) +
+  facet_grid(metric_class ~ dimension, scales = "free", space = "free", switch = "y") +
+  scale_color_ms_metric() +
+  labs(title = "b  Local adjacent-transition stability", x = "observed requirement position", y = "G = mean |z|") +
+  theme_ms(base_size = 6.1, legend_position = "none") +
+  theme(axis.text.y = element_text(size = 5.0), strip.text.y.left = element_text(size = 5.2))
 
-figs4 <- plot_grid(ps4a, ps4b, nrow = 1, align = "hv", axis = "tblr")
-ggsave(file.path(FIG_DIR, "FigS_RQ3_single_dimension_coverage.pdf"), figs4, width = 10.5, height = 4.7, bg = "white")
-ggsave(file.path(FIG_DIR, "FigS_RQ3_single_dimension_coverage.png"), figs4, width = 10.5, height = 4.7, dpi = 240, bg = "white")
+# Fig. 4c: placement/optical substitutability is displayed as pair-specific
+# coverage, with no ordering between the incomparable facets.
+coverage_plot <- coverage |>
+  mutate(pair = comparison_pair_id, dimension = factor(dimension, levels = c("placement", "optical")))
+p4c <- ggplot(coverage_plot, aes(epsilon, fraction_metrics_substitutable, color = pair, group = pair)) +
+  geom_line(linewidth = .55, alpha = .82) +
+  facet_wrap(~dimension, nrow = 1, scales = "free_x") +
+  scale_y_continuous(limits = c(0, 1), labels = scales::label_percent(accuracy = 25)) +
+  labs(title = "c  Unordered placement/optical substitutability", x = "entry tolerance ε", y = "fraction of metrics substitutable", color = "comparison pair") +
+  theme_ms(base_size = 6.4, legend_position = "bottom")
 
-# =============================================================================
-# Fig. 5 | Multidimensional entry-tolerance landscapes and Pareto efficiency
-# =============================================================================
-est <- scope |> filter(object == "multidimensional_joint") |> pull(estimable)
-estimable <- length(est) && isTRUE(est[[1]]) && nrow(js) > 0
+fig4 <- cowplot::plot_grid(p4a, p4b, p4c, ncol = 1, rel_heights = c(1.05, 1.15, .95), labels = NULL)
+ms_plot_save(fig4, file.path(OUT_DIR, "Fig4_RQ3.pdf"), 14, 12.2)
+ms_plot_save(fig4, file.path(OUT_DIR, "Fig4_RQ3.png"), 14, 12.2)
 
-if (!estimable) {
-  p5 <- ggplot() +
-    annotate("text", x = .5, y = .56, label = "Multidimensional frontier not estimable\non facet-specific protocol-anchored supports", size = 4, lineheight = 1.1) +
-    annotate("text", x = .5, y = .36, label = "No supported seven-day joint configuration lattice was available.", size = 2.8, color = "#555555") +
-    xlim(0, 1) + ylim(0, 1) + theme_ms_blank()
-  ggsave(file.path(FIG_DIR, "Fig5_RQ3.pdf"), p5, width = 10, height = 6, useDingbats = FALSE, bg = "white")
-  ggsave(file.path(FIG_DIR, "Fig5_RQ3.png"), p5, width = 10, height = 6, dpi = 240, bg = "white")
-} else {
-  to <- tibble(
-    resolution_s = c(10L, 20L, 30L, 60L, 300L, 900L, 1800L),
-    temporal_label = TEMPORAL_LEVELS,
-    temporal_rank = seq_along(TEMPORAL_LEVELS)
+# Fig. 5: Pareto occupancy is shown within fixed placement x optical facets.
+# Dominance is only over temporal resolution and monitoring duration.
+pareto_plot <- pareto |>
+  filter(ever_pareto, is.finite(resolution_s), is.finite(n_days)) |>
+  mutate(metric_class = factor(metric_class, levels = METRIC_CLASSES))
+p5a <- ggplot(pareto_plot, aes(resolution_s, n_days, color = metric_class, size = pareto_persistence)) +
+  geom_point(alpha = .78) +
+  facet_grid(placement ~ optical, scales = "free", space = "free") +
+  scale_color_ms_metric() +
+  scale_size_continuous(range = c(.45, 3.0), limits = c(0, 1), name = "Pareto persistence") +
+  scale_x_continuous(breaks = c(10, 20, 30, 60, 300, 900, 1800), labels = c("10 s", "20 s", "30 s", "1 m", "5 m", "15 m", "30 m")) +
+  scale_y_continuous(breaks = 1:6, labels = paste0(1:6, " d")) +
+  labs(title = "a  Facet-specific Pareto occupancy", x = "temporal resolution", y = "monitoring duration") +
+  theme_ms(base_size = 6.5, legend_position = "bottom") +
+  theme(axis.text.x = element_text(angle = 42, hjust = 1))
+
+frequency_plot <- frequency |>
+  mutate(fraction_metrics_ever_pareto = pmax(0, pmin(1, fraction_metrics_ever_pareto)))
+p5b <- ggplot(frequency_plot, aes(resolution_s, n_days, fill = fraction_metrics_ever_pareto)) +
+  geom_tile(color = "white", linewidth = .14) +
+  facet_grid(placement ~ optical, scales = "free", space = "free") +
+  scale_fill_ms_sequential(name = "fraction of metrics\never Pareto", limits = c(0, 1), labels = scales::label_percent(accuracy = 25)) +
+  scale_x_continuous(breaks = c(10, 20, 30, 60, 300, 900, 1800), labels = c("10 s", "20 s", "30 s", "1 m", "5 m", "15 m", "30 m")) +
+  scale_y_continuous(breaks = 1:6, labels = paste0(1:6, " d")) +
+  labs(title = "b  Pareto frequency across metrics", x = "temporal resolution", y = "monitoring duration") +
+  theme_ms(base_size = 6.5, legend_position = "right") +
+  theme(axis.text.x = element_text(angle = 42, hjust = 1))
+
+fig5 <- cowplot::plot_grid(p5a, p5b, ncol = 2, rel_widths = c(1.05, .95), labels = NULL)
+ms_plot_save(fig5, file.path(OUT_DIR, "Fig5_RQ3.pdf"), 14.2, 8.5)
+ms_plot_save(fig5, file.path(OUT_DIR, "Fig5_RQ3.png"), 14.2, 8.5)
+
+ms_plot_save(
+  ggplot(coverage_plot, aes(epsilon, fraction_metrics_substitutable, color = pair, group = pair)) +
+    geom_line(linewidth = .55) + facet_wrap(~dimension, scales = "free_x") +
+    scale_y_continuous(limits = c(0, 1), labels = scales::label_percent(accuracy = 25)) +
+    labs(title = "RQ3 unordered substitutability coverage", x = "entry tolerance ε", y = "fraction of metrics substitutable", color = "comparison pair") +
+    theme_ms(base_size = 6.5, legend_position = "bottom"),
+  file.path(OUT_DIR, "FigS_RQ3_unordered_substitutability.pdf"), 12.5, 6.8
+)
+ms_plot_save(
+  ggplot(coverage_plot, aes(epsilon, fraction_metrics_substitutable, color = pair, group = pair)) +
+    geom_line(linewidth = .55) + facet_wrap(~dimension, scales = "free_x") +
+    scale_y_continuous(limits = c(0, 1), labels = scales::label_percent(accuracy = 25)) +
+    labs(title = "RQ3 unordered substitutability coverage", x = "entry tolerance ε", y = "fraction of metrics substitutable", color = "comparison pair") +
+    theme_ms(base_size = 6.5, legend_position = "bottom"),
+  file.path(OUT_DIR, "FigS_RQ3_unordered_substitutability.png"), 12.5, 6.8
+)
+
+ms_plot_write_manifest(
+  file.path(OUT_DIR, "figure_artifact_manifest.csv"),
+  tibble(
+    figure = c("Fig4_RQ3", "Fig5_RQ3", "FigS_RQ3_unordered_substitutability"),
+    input_artifact = c("rq3_sufficiency_long + rq3_convergence_profile + rq3_unordered_coverage_curves", "rq3_pareto_frontiers + rq3_pareto_frequency", "rq3_unordered_coverage_curves"),
+    core_artifact_version = CORE_VERSION, rq1_analysis_version = RQ1_VERSION,
+    rq2_analysis_version = NA_character_, rq3_analysis_version = RQ3_VERSION
   )
-  pe <- pe |>
-    left_join(to, by = c("resolution_s", "temporal_label")) |>
-    mutate(
-      temporal_label = factor(temporal_label, levels = TEMPORAL_LEVELS),
-      placement = factor(placement, levels = c("eye", "chest", "wrist")),
-      optical = factor(optical, levels = c("MEDI", "LIGHT")),
-      metric_class = factor(metric_class, levels = METRIC_CLASSES)
-    )
-
-  # a. Empirical global recurrence map: size = recurrence across target metrics;
-  # fill = median tolerance at which the joint configuration enters sufficiency.
-  global_cfg <- pe |>
-    group_by(placement, optical, resolution_s, temporal_label, n_days) |>
-    summarise(
-      n_metrics_available = n_distinct(metric),
-      fraction_metrics_ever_pareto = mean(ever_pareto),
-      median_epsilon_entry = median(epsilon_entry, na.rm = TRUE),
-      .groups = "drop"
-    )
-
-  p5a <- ggplot(global_cfg, aes(temporal_label, factor(n_days, levels = 1:7))) +
-    geom_point(
-      aes(size = fraction_metrics_ever_pareto, fill = median_epsilon_entry),
-      shape = 21, color = "#303030", stroke = .24, alpha = .90
-    ) +
-    facet_grid(placement ~ optical, drop = FALSE) +
-    scale_fill_ms_sequential(name = "median ε entry", transform = asinh_display) +
-    scale_size_continuous(range = c(.35, 3.3), limits = c(0, 1), labels = scales::percent_format(accuracy = 1), name = "metrics ever Pareto") +
-    labs(title = "a  Pareto recurrence and entry tolerance across all target representations", x = "temporal resolution", y = "monitoring duration (days)") +
-    theme_ms(legend_position = "bottom") +
-    theme(axis.text.x = element_text(angle = 35, hjust = 1, size = 5.8), strip.text = element_text(size = 6.0), legend.text = element_text(size = 6.0))
-
-  requested <- Sys.getenv("RQ3_FIG5_METRICS", unset = "")
-  rmets <- if (nzchar(requested)) trimws(strsplit(requested, ",", fixed = TRUE)[[1]]) else reps$metric
-  rmets <- unique(rmets[rmets %in% pe$metric])
-  rmets <- rmets[seq_len(min(4L, length(rmets)))]
-  if (!length(rmets)) stop("No representative metrics for Fig. 5")
-
-  pdata <- pe |> filter(metric %in% rmets)
-  make_metric_panel <- function(m, letter) {
-    d <- pdata |> filter(metric == m)
-    ggplot(d, aes(temporal_label, factor(n_days, levels = 1:7))) +
-      geom_point(aes(fill = epsilon_entry, shape = optical), size = 2.25, alpha = .82, color = "#2A2A2A", stroke = .28) +
-      geom_point(data = d |> filter(ever_pareto), aes(shape = optical), fill = NA, color = "black", size = 3.05, stroke = .85) +
-      facet_grid(placement ~ optical, drop = FALSE) +
-      scale_fill_ms_sequential(name = "ε entry", transform = asinh_display) +
-      scale_shape_manual(values = c(MEDI = 21, LIGHT = 24), guide = "none") +
-      labs(title = paste0(letter, "  ", m), x = "temporal resolution", y = "monitoring duration (days)") +
-      theme_ms(legend_position = "bottom") +
-      theme(axis.text.x = element_text(angle = 35, hjust = 1, size = 5.7), strip.text = element_text(size = 5.7), legend.text = element_text(size = 6.0))
-  }
-
-  panel_letters <- c("b", "c", "d", "e")
-  panels <- map2(rmets, panel_letters[seq_along(rmets)], make_metric_panel)
-  while (length(panels) < 4) panels[[length(panels) + 1]] <- ggplot() + theme_void(base_family = MS_FONT)
-
-  # f. Class-specific protocol recurrence. Select the globally most recurrent
-  # observed joint configurations, then show how often each is Pareto-efficient
-  # within each representation class. This separates global recurrence from
-  # class heterogeneity without adding another configuration axis to b-e.
-  top_cfg <- global_cfg |>
-    arrange(desc(fraction_metrics_ever_pareto), median_epsilon_entry, desc(resolution_s), n_days) |>
-    slice_head(n = 12L) |>
-    mutate(
-      config_id = paste(placement, optical, resolution_s, n_days, sep = "|"),
-      config_label = paste0(
-        stringr::str_to_title(as.character(placement)), "/", as.character(optical), "\n",
-        as.character(temporal_label), " · ", n_days, " d"
-      ),
-      config_order = row_number()
-    )
-
-  class_rec <- pe |>
-    group_by(metric_class, placement, optical, resolution_s, temporal_label, n_days) |>
-    summarise(
-      n_metrics_available = n_distinct(metric),
-      fraction_metrics_ever_pareto = mean(ever_pareto),
-      .groups = "drop"
-    ) |>
-    mutate(config_id = paste(placement, optical, resolution_s, n_days, sep = "|")) |>
-    inner_join(top_cfg |> select(config_id, config_label, config_order), by = "config_id") |>
-    mutate(
-      config_label = factor(config_label, levels = top_cfg$config_label),
-      metric_class = factor(metric_class, levels = METRIC_CLASSES)
-    )
-
-  p5f <- ggplot(class_rec, aes(config_label, metric_class, fill = fraction_metrics_ever_pareto)) +
-    geom_tile(color = "white", linewidth = .35) +
-    geom_text(aes(label = scales::percent(fraction_metrics_ever_pareto, accuracy = 1)), size = 1.72, color = "#202020") +
-    scale_fill_gradientn(colours = MS_SEQUENTIAL, limits = c(0, 1), labels = scales::percent_format(accuracy = 1), name = "class metrics\never Pareto") +
-    labs(title = "f  Class-specific recurrence of Pareto-efficient protocols", x = NULL, y = NULL) +
-    theme_ms(base_size = 6.5, legend_position = "bottom") +
-    theme(
-      panel.grid = element_blank(),
-      axis.text.x = element_text(angle = 42, hjust = 1, size = 5.5),
-      axis.text.y = element_text(size = 6.0),
-      legend.text = element_text(size = 5.8)
-    )
-
-  fig5top <- plot_grid(p5a, panels[[1]], panels[[2]], nrow = 1, align = "hv", axis = "tblr", rel_widths = c(1.15, 1, 1))
-  fig5bot <- plot_grid(panels[[3]], panels[[4]], p5f, nrow = 1, align = "hv", axis = "tblr", rel_widths = c(1, 1, 1.25))
-  fig5 <- plot_grid(fig5top, fig5bot, ncol = 1, rel_heights = c(1, 1))
-  ggsave(file.path(FIG_DIR, "Fig5_RQ3.pdf"), fig5, width = 14.2, height = 9.8, useDingbats = FALSE, bg = "white")
-  ggsave(file.path(FIG_DIR, "Fig5_RQ3.png"), fig5, width = 14.2, height = 9.8, dpi = 240, bg = "white")
-}
-
-message("RQ3 figures complete: metric-level inverse sufficiency atlas + empirical Pareto recurrence and class heterogeneity.")
+)
+message("RQ3 figures complete: tolerance projection, local stability, unordered substitutability, and facet-specific Pareto occupancy.")

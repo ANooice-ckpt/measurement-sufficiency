@@ -4,317 +4,199 @@ suppressPackageStartupMessages({
 })
 source("scripts/utils/figure_style.R")
 source("scripts/utils/figure_atlas.R")
+source("scripts/utils/rq1_pairwise_artifacts.R")
+source("scripts/utils/plot_contracts.R")
 
-# Fig. 1: RQ1 empirical distortion distributions + all-representation atlas + A/B geometry.
-# Plot-only: reads frozen RQ1 outputs and does not recompute any scientific estimand.
-DISTORTION_RDS <- "data/derived/rq1/rq1_distortion_long.rds"
-SUMMARY_CSV <- "results/rq1/rq1_summary.csv"
-MANIFEST_CSV <- "results/rq1/rq1_configuration_manifest.csv"
-AVAILABILITY_CSV <- "results/rq1/rq1_metric_availability.csv"
-RETENTION_CSV <- "results/rq1/rq1_retention_diagnostics.csv"
-FIG_DIR <- "results/figures"
-for (p in c(DISTORTION_RDS, SUMMARY_CSV, MANIFEST_CSV, AVAILABILITY_CSV, RETENTION_CSV)) {
-  if (!file.exists(p)) stop("Missing RQ1 artifact: ", p, ". Run scripts/10_rq1_analysis.R first.")
-}
-dir.create(FIG_DIR, recursive = TRUE, showWarnings = FALSE)
+# Fig. 1 is the RQ1 pairwise atlas. It reads frozen summaries only; no
+# distortion values, bootstrap estimates, or scientific estimands are
+# recomputed here.
+RQ1_LONG <- file.path("results", "rq1", "rq1_pairwise_change_long.rds")
+SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
+AVAILABILITY_CSV <- file.path("results", "rq1", "rq1_metric_availability.csv")
+LOCAL_CSV <- file.path("results", "rq1", "rq1_local_transition_summary.csv")
+OUT_DIR <- file.path("results", "rq1", "figures")
+ms_plot_require_files(c(RQ1_LONG, SUMMARY_CSV, AVAILABILITY_CSV, LOCAL_CSV), "RQ1 plotting inputs")
+dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
-METRIC_CLASSES <- MS_METRIC_CLASSES
 DIMENSIONS <- c("placement", "optical", "temporal", "duration")
 DIM_TITLES <- c(
   placement = "Placement", optical = "Optical proxy",
   temporal = "Temporal resolution", duration = "Monitoring duration"
 )
-TRAJECTORY_DIMS <- c("temporal", "duration")
-base_panel_theme <- theme_ms(aspect_ratio = 1, legend_position = "none")
-asinh_display <- scales::transform_asinh()
+METRIC_CLASSES <- MS_METRIC_CLASSES
 
-dist <- readRDS(DISTORTION_RDS) |>
-  filter(available, is.finite(e)) |>
-  mutate(metric_class = factor(metric_class, levels = METRIC_CLASSES))
-summary <- readr::read_csv(SUMMARY_CSV, show_col_types = FALSE) |>
-  mutate(metric_class = factor(metric_class, levels = METRIC_CLASSES))
-manifest <- readr::read_csv(MANIFEST_CSV, show_col_types = FALSE)
-availability <- readr::read_csv(AVAILABILITY_CSV, show_col_types = FALSE)
-retention <- readr::read_csv(RETENTION_CSV, show_col_types = FALSE)
-metric_order <- ms_metric_order(summary)
-readr::write_csv(metric_order, "results/rq1/figure_metric_order.csv", na = "")
-
-# -----------------------------------------------------------------------------
-# a-d. Pooled empirical D(e): retain the distributional object explicitly.
-# Equal representation weighting: every metric x configuration carries total weight 1.
-# -----------------------------------------------------------------------------
-density_input <- dist |>
-  group_by(dimension, configuration, metric) |>
-  mutate(unit_weight = 1 / n()) |>
-  ungroup()
-
-weighted_quantile <- function(x, w, probs = c(.05, .25, .50, .75, .95)) {
-  ok <- is.finite(x) & is.finite(w) & w > 0
-  x <- x[ok]; w <- w[ok]
-  if (!length(x)) return(rep(NA_real_, length(probs)))
-  ord <- order(x); x <- x[ord]; w <- w[ord] / sum(w[ord]); cw <- cumsum(w)
-  vapply(probs, function(p) x[which(cw >= p)[1]], numeric(1))
-}
-weighted_density <- function(x, w, n = 512L) {
-  ok <- is.finite(x) & is.finite(w) & w > 0
-  x <- x[ok]; w <- w[ok]
-  if (length(x) < 2L || length(unique(x)) < 2L) {
-    return(tibble(x = if (length(x)) x[1] else 0, density = 0))
-  }
-  d <- stats::density(x, weights = w / sum(w), n = n, na.rm = TRUE)
-  tibble(x = d$x, density = d$y)
-}
-
-ridge_stats <- density_input |>
-  group_by(dimension, configuration, configuration_label, configuration_order) |>
-  group_modify(~{
-    q <- weighted_quantile(.x$e, .x$unit_weight)
-    tibble(q05 = q[1], q25 = q[2], q50 = q[3], q75 = q[4], q95 = q[5])
-  }) |>
-  ungroup()
-readr::write_csv(ridge_stats, "results/rq1/fig1_distribution_quantiles.csv", na = "")
-
-top_limits <- ridge_stats |>
-  group_by(dimension) |>
-  summarise(
-    xmin0 = min(c(0, q05), na.rm = TRUE),
-    xmax0 = max(c(0, q95), na.rm = TRUE), .groups = "drop"
-  ) |>
-  mutate(
-    span = pmax(xmax0 - xmin0, 1e-9),
-    xmin = xmin0 - .045 * span,
-    xmax = xmax0 + .045 * span
-  )
-
-ridge_data <- density_input |>
-  group_by(dimension, configuration, configuration_label, configuration_order) |>
-  group_modify(~weighted_density(.x$e, .x$unit_weight)) |>
-  ungroup() |>
-  left_join(ridge_stats, by = c("dimension", "configuration", "configuration_label", "configuration_order")) |>
-  filter(x >= q05, x <= q95) |>
-  group_by(dimension, configuration) |>
-  mutate(density_scaled = ifelse(max(density, na.rm = TRUE) > 0, density / max(density, na.rm = TRUE), 0)) |>
-  ungroup()
-readr::write_csv(ridge_data, "results/rq1/fig1_pooled_distribution_density.csv", na = "")
-
-configuration_layout <- function(labels) {
-  n_cfg <- nrow(labels)
-  if (!n_cfg) return(labels)
-  if (n_cfg == 1L) return(labels |> mutate(y0 = .34, ridge_height = .34))
-  y0 <- seq(.10, .76, length.out = n_cfg)
-  labels |> mutate(y0 = y0, ridge_height = min(.24, .72 * min(diff(y0))))
-}
-
-top_panel <- function(dim, letter) {
-  labels <- manifest |>
-    filter(dimension == dim) |>
-    distinct(configuration, configuration_label, configuration_order) |>
-    arrange(configuration_order) |>
-    configuration_layout()
-  if (!nrow(labels)) stop("No manifest rows for Fig. 1 dimension: ", dim)
-
-  d <- ridge_data |>
-    filter(dimension == dim) |>
-    left_join(labels |> select(configuration, y0, ridge_height), by = "configuration") |>
-    mutate(y1 = y0 + ridge_height * density_scaled)
-  qs <- ridge_stats |>
-    filter(dimension == dim) |>
-    left_join(labels |> select(configuration, y0), by = "configuration")
-  lim <- top_limits |> filter(dimension == dim)
-
-  ggplot(d, aes(x, group = configuration)) +
-    geom_vline(xintercept = 0, linewidth = .30, color = "#707070") +
-    geom_ribbon(aes(ymin = y0, ymax = y1), fill = MS_PRIMARY, alpha = .17) +
-    geom_line(aes(y = y1), linewidth = .44, color = MS_PRIMARY) +
-    geom_segment(
-      data = qs, aes(x = q05, xend = q95, y = y0, yend = y0), inherit.aes = FALSE,
-      linewidth = .55, color = MS_PRIMARY, alpha = .48, lineend = "round"
-    ) +
-    geom_segment(
-      data = qs, aes(x = q25, xend = q75, y = y0, yend = y0), inherit.aes = FALSE,
-      linewidth = 1.45, color = MS_PRIMARY, lineend = "round"
-    ) +
-    geom_point(
-      data = qs, aes(x = q50, y = y0), inherit.aes = FALSE,
-      shape = 21, fill = "white", color = MS_PRIMARY, size = 1.18, stroke = .45
-    ) +
-    scale_x_continuous(breaks = scales::breaks_extended(n = 4), expand = expansion(mult = 0)) +
-    scale_y_continuous(
-      breaks = labels$y0, labels = labels$configuration_label,
-      limits = c(.02, 1.02), expand = c(0, 0)
-    ) +
-    coord_cartesian(xlim = c(lim$xmin, lim$xmax), ylim = c(.02, 1.02), clip = "off") +
-    labs(title = paste0(letter, "  ", DIM_TITLES[[dim]]), x = "standardized signed distortion, e", y = NULL) +
-    base_panel_theme +
-    theme(panel.grid.major.y = element_blank(), axis.text.y = element_text(size = 6.9), axis.ticks.y = element_blank())
-}
-
-# -----------------------------------------------------------------------------
-# e. Full metric x configuration atlas.
-# Orthogonal visual channels: bubble area = A; diverging fill = B/A.
-# The same fixed metric order is reused in RQ2/RQ3 plots.
-# -----------------------------------------------------------------------------
-atlas <- summary |>
-  filter(is.finite(A_mean_absolute), is.finite(B_mean_signed)) |>
-  mutate(
-    direction_ratio = ms_direction_ratio(B_mean_signed, A_mean_absolute),
-    dimension = factor(dimension, levels = DIMENSIONS)
-  ) |>
-  ms_add_metric_order(metric_order)
-
-atlas_bg <- availability |>
-  mutate(dimension = factor(dimension, levels = DIMENSIONS)) |>
-  ms_add_metric_order(metric_order)
-
-p1e <- ggplot(atlas, aes(configuration_label, metric)) +
-  geom_tile(
-    data = atlas_bg |> filter(representation_available),
-    fill = "#F3F3F3", color = "white", linewidth = .12
-  ) +
-  geom_point(
-    data = atlas_bg |> filter(!representation_available),
-    shape = 4, size = .55, stroke = .24, color = "#B8B8B8"
-  ) +
-  geom_point(
-    aes(size = A_mean_absolute, fill = direction_ratio),
-    shape = 21, color = "#3B3B3B", stroke = .16, alpha = .94
-  ) +
-  facet_grid(metric_class ~ dimension, scales = "free", space = "free", switch = "y") +
-  ms_direction_scale(name = "B / A") +
-  ms_magnitude_size_scale(name = "A = mean |e|", range = c(.28, 3.15)) +
-  labs(
-    title = "e  All-representation distortion atlas",
-    x = "observed non-reference configuration", y = NULL
-  ) +
-  ms_atlas_theme(base_size = 6.4, x_angle = 42) +
-  guides(
-    size = guide_legend(order = 1, title.position = "top"),
-    fill = guide_colorbar(order = 2, title.position = "top", barwidth = grid::unit(28, "mm"))
-  )
-readr::write_csv(
-  atlas |>
-    mutate(metric = as.character(metric), metric_class = as.character(metric_class)),
-  "results/rq1/fig1_distortion_atlas.csv", na = ""
+pairwise_artifact <- readRDS(RQ1_LONG)
+summary <- readr::read_csv(SUMMARY_CSV, show_col_types = FALSE, progress = FALSE)
+availability <- readr::read_csv(AVAILABILITY_CSV, show_col_types = FALSE, progress = FALSE)
+local <- readr::read_csv(LOCAL_CSV, show_col_types = FALSE, progress = FALSE)
+ms_plot_require_columns(
+  summary,
+  c("core_artifact_version", "rq1_analysis_version", "dimension", "comparison_lattice",
+    "comparison_pair_id", "config_a_id", "config_b_id", "config_a_label", "config_b_label",
+    "metric", "metric_class", "median_z", "q25_z", "q75_z", "p025_z", "p975_z",
+    "B_mean_signed", "A_mean_absolute"),
+  "rq1_pairwise_summary.csv"
+)
+ms_plot_require_columns(
+  availability,
+  c("dimension", "comparison_pair_id", "metric", "metric_class", "representation_available"),
+  "rq1_metric_availability.csv"
+)
+ms_plot_require_columns(
+  local,
+  c("dimension", "metric", "metric_class", "lower_level", "higher_level", "G", "A", "B"),
+  "rq1_local_transition_summary.csv"
 )
 
-# -----------------------------------------------------------------------------
-# f-i. A-B geometry: structural projection of the same distributions.
-# -----------------------------------------------------------------------------
-extreme_metric_rows <- function(d, n = 3L) {
-  d |>
-    group_by(metric) |>
-    slice_max(A_mean_absolute, n = 1, with_ties = FALSE) |>
-    ungroup() |>
-    slice_max(A_mean_absolute, n = n, with_ties = FALSE)
-}
-last_observed_configuration <- function(d) {
-  d |> group_by(metric) |> slice_max(configuration_order, n = 1, with_ties = FALSE) |> ungroup()
+RQ1_VERSION <- rq1_pairwise_version(pairwise_artifact)
+CORE_VERSION <- ms_plot_assert_core(c(pairwise_artifact$core_artifact_version, summary$core_artifact_version))
+ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
+if (any(!is.na(summary$rq1_analysis_version) & summary$rq1_analysis_version != RQ1_VERSION)) {
+  stop("rq1_pairwise_summary contains a different rq1_analysis_version", call. = FALSE)
 }
 
-bottom_panel <- function(dim, letter) {
-  d <- summary |>
-    filter(dimension == dim, is.finite(A_mean_absolute), is.finite(B_mean_signed)) |>
-    arrange(metric, configuration_order)
-  if (!nrow(d)) stop("No summary rows for Fig. 1 dimension: ", dim)
+summary <- summary |>
+  mutate(
+    metric_class = factor(metric_class, levels = METRIC_CLASSES),
+    dimension = factor(dimension, levels = DIMENSIONS),
+    pair_label = paste(config_a_label, "→", config_b_label),
+    direction_ratio = ms_direction_ratio(B_mean_signed, A_mean_absolute)
+  )
+availability <- availability |>
+  mutate(
+    metric_class = factor(metric_class, levels = METRIC_CLASSES),
+    dimension = factor(dimension, levels = DIMENSIONS)
+  ) |>
+  left_join(summary |> distinct(dimension, comparison_pair_id, pair_label), by = c("dimension", "comparison_pair_id")) |>
+  mutate(pair_label = coalesce(pair_label, as.character(comparison_pair_id))) |>
+  distinct(dimension, pair_label, metric, metric_class, representation_available)
+local <- local |>
+  mutate(metric_class = factor(metric_class, levels = METRIC_CLASSES), dimension = factor(dimension, levels = DIMENSIONS))
 
-  if (dim %in% TRAJECTORY_DIMS) {
-    endpoint_d <- last_observed_configuration(d)
-    label_data <- endpoint_d |> slice_max(A_mean_absolute, n = 3L, with_ties = FALSE)
+metric_order <- ms_metric_order(summary |> mutate(dimension = as.character(dimension)))
+readr::write_csv(metric_order, file.path("results", "rq1", "figure_metric_order.csv"), na = "")
+summary_plot <- summary |> mutate(dimension = as.character(dimension)) |> ms_add_metric_order(metric_order)
+availability_plot <- availability |> mutate(dimension = as.character(dimension)) |> ms_add_metric_order(metric_order)
+
+# a-d. Pairwise signed-distortion distributions, shown as empirical quantile
+# intervals for each metric and comparison pair.
+distribution_panel <- function(dim, letter) {
+  d <- summary_plot |>
+    filter(dimension == dim, is.finite(median_z)) |>
+    mutate(metric = forcats::fct_rev(metric))
+  if (!nrow(d)) stop("No RQ1 summary rows for Fig. 1 dimension: ", dim)
+  ggplot(d, aes(y = metric, color = metric_class)) +
+    geom_vline(xintercept = 0, linewidth = .28, color = "#B8B8B8") +
+    geom_segment(aes(x = p025_z, xend = p975_z, yend = metric), alpha = .30, linewidth = .35) +
+    geom_segment(aes(x = q25_z, xend = q75_z, yend = metric), alpha = .72, linewidth = 1.05) +
+    geom_point(aes(x = median_z), size = .72, alpha = .90) +
+    facet_grid(metric_class ~ ., scales = "free_y", space = "free_y", switch = "y") +
+    scale_color_ms_metric() +
+    scale_x_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
+    labs(title = paste0(letter, "  ", DIM_TITLES[[dim]]), x = "pairwise standardized distortion, z", y = NULL) +
+    theme_ms(base_size = 6.0, legend_position = "none") +
+    theme(panel.grid.major.y = element_blank(), axis.text.y = element_text(size = 4.8),
+          axis.ticks.y = element_blank(), strip.text.y.left = element_text(size = 5.1))
+}
+
+# e. All pairwise representation changes. Bubble area is A and fill is B/A;
+# unavailable cells remain visible as crosses rather than being treated as zero.
+atlas <- summary_plot |> filter(is.finite(A_mean_absolute), is.finite(B_mean_signed))
+atlas_bg <- availability_plot
+p1e <- ggplot(atlas, aes(pair_label, metric)) +
+  geom_tile(data = atlas_bg |> filter(representation_available), fill = "#F3F3F3",
+            color = "white", linewidth = .10) +
+  geom_point(data = atlas_bg |> filter(!representation_available), shape = 4,
+             size = .52, stroke = .24, color = "#B5B5B5") +
+  geom_point(aes(size = A_mean_absolute, fill = direction_ratio), shape = 21,
+             color = "#3B3B3B", stroke = .14, alpha = .94) +
+  facet_grid(metric_class ~ dimension, scales = "free", space = "free", switch = "y") +
+  ms_direction_scale(name = "B / A") +
+  ms_magnitude_size_scale(name = "A = mean |z|", range = c(.25, 3.0)) +
+  labs(title = "e  Pairwise representation-change atlas", x = "oriented comparison pair", y = NULL) +
+  ms_atlas_theme(base_size = 6.1, x_angle = 52) +
+  theme(axis.text.x = element_text(size = 5.1))
+readr::write_csv(atlas |> mutate(dimension = as.character(dimension), metric_class = as.character(metric_class)),
+                 file.path("results", "rq1", "fig1_pairwise_atlas.csv"), na = "")
+
+# f-i. A/B geometry. Placement and optical are unordered facets. Temporal and
+# duration use explicitly flagged local transitions, not an artificial single
+# path through all pairwise comparisons or all nested windows.
+geometry_panel <- function(dim, letter) {
+  if (dim %in% c("temporal", "duration")) {
+    d <- local |>
+      filter(dimension == dim, is.finite(A), is.finite(B)) |>
+      transmute(metric, metric_class, A_mean_absolute = A, B_mean_signed = B,
+                transition = paste(lower_level, "→", higher_level),
+                A_boot_q025 = NA_real_, A_boot_q975 = NA_real_,
+                B_boot_q025 = NA_real_, B_boot_q975 = NA_real_)
   } else {
-    endpoint_d <- tibble()
-    label_data <- extreme_metric_rows(d)
+    d <- summary |>
+      filter(dimension == dim, is.finite(A_mean_absolute), is.finite(B_mean_signed)) |>
+      transmute(metric, metric_class, A_mean_absolute, B_mean_signed, pair_label,
+                transition = pair_label, A_boot_q025, A_boot_q975, B_boot_q025, B_boot_q975)
   }
-
-  display_values <- c(d$A_mean_absolute, abs(d$B_mean_signed), d$A_ci_high, abs(d$B_ci_low), abs(d$B_ci_high))
-  display_values <- display_values[is.finite(display_values)]
-  lim <- ifelse(length(display_values), max(display_values) * 1.06, 1)
-
+  if (!nrow(d)) stop("No A/B rows for Fig. 1 dimension: ", dim)
+  d <- d |> mutate(metric_class = factor(metric_class, levels = METRIC_CLASSES))
+  lab <- d |> group_by(metric) |> slice_max(A_mean_absolute, n = 1, with_ties = FALSE) |> ungroup() |>
+    slice_max(A_mean_absolute, n = 4, with_ties = FALSE)
+  max_display <- max(c(d$A_mean_absolute, abs(d$B_mean_signed), d$A_boot_q025, d$A_boot_q975, d$B_boot_q025, d$B_boot_q975), na.rm = TRUE)
+  if (!is.finite(max_display) || max_display <= 0) max_display <- 1
   p <- ggplot(d, aes(B_mean_signed, A_mean_absolute, color = metric_class)) +
     geom_vline(xintercept = 0, linewidth = .26, color = "#D8D8D8") +
-    geom_abline(slope = c(-1, 1), intercept = 0, linetype = 2, linewidth = .34, color = "#8A8A8A")
-
-  if (dim %in% TRAJECTORY_DIMS) {
+    geom_abline(slope = c(-1, 1), intercept = 0, linetype = 2, linewidth = .32, color = "#8A8A8A")
+  if (dim %in% c("placement", "optical")) {
+    ci <- d |> filter(is.finite(A_boot_q025), is.finite(A_boot_q975), is.finite(B_boot_q025), is.finite(B_boot_q975))
     p <- p +
-      geom_path(aes(group = metric), alpha = .32, linewidth = .40, lineend = "round", linejoin = "round") +
-      geom_point(size = .92, alpha = .58) +
-      geom_point(data = endpoint_d, shape = 21, fill = "white", size = 2.05, stroke = .65, alpha = .98, show.legend = FALSE)
-  } else if (dim == "placement") {
-    ci_d <- d |> filter(bootstrap_supported)
-    p <- p +
-      geom_errorbar(data = ci_d, aes(ymin = A_ci_low, ymax = A_ci_high), alpha = .13, linewidth = .24) +
-      geom_errorbar(data = ci_d, aes(xmin = B_ci_low, xmax = B_ci_high), orientation = "y", alpha = .13, linewidth = .24) +
-      geom_point(aes(shape = configuration_label), size = 1.48, alpha = .82) +
-      scale_shape_manual(values = c("Chest" = 16, "Wrist" = 17))
+      geom_segment(data = ci, aes(x = B_boot_q025, xend = B_boot_q975, y = A_mean_absolute, yend = A_mean_absolute), inherit.aes = FALSE, alpha = .16, linewidth = .25) +
+      geom_segment(data = ci, aes(x = B_mean_signed, xend = B_mean_signed, y = A_boot_q025, yend = A_boot_q975), inherit.aes = FALSE, alpha = .16, linewidth = .25) +
+      geom_point(aes(shape = transition), size = 1.45, alpha = .86)
   } else {
-    ci_d <- d |> filter(bootstrap_supported)
-    p <- p +
-      geom_errorbar(data = ci_d, aes(ymin = A_ci_low, ymax = A_ci_high), alpha = .13, linewidth = .24) +
-      geom_errorbar(data = ci_d, aes(xmin = B_ci_low, xmax = B_ci_high), orientation = "y", alpha = .13, linewidth = .24) +
-      geom_point(size = 1.48, alpha = .82)
+    p <- p + geom_point(size = 1.0, alpha = .68)
   }
-
   p +
-    geom_text(
-      data = label_data, aes(x = B_mean_signed, y = A_mean_absolute, label = metric), inherit.aes = FALSE,
-      size = 1.95, color = "#252525", check_overlap = TRUE, vjust = -.68
-    ) +
+    geom_text(data = lab, aes(x = B_mean_signed, y = A_mean_absolute, label = metric), inherit.aes = FALSE,
+              size = 1.85, color = "#252525", check_overlap = TRUE, vjust = -.65) +
     scale_color_ms_metric() +
-    scale_x_continuous(transform = asinh_display, limits = c(-lim, lim), breaks = scales::breaks_extended(n = 4), expand = expansion(mult = .025)) +
-    scale_y_continuous(transform = asinh_display, limits = c(0, lim), breaks = scales::breaks_extended(n = 4), expand = expansion(mult = .025)) +
+    scale_x_continuous(trans = scales::transform_asinh(), limits = c(-max_display * 1.06, max_display * 1.06), breaks = scales::breaks_extended(n = 4)) +
+    scale_y_continuous(trans = scales::transform_asinh(), limits = c(0, max_display * 1.06), breaks = scales::breaks_extended(n = 4)) +
     labs(title = paste0(letter, "  ", DIM_TITLES[[dim]]), x = "B: mean signed distortion", y = "A: mean absolute distortion") +
-    base_panel_theme
+    theme_ms(base_size = 6.3, legend_position = if (dim %in% c("placement", "optical")) "bottom" else "none")
 }
 
-metric_legend_source <- ggplot(
-  tibble(metric_class = factor(METRIC_CLASSES, levels = METRIC_CLASSES), x = seq_along(METRIC_CLASSES), y = 1),
-  aes(x, y, color = metric_class)
-) +
-  geom_point(size = 2) +
-  scale_color_ms_metric() +
-  guides(color = guide_legend(title = "metric class", nrow = 1, byrow = TRUE, override.aes = list(size = 2, alpha = 1))) +
+metric_legend_source <- ggplot(tibble(metric_class = factor(METRIC_CLASSES, levels = METRIC_CLASSES), x = seq_along(METRIC_CLASSES), y = 1), aes(x, y, color = metric_class)) +
+  geom_point(size = 1.8) + scale_color_ms_metric() +
+  guides(color = guide_legend(title = "metric class", nrow = 1, byrow = TRUE)) +
   theme_void(base_family = MS_FONT, base_size = 8) + theme(legend.position = "bottom")
 metric_legend <- cowplot::get_legend(metric_legend_source)
 
-placement_legend_source <- ggplot(
-  tibble(configuration = factor(c("Chest", "Wrist"), levels = c("Chest", "Wrist")), x = 1:2, y = 1),
-  aes(x, y, shape = configuration)
-) +
-  geom_point(size = 2, color = "#252525") +
-  scale_shape_manual(values = c("Chest" = 16, "Wrist" = 17)) +
-  guides(shape = guide_legend(title = "placement", nrow = 1)) +
-  theme_void(base_family = MS_FONT, base_size = 8) + theme(legend.position = "bottom")
-placement_legend <- cowplot::get_legend(placement_legend_source)
-
-# Main Fig. 1: distribution -> exhaustive representation atlas -> structural geometry.
-top <- map2(DIMENSIONS, letters[1:4], top_panel)
-bottom <- map2(DIMENSIONS, letters[6:9], bottom_panel)
+top <- map2(DIMENSIONS, letters[1:4], distribution_panel)
+bottom <- map2(DIMENSIONS, letters[6:9], geometry_panel)
 top_grid <- cowplot::plot_grid(plotlist = top, ncol = 4, align = "hv", axis = "tblr")
 bottom_grid <- cowplot::plot_grid(plotlist = bottom, ncol = 4, align = "hv", axis = "tblr")
-fig1body <- cowplot::plot_grid(top_grid, p1e, bottom_grid, ncol = 1, rel_heights = c(.82, 2.25, 1.02))
-legend_row <- cowplot::plot_grid(metric_legend, placement_legend, nrow = 1, rel_widths = c(4.6, 1.4))
-fig1 <- cowplot::plot_grid(fig1body, legend_row, ncol = 1, rel_heights = c(1, .045))
+fig1body <- cowplot::plot_grid(top_grid, p1e, bottom_grid, ncol = 1, rel_heights = c(.95, 2.1, 1.1))
+fig1 <- cowplot::plot_grid(fig1body, metric_legend, ncol = 1, rel_heights = c(1, .045))
 
-ggsave(file.path(FIG_DIR, "Fig1_RQ1.pdf"), fig1, width = 15.6, height = 11.6, units = "in", device = cairo_pdf, bg = "white")
-ggsave(file.path(FIG_DIR, "Fig1_RQ1.png"), fig1, width = 15.6, height = 11.6, units = "in", dpi = 240, bg = "white")
+ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.pdf"), 15.6, 11.6)
+ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.png"), 15.6, 11.6)
 
-# Supplementary retention atlas: RQ1's representation-preservation axis is kept
-# separate from A/B so the main atlas does not overload a third within-cell channel.
-ret_long <- retention |>
-  select(dimension, configuration, configuration_label, metric, metric_class, lin_ccc, spearman_rho) |>
-  pivot_longer(c(lin_ccc, spearman_rho), names_to = "retention_measure", values_to = "retention") |>
-  mutate(
-    retention_measure = recode(retention_measure, lin_ccc = "Lin CCC", spearman_rho = "Spearman rho"),
-    dimension = factor(dimension, levels = DIMENSIONS)
-  ) |>
-  ms_add_metric_order(metric_order)
-
-p_ret <- ggplot(ret_long |> filter(is.finite(retention)), aes(configuration_label, metric, fill = retention)) +
+p_availability <- ggplot(availability_plot, aes(pair_label, metric, fill = representation_available)) +
   geom_tile(color = "white", linewidth = .12) +
-  facet_grid(metric_class ~ dimension + retention_measure, scales = "free", space = "free", switch = "y") +
-  scale_fill_ms_diverging(1, name = "retention", breaks = c(-1, -.5, 0, .5, 1)) +
-  labs(title = "Representation-retention diagnostics across all observed configurations", x = NULL, y = NULL) +
-  ms_atlas_theme(base_size = 6.1, x_angle = 42)
+  facet_grid(metric_class ~ dimension, scales = "free", space = "free", switch = "y") +
+  scale_fill_manual(values = c(`TRUE` = MS_PRIMARY, `FALSE` = "#D9D9D9"),
+                    labels = c(`TRUE` = "available", `FALSE` = "unavailable"), name = NULL) +
+  labs(title = "RQ1 representation availability by oriented comparison pair", x = NULL, y = NULL) +
+  ms_atlas_theme(base_size = 6.1, x_angle = 52)
+ms_plot_save(p_availability, file.path(OUT_DIR, "FigS_RQ1_availability_atlas.pdf"), 16, 10)
+ms_plot_save(p_availability, file.path(OUT_DIR, "FigS_RQ1_availability_atlas.png"), 16, 10)
 
-ggsave(file.path(FIG_DIR, "FigS_RQ1_retention_atlas.pdf"), p_ret, width = 18, height = 10.5, units = "in", bg = "white")
-ggsave(file.path(FIG_DIR, "FigS_RQ1_retention_atlas.png"), p_ret, width = 18, height = 10.5, units = "in", dpi = 240, bg = "white")
-message("Fig. 1 complete: empirical distributions + metric-level distortion atlas + A/B geometry; retention atlas exported separately.")
+ms_plot_write_manifest(
+  file.path(OUT_DIR, "figure_artifact_manifest.csv"),
+  tibble(
+    figure = c("Fig1_RQ1", "FigS_RQ1_availability_atlas"),
+    input_artifact = c("rq1_pairwise_summary + rq1_metric_availability + rq1_local_transition_summary", "rq1_metric_availability"),
+    core_artifact_version = CORE_VERSION, rq1_analysis_version = RQ1_VERSION,
+    rq2_analysis_version = NA_character_, rq3_analysis_version = NA_character_
+  )
+)
+message("Fig. 1 complete: current RQ1 pairwise distributions, availability, atlas, and A/B geometry.")
