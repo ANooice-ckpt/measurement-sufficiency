@@ -39,7 +39,7 @@ frequency <- readr::read_csv(FREQUENCY_CSV, show_col_types = FALSE, progress = F
 
 ms_plot_require_columns(rq1_summary, c("metric", "metric_class", "dimension", "A_mean_absolute"), "rq1_pairwise_summary.csv")
 ms_plot_require_columns(observed, c("core_artifact_version", "rq1_analysis_version", "rq3_analysis_version", "dimension", "metric", "R_obs", "status"), "rq3_sufficiency_long.rds")
-ms_plot_require_columns(sufficiency, c("dimension", "metric", "metric_class", "epsilon", "sufficient"), "rq3_sufficiency_long.csv")
+ms_plot_require_columns(sufficiency, c("dimension", "metric", "metric_class", "epsilon", "sufficient", "status"), "rq3_sufficiency_long.csv")
 ms_plot_require_columns(requirement, c("dimension", "metric", "epsilon", "sufficient_states", "sufficient_set_threshold_like"), "rq3_single_dimension_requirement.csv")
 ms_plot_require_columns(unordered, c("dimension", "comparison_pair_id", "metric", "metric_class", "epsilon_entry", "A", "B"), "rq3_unordered_substitutability.csv")
 ms_plot_require_columns(coverage, c("dimension", "comparison_pair_id", "epsilon", "fraction_metrics_substitutable"), "rq3_unordered_coverage_curves.csv")
@@ -62,18 +62,23 @@ metric_classes <- METRIC_CLASSES
 sufficiency_plot <- sufficiency |>
   filter(dimension %in% c("temporal", "duration")) |>
   group_by(dimension, metric, metric_class, epsilon) |>
-  summarise(fraction_sufficient = mean(sufficient, na.rm = TRUE), .groups = "drop") |>
+  summarise(
+    resolved_fraction = mean(status == "resolved", na.rm = TRUE),
+    fraction_sufficient = if (any(status == "resolved")) mean(sufficient[status == "resolved"], na.rm = TRUE) else NA_real_,
+    .groups = "drop"
+  ) |>
   mutate(dimension = factor(dimension, levels = c("temporal", "duration"))) |>
   mutate(dimension = as.character(dimension)) |>
   ms_add_metric_order(metric_order)
 p4a <- ggplot(sufficiency_plot, aes(epsilon, fraction_sufficient, group = metric, color = metric_class)) +
   geom_hline(yintercept = c(0, 1), linewidth = .25, color = "#C5C5C5") +
+  geom_line(aes(y = resolved_fraction), color = "#777777", linetype = 3, linewidth = .28, alpha = .72) +
   geom_line(alpha = .62, linewidth = .42) +
   facet_wrap(~dimension, nrow = 1, scales = "free_x") +
   scale_color_ms_metric() +
   scale_x_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
   scale_y_continuous(limits = c(0, 1), labels = scales::label_percent(accuracy = 25)) +
-  labs(title = "a  Ordered-dimension sufficiency projection", x = "tolerance ε", y = "fraction of observed states sufficient") +
+  labs(title = "a  Ordered-dimension sufficiency projection", x = "tolerance ε", y = "sufficient among resolved states; dashed = resolved coverage") +
   theme_ms(base_size = 6.6, legend_position = "bottom")
 
 # Fig. 4b: local convergence profile, retaining boundary proximity rather than

@@ -115,7 +115,7 @@ gamma_limit <- max(abs(c(gamma_plot$R, gamma_plot$Q)), na.rm = TRUE)
 if (!is.finite(gamma_limit) || gamma_limit <= 0) gamma_limit <- 1
 p3 <- ggplot(gamma_plot, aes(transition, R, color = metric_class)) +
   geom_hline(yintercept = 0, linewidth = .28, color = "#8A8A8A") +
-  geom_linerange(aes(ymin = -Q, ymax = Q), alpha = .22, linewidth = .45) +
+  geom_segment(aes(x = transition, xend = transition, y = 0, yend = R), alpha = .34, linewidth = .40) +
   geom_point(aes(size = Q), alpha = .90) +
   facet_grid(metric_class ~ dimension_pair, scales = "free_x", space = "free", switch = "y") +
   scale_color_ms_metric() +
