@@ -2,92 +2,95 @@
 
 Analysis repository for **How Much Measurement Is Enough? Measurement Sufficiency in Personal Light Exposure Assessment**.
 
-The scientific object is the empirical mapping from measurement configuration to target exposure representation and its distortion relative to a high-information benchmark. RQ1 characterizes distortion distributions, RQ2 studies their conditionality and cross-dimensional separability, and RQ3 converts those empirical relationships into target-specific sufficient configuration sets and Pareto frontiers.
+The scientific object is:
+
+\`\`\`text
+configuration state -> observed exposure process -> target representation
+                    -> pairwise representation change
+                    -> conditional / cross-dimensional structure
+                    -> observed stability and measurement sufficiency
+\`\`\`
+
+The published 54 Zauner/LightLogR target metrics and their definitions remain unchanged. Metric classes are descriptive groupings, not inferential replicates. Unavailable representations stay unavailable.
 
 ## Environment
-Run from the repository root under **R 4.5.0**. LightLogR 0.10.3 and melidosData 1.0.6 are scientific pins.
 
-```bash
+Run from the repository root under R 4.5.0 with LightLogR 0.10.3 and melidosData 1.0.6.
+
+\`\`\`bash
 Rscript scripts/00_setup.R
-```
+\`\`\`
 
-MeLiDos source files are stored under `data/raw/melidos/`; `scripts/01_download_melidos.R` downloads the harmonized light/wear/sleep inputs, site-level `trial_times` metadata used to anchor monitoring-duration references, and the light-exposure diaries used by the real-world context extension. ERA5 files remain under `data/raw/era5/`.
+\`data/\` is reserved for raw MeLiDos and ERA5 inputs. All generated artifacts, caches, diagnostics, checkpoints, tables and figures are written below \`results/\`.
 
-## Core v2: sparse temporal sampling + protocol duration metadata
-The current core artifact version is `v2_sparse_sampling_protocol7`.
+## Core
 
-Primary temporal configurations are:
+The current core artifact version is \`v3_sparse_sampling_complete_days\`.
 
-```text
-10 s, 20 s, 30 s, 1 min, 5 min, 15 min, 30 min
-```
+Primary temporal states are:
 
-Reserve extraction levels are `2 min, 10 min, 60 min`. **15 s is not constructed.** Every cadence coarser than 10 s is a deterministic clock-anchored systematic subset of the harmonized 10-s grid. Retained MEDI/LIGHT observations are copied exactly; there is no wider-bin averaging and no interpolation.
+\`\`\`text
+10 s, 20 s, 30 s, 60 s, 300 s, 900 s, 1800 s
+\`\`\`
 
-Monitoring-duration references are anchored by MeLiDos `trial_times`. Within each required support, protocol calendar Days 1–7 (the first seven calendar dates from trial start) form the fixed seven-day reference when all seven are valid on the required support. A later eighth valid calendar date in a Monday-to-Monday recording is treated as a return-day date rather than an arbitrary alternative seventh day. Candidate 1–6 d windows are all contiguous windows inside that fixed seven-day reference.
+Reserve extraction states are 120 s, 600 s and 3600 s. 15 s is prohibited. Every coarse state is a participant/source-grid-phase-anchored systematic sparse subsample of the harmonized 10-s grid; retained timestamps and values are exact source values.
 
-For a fresh Linux/ECS build use the single entry point:
+Monitoring duration is the accumulation dimension. Core preprocessing identifies consecutive complete analysis-day runs and materializes every contiguous 1–6 day window within each run. Protocol \`trial_times\` metadata remains in \`unit_context\` for audit and sensitivity, but no seven-day protocol reference defines the primary duration domain.
 
-```bash
+Build the expensive core layer with:
+
+\`\`\`bash
 CORE_WORKERS=48 CORE_FORCE=0 bash scripts/run_core_artifacts.sh
-```
+\`\`\`
 
-`CORE_FORCE=0` is safe because expensive interim blocks live under a **versioned** cache directory. Pre-v2 mean-binned caches cannot be reused by the v2 build.
+Durable core outputs:
 
-Core outputs:
+\`\`\`text
+results/core/
+  cache/<core_version>/{supports,metrics,context,weather}/
+  metric_cube.csv.gz
+  unit_context.csv.gz
+  weather_1min.csv.gz
+  duration_window_manifest.rds
+  duration_metric_cube.rds
+  duration_metric_cube_parts.csv
+  core_manifest.csv
+\`\`\`
 
-```text
-data/derived/core/metric_cube.csv.gz
-data/derived/core/unit_context.csv.gz
-data/derived/core/weather_1min.csv.gz
-data/derived/core/core_manifest.csv
-```
+\`duration_metric_cube\` is the shared representation artifact for RQ1, RQ2 and RQ3. Daily targets are aggregated from the participant-day metric cube. IS/IV are rebuilt on exact selected window dates from the stored hourly basis.
 
 ## Downstream execution
-After the current core completes, regenerate every downstream artifact because temporal, duration, and real-world-context estimands feed the manuscript figures.
 
-```bash
-# RQ1: whole-day distortion object and Fig. 1
-RQ1_BOOT=1000 Rscript scripts/10_rq1_analysis.R
+\`\`\`bash
+# RQ1: general pairwise representation-change map
+RQ1_BOOT=1000 RQ1_PART_WORKERS=24 RQ1_BOOT_WORKERS=8 RQ1_PART_COMPRESSION=gzip Rscript scripts/10_rq1_analysis.R
 Rscript scripts/11_plot_fig1.R
 
-# RQ1 context extension: civil day/night, diary indoor/outdoor, and activity
-# (home / working / vehicle / outdoors), restricted to operator-valid metrics.
-RQ1_CONTEXT_WORKERS=12 RQ1_BOOT=1000 Rscript scripts/10b_rq1_context_analysis.R
-
-# RQ2: reference-exposure-state + external-context models and gamma interactions
-RQ2_WORKERS=12 RQ2_CV_FOLDS=5 RQ2_BOOT=1000 Rscript scripts/12_rq2_analysis.R
-
-# RQ2 context extension: state-specific context geometry and paired binary contrasts
-RQ2_BOOT=1000 Rscript scripts/12b_rq2_context_analysis.R
+# RQ2: local conditionality, CV models and circular-aware gamma
+RQ2_WORKERS=12 RQ2_CV_FOLDS=5 RQ2_RUN_MODELS=1 Rscript scripts/12_rq2_analysis.R
 Rscript scripts/13_plot_rq2.R
 
-# RQ3: inverse sufficiency and multidimensional Pareto frontiers
+# RQ3: observed residual instability, sufficiency and Pareto occupancy
 Rscript scripts/14_rq3_analysis.R
 Rscript scripts/15_plot_rq3.R
-```
+\`\`\`
 
-RQ2 checkpoints include the upstream RQ1 analysis version, so stale checkpoints from an older core are rejected automatically. The context extensions are post-core analyses: they read frozen support artifacts and do not redefine the whole-day RQ1 estimand.
+On the Linux server, the resumable downstream chain can be launched with
+`scripts/run_downstream_server.sh`. Its defaults are 16 RQ1 part workers,
+8 bootstrap workers and 12 RQ2 model workers; override these environment
+variables when storage bandwidth or memory requires a lower setting.
 
-## Manuscript figure architecture
-The plotting layer uses a common 54-representation row order and deliberately separates orthogonal information channels:
+The analysis stages emit versioned model/checkpoint and figure provenance tables alongside
+their primary outputs: `results/rq2/rq2_model_artifact_manifest.csv` and
+`results/rqX/figures/figure_artifact_manifest.csv`. These are presentation metadata, not a
+second schema or hash contract.
 
-- **position/facets** identify target representation, measurement dimension/configuration, context, or tolerance;
-- **bubble area or x-position** carries distortion/interdependence magnitude (`A` or `Q`);
-- **diverging fill** carries directionality (`B/A` or `R/Q`), not a second magnitude scale;
-- **grey/white/x states** distinguish operator-valid support, structurally invalid context restriction, and valid-but-unestimated cells;
-- metric classes organize the atlas visually but are never substituted for the metric-level inferential object.
+RQ1's primary upstream artifact is \`results/rq1/rq1_pairwise_change_long.rds\`, a manifest for versioned canonical parts. RQ2 uses the manifest loader and selects only primary pairwise rows/columns. RQ3 reads the RQ1 pairwise summaries and actual \`results/core/duration_metric_cube.rds\`. Plot scripts read frozen RQ outputs only; they do not load raw MeLiDos series, call LightLogR metric operators, refit models, bootstrap, construct duration windows or calculate gamma/sufficiency.
 
-Main outputs:
+Context analyses previously split across \`10b\`, \`10c\` and \`12b\` are no longer separate RQ1 entry points. Their reusable context operators belong in \`scripts/utils/\` or in the RQ2 checkpointed stages.
 
-```text
-results/figures/Fig1_RQ1.pdf
-results/figures/Fig2_RQ2.pdf
-results/figures/Fig3_RQ2.pdf
-results/figures/Fig4_RQ3.pdf
-results/figures/Fig5_RQ3.pdf
-```
+## Results hand-off
 
-High-dimensional supporting views are exported separately, including the full real-world-context hypercube split by measurement dimension, the RQ1 retention atlas, and the RQ3 class-level coverage projection. See `docs/FIGURE_ARCHITECTURE.md` for the mapping between scientific estimands and visual channels.
+After a server run, copy the complete \`results/\` directory back. It contains core durable artifacts, analysis outputs, checkpoints, diagnostics, tables and figures. \`external/\` remains upstream reproduction material and is not generated output.
 
-See `docs/STUDY_SPEC.md`, `docs/CORE_ARTIFACTS.md`, and `docs/RQ1_EXECUTION.md` for the frozen definitions.
+See \`docs/STUDY_SPEC.md\`, \`docs/CORE_ARTIFACTS.md\`, \`docs/RQ1_EXECUTION.md\`, and \`docs/FIGURE_ARCHITECTURE.md\`.

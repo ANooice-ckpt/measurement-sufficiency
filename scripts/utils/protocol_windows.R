@@ -1,116 +1,111 @@
-# Shared protocol-anchored monitoring-duration helpers for RQ1 and RQ3.
-# MeLiDos trial_times define the participant-specific study interval. Participants
-# with at least seven valid dates inside that interval are eligible; the primary
-# seven-day reference is the first seven valid dates in chronological order.
+# Complete-analysis-day duration helpers.
+#
+# Duration is an accumulation dimension. trial_times remains available in
+# unit_context for audit/descriptive sensitivity, but it does not define the
+# primary cohort or a seven-day reference.
 
-protocol_reference_cohort <- function(context_daily) {
-  required <- c(
-    "support_id", "site", "Id", "Date",
-    "protocol_start", "protocol_end",
-    "protocol_start_date", "protocol_end_date",
-    "protocol_metadata_available"
-  )
+complete_analysis_day_runs <- function(context_daily) {
+  required <- c("support_id", "site", "Id", "Date")
   missing <- setdiff(required, names(context_daily))
-  if (length(missing)) stop("Protocol duration helper missing context columns: ", paste(missing, collapse = ", "))
+  if (length(missing)) stop("Duration helper missing columns: ", paste(missing, collapse = ", "))
 
-  context_daily |>
+  days <- context_daily |>
     dplyr::filter(!is.na(Date)) |>
-    dplyr::distinct(
-      support_id, site, Id, Date,
-      protocol_start, protocol_end, protocol_start_date, protocol_end_date,
-      protocol_metadata_available
-    ) |>
+    dplyr::distinct(support_id, site, Id, Date) |>
+    dplyr::arrange(support_id, site, Id, Date) |>
     dplyr::group_by(support_id, site, Id) |>
-    dplyr::summarise(
-      protocol_metadata_available = dplyr::first(protocol_metadata_available),
-      protocol_start = dplyr::first(protocol_start),
-      protocol_end = dplyr::first(protocol_end),
-      protocol_start_date = dplyr::first(protocol_start_date),
-      protocol_end_date = dplyr::first(protocol_end_date),
-      all_valid_dates = list(sort(unique(Date))),
-      .groups = "drop"
-    ) |>
-    dplyr::rowwise() |>
     dplyr::mutate(
-      valid_dates_in_protocol = list({
-        z <- all_valid_dates
-        if (!isTRUE(protocol_metadata_available) || is.na(protocol_start_date) || is.na(protocol_end_date)) {
-          as.Date(character())
-        } else z[z >= protocol_start_date & z <= protocol_end_date]
-      }),
-      n_valid_dates_all = length(all_valid_dates),
-      n_valid_dates_in_protocol = length(valid_dates_in_protocol),
-      reference_dates = list({
-        if (!isTRUE(protocol_metadata_available) || length(valid_dates_in_protocol) < 7L) {
-          as.Date(character())
-        } else valid_dates_in_protocol[seq_len(7L)]
-      }),
-      reference_days_all_valid = {
-        z <- reference_dates
-        length(z) == 7L && all(z %in% all_valid_dates)
-      },
-      reference_dates_consecutive = {
-        z <- reference_dates
-        length(z) == 7L && all(as.integer(diff(z)) == 1L)
-      },
-      protocol_covers_reference = {
-        z <- reference_dates
-        length(z) == 7L && !is.na(protocol_end_date) && max(z) <= protocol_end_date
-      },
-      reference_start = if (length(reference_dates) == 7L) min(reference_dates) else as.Date(NA),
-      reference_end = if (length(reference_dates) == 7L) max(reference_dates) else as.Date(NA),
-      extra_dates = list({
-        z <- valid_dates_in_protocol
-        if (length(z) > 7L) z[-seq_len(7L)] else as.Date(character())
-      }),
-      n_extra_valid_dates = length(extra_dates),
-      eligible_protocol_7 =
-        isTRUE(protocol_metadata_available) &&
-        n_valid_dates_in_protocol >= 7L && reference_days_all_valid,
-      exclusion_reason = dplyr::case_when(
-        !isTRUE(protocol_metadata_available) ~ "trial_times metadata unavailable",
-        n_valid_dates_in_protocol < 7L ~ "fewer than seven valid dates within the protocol interval on this support",
-        TRUE ~ NA_character_
-      ),
-      reference_id = if (eligible_protocol_7) {
-        paste(support_id, site, Id, reference_start, reference_end, sep = "|")
-      } else NA_character_
+      new_run = dplyr::if_else(dplyr::row_number() == 1L, TRUE, as.integer(Date - dplyr::lag(Date)) != 1L),
+      run_id = cumsum(new_run)
     ) |>
     dplyr::ungroup()
+
+  if (!nrow(days)) return(tibble::tibble())
+  days |>
+    dplyr::group_by(support_id, site, Id, run_id) |>
+    dplyr::summarise(
+      run_start = min(Date), run_end = max(Date), n_complete_days = dplyr::n_distinct(Date),
+      member_dates = list(sort(unique(Date))),
+      .groups = "drop"
+    ) |>
+    dplyr::mutate(run_id = as.integer(run_id), has_complete_6d_window = n_complete_days >= 6L)
 }
 
-protocol_reference_audit_table <- function(cohort) {
-  cohort |>
-    dplyr::mutate(
-      all_valid_dates = purrr::map_chr(all_valid_dates, ~paste(as.character(.x), collapse = ";")),
-      valid_dates_in_protocol = purrr::map_chr(valid_dates_in_protocol, ~paste(as.character(.x), collapse = ";")),
-      reference_dates = purrr::map_chr(reference_dates, ~paste(as.character(.x), collapse = ";")),
-      extra_dates = purrr::map_chr(extra_dates, ~paste(as.character(.x), collapse = ";"))
-    )
-}
+duration_window_manifest <- function(context_daily, max_days = 6L) {
+  runs <- complete_analysis_day_runs(context_daily)
+  if (!nrow(runs)) return(tibble::tibble())
+  max_days <- as.integer(max_days)
+  if (!is.finite(max_days) || max_days < 1L) stop("max_days must be positive")
 
-make_protocol_duration_windows <- function(eligible_cohort, include_reference = FALSE) {
-  eligible <- eligible_cohort |> dplyr::filter(eligible_protocol_7)
-  if (!nrow(eligible)) return(tibble::tibble())
-  day_lengths <- if (include_reference) 1:7 else 1:6
-  out <- vector("list", 0L); k <- 0L
-  for (i in seq_len(nrow(eligible))) {
-    dates_i <- eligible$reference_dates[[i]]
-    for (d in day_lengths) {
-      for (j in seq_len(8L - d)) {
-        selected <- dates_i[j:(j + d - 1L)]
+  out <- vector("list", 0L)
+  k <- 0L
+  for (i in seq_len(nrow(runs))) {
+    dates <- runs$member_dates[[i]]
+    for (d in seq_len(min(max_days, length(dates)))) {
+      for (j in seq_len(length(dates) - d + 1L)) {
+        selected <- dates[j:(j + d - 1L)]
         k <- k + 1L
         out[[k]] <- tibble::tibble(
-          support_id = eligible$support_id[i], site = eligible$site[i], Id = eligible$Id[i],
-          reference_id = eligible$reference_id[i], reference_start = eligible$reference_start[i],
-          reference_end = eligible$reference_end[i], n_extra_valid_dates = eligible$n_extra_valid_dates[i],
-          n_days = d, window_index = j,
-          window_id = paste(eligible$reference_id[i], paste0(d, "d"), sprintf("w%02d", j), sep = "|"),
-          window_start = min(selected), window_end = max(selected),
-          selected_dates = list(selected), reference_dates = list(dates_i)
+          support_id = runs$support_id[i], site = runs$site[i], Id = runs$Id[i],
+          run_id = runs$run_id[i], run_start = runs$run_start[i], run_end = runs$run_end[i],
+          n_complete_days_in_run = runs$n_complete_days[i], window_index = j, n_days = d,
+          window_start = min(selected), window_end = max(selected), member_dates = list(selected),
+          window_id = paste(runs$support_id[i], runs$site[i], runs$Id[i],
+                            paste0("run", runs$run_id[i]), paste0(d, "d"),
+                            sprintf("w%03d", j), sep = "|"),
+          nesting_key = paste(runs$support_id[i], runs$site[i], runs$Id[i], runs$run_id[i], sep = "|")
         )
       }
     }
   }
-  dplyr::bind_rows(out)
+  windows <- dplyr::bind_rows(out)
+  if (!nrow(windows)) return(windows)
+  windows |>
+    dplyr::group_by(support_id, site, Id, run_id) |>
+    dplyr::mutate(
+      run_window_count = dplyr::n(), has_complete_6d_window = any(n_days == 6L),
+      adjacent_lower_window_id = dplyr::if_else(
+        n_days > 1L,
+        paste(support_id, site, Id, paste0("run", run_id), paste0(n_days - 1L, "d"), sprintf("w%03d", window_index), sep = "|"),
+        NA_character_
+      ),
+      adjacent_higher_window_id = dplyr::if_else(
+        n_days < 6L,
+        paste(support_id, site, Id, paste0("run", run_id), paste0(n_days + 1L, "d"), sprintf("w%03d", window_index), sep = "|"),
+        NA_character_
+      )
+    ) |>
+    dplyr::ungroup()
 }
+
+duration_cohort_audit <- function(windows, runs = NULL) {
+  if (is.null(runs)) {
+    if (!nrow(windows)) return(tibble::tibble())
+    runs <- windows |>
+      dplyr::distinct(support_id, site, Id, run_id, run_start, run_end,
+                      n_complete_days_in_run, has_complete_6d_window) |>
+      dplyr::rename(n_complete_days = n_complete_days_in_run)
+  }
+  if (!nrow(runs)) return(tibble::tibble())
+  window_counts <- windows |>
+    dplyr::count(support_id, site, Id, run_id, n_days, name = "n_windows")
+  runs |>
+    dplyr::group_by(support_id) |>
+    dplyr::summarise(
+      participants = dplyr::n_distinct(paste(site, Id, sep = "|")), sites = dplyr::n_distinct(site),
+      runs = dplyr::n_distinct(paste(site, Id, run_id, sep = "|")), complete_days = sum(n_complete_days),
+      runs_with_6d_window = sum(has_complete_6d_window), .groups = "drop"
+    ) |>
+    dplyr::left_join(
+      window_counts |>
+        dplyr::group_by(support_id, n_days) |>
+        dplyr::summarise(windows = sum(n_windows), .groups = "drop") |>
+        tidyr::pivot_wider(names_from = n_days, values_from = windows, names_prefix = "windows_", values_fill = 0L),
+      by = "support_id"
+    ) |>
+    dplyr::arrange(support_id)
+}
+
+# Compatibility name for old exploratory callers. It now implements the new
+# complete-day semantics and never creates a protocol reference.
+make_complete_duration_windows <- duration_window_manifest

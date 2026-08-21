@@ -1,6 +1,6 @@
 # Helpers for building the configuration-level metric cube.
 
-core_artifact_version <- function() "v2_sparse_sampling_protocol7"
+core_artifact_version <- function() "v3_sparse_sampling_complete_days"
 
 core_site_metadata <- function() {
   tibble::tribble(

@@ -18,7 +18,7 @@ core_config_daily_context <- function(support_path) {
       .groups = "drop"
     )
 
-  protocol_path <- "data/interim/core/protocol_participant_metadata.rds"
+  protocol_path <- file.path("results", "core", "cache", "protocol_participant_metadata.rds")
   if (file.exists(protocol_path)) {
     protocol_meta <- readRDS(protocol_path) |>
       dplyr::filter(site %in% unique(support$site))

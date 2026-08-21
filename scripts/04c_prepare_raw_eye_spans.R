@@ -3,7 +3,7 @@ suppressPackageStartupMessages({
   library(tidyverse)
 })
 
-dir.create("data/interim/core", recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path("results", "core", "cache"), recursive = TRUE, showWarnings = FALSE)
 dir.create("logs", recursive = TRUE, showWarnings = FALSE)
 
 raw_spans <- map_dfr(melidos_sites(), function(site_i) {
@@ -109,10 +109,10 @@ if (nrow(missing_protocol)) {
   )
 }
 
-saveRDS(raw_spans, "data/interim/core/raw_eye_recording_spans.rds", compress = FALSE)
+saveRDS(raw_spans, file.path("results", "core", "cache", "raw_eye_recording_spans.rds"), compress = FALSE)
 saveRDS(
   participant_meta,
-  "data/interim/core/protocol_participant_metadata.rds",
+file.path("results", "core", "cache", "protocol_participant_metadata.rds"),
   compress = FALSE
 )
 

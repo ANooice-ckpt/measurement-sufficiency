@@ -2,52 +2,68 @@
 
 RQ1 has exactly two entry points:
 
-```text
-scripts/10_rq1_analysis.R
-scripts/11_plot_fig1.R
-```
+    scripts/10_rq1_analysis.R
+    scripts/11_plot_fig1.R
 
-`10` reads `metric_cube` + `unit_context`; `11` reads only RQ1 outputs.
+10 reads results/core/metric_cube.csv.gz, results/core/unit_context.csv.gz only for the core contract, and results/core/duration_metric_cube.rds. 11 reads only frozen RQ1 outputs and writes figures below results/rq1/figures/.
 
-## Temporal analysis
-Reference 10 s; primary candidates 20 s, 30 s, 1 min, 5 min, 15 min, 30 min. These values already come from core v2 sparse systematic sampling. RQ1 never reconstructs/coarsens the source series.
+## Canonical pairwise object
 
-## Duration analysis
-For eye-MEDI reference supports (`eye_medi` for ordinary targets; `eye_full` for MDER/nvRD), use protocol metadata carried by `unit_context`:
-- require at least seven valid dates inside the protocol interval;
-- select the first seven valid dates chronologically as the fixed reference;
-- retain later valid dates only as audit fields;
-- enumerate every contiguous 1–6-date subsequence inside the ordered fixed reference.
+The primary artifact is:
 
-52 daily targets are aggregated day-first (circular mean for circular-time targets). IS/IV are rebuilt from `isiv_h00..h23` on the exact selected dates.
+    results/rq1/rq1_pairwise_change_long.rds
 
-## Primary distortion
-`e = delta/reference_SD` within comparison lattice, then empirical `D(e)`, `A=mean(abs(e))`, `B=mean(e)`. Participant-cluster/site-stratified bootstrap is used wherever the resulting cohort has a non-degenerate cluster structure.
+This file is a versioned manifest for immutable canonical parts under
+`results/rq1/pairwise_parts/<rq1_analysis_version>/`; it is not required to
+contain the full pairwise table in memory. Each part has an atomic `.ok`
+marker, so interrupted runs reuse completed parts and rebuild only missing
+parts. The current implementation writes one non-duration part and one part
+per core duration support/site block.
 
-Primary outputs:
+Each row is a smallest-unit pairwise comparison and uses:
 
-```text
-data/derived/rq1/rq1_distortion_long.rds
-results/rq1/rq1_summary.csv
-results/rq1/rq1_configuration_manifest.csv
-results/rq1/rq1_metric_availability.csv
-results/rq1/rq1_sample_flow.csv
-results/rq1/rq1_retention_diagnostics.csv
-```
+- config_a_id, config_b_id;
+- value_a, value_b, delta, z;
+- dimension, comparison lattice, pair role and requirement relation;
+- support, participant, unit and window identifiers;
+- metric geometry, standardizer, robust standardizer and availability.
 
-Sensitivity outputs:
+For ordered dimensions, state_a is the less demanding state and state_b the more demanding state. delta = value_a - value_b. Placement/optical facets have a documented empirical orientation but no burden order. Candidate/reference terminology is retained only in historical compatibility outputs.
 
-```text
-results/rq1/rq1_robust_scale_sensitivity.csv
-results/rq1/rq1_participant_balanced_sensitivity.csv
-```
+## Pair map
 
-The canonical RDS and summary carry `core_artifact_version` and `rq1_analysis_version`. RQ2 uses the latter in checkpoint paths.
+- Placement: eye–chest and eye–wrist on separate maximal supports.
+- Optical: LIGHT–MEDI on the eye full support.
+- Temporal: all choose(7,2)=21 pairs among 10, 20, 30, 60, 300, 900 and 1800 s; adjacent transitions are flagged separately; 10-s anchor projections are a slice, not the canonical ontology.
+- Duration: every nested pair of complete-day windows in the core manifest, with adjacent d -> d+1 pairs flagged.
 
-## Fig.1
-Frozen 2×4 grammar:
-- columns: placement, optical, temporal, duration;
-- top row: pooled empirical `D(e)` landscapes with equal metric×configuration total weight;
-- bottom row: A–B geometry; temporal/duration are trajectories.
+All pairs within a lattice join one standardizer. Primary scaling is SD; IQR/1.349 is sensitivity. The empirical distribution comes before A=mean(abs(z)) and B=mean(z); A >= |B| is checked.
 
-All eight panel frames are square/aligned. Fig.1 is distortion characterization, not a sufficiency-threshold figure.
+## Outputs
+
+    results/rq1/
+      rq1_pairwise_change_long.rds
+      pairwise_parts/<rq1_version>/      # canonical parts + .ok markers
+      rq1_pairwise_summary.csv
+      rq1_pairwise_bootstrap.csv
+      rq1_anchor_projection.csv
+      rq1_local_transition_summary.csv
+      rq1_metric_availability.csv
+      rq1_pair_type_counts.csv
+      rq1_robust_scale_sensitivity.csv
+      rq1_participant_balanced_sensitivity.csv
+      figures/
+
+Duration cohort/run/window audit is written under results/diagnostics/. RQ2
+loads only selected primary pairwise columns/rows through the manifest loader;
+RQ3 uses the frozen summary/local projections and manifest version. Plot
+scripts read frozen outputs only.
+
+When RQ1_BOOT is positive, the analysis also computes participant-cluster/site-stratified
+bootstrap intervals for A and B. RQ1_BOOT_WORKERS controls the cross-platform PSOCK worker
+count. RQ1_PART_WORKERS controls parallel canonical-part generation. Both can
+be set manually; a practical server starting point for a 100-GB node is
+`RQ1_PART_WORKERS=16 RQ1_BOOT_WORKERS=8`; raise the part count to 24 only
+after confirming memory headroom.
+`RQ1_PART_COMPRESSION=gzip` is the speed-oriented default; `xz` remains
+available when storage is more constrained.

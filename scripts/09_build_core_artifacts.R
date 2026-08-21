@@ -3,6 +3,8 @@ source("scripts/utils/rq1_metrics.R")
 source("scripts/utils/core_artifacts.R")
 source("scripts/utils/core_temporal_sampling.R")
 source("scripts/utils/core_context.R")
+source("scripts/utils/protocol_windows.R")
+source("scripts/utils/duration_artifacts.R")
 source("scripts/utils/weather_era5.R")
 suppressPackageStartupMessages({
   library(tidyverse)
@@ -23,14 +25,26 @@ workers <- suppressWarnings(as.integer(Sys.getenv("CORE_WORKERS", unset = "16"))
 if (!is.finite(workers) || workers < 1L) workers <- 1L
 force_rebuild <- identical(Sys.getenv("CORE_FORCE", unset = "0"), "1")
 CORE_VERSION <- core_artifact_version()
-INTERIM_ROOT <- file.path("data", "interim", "core", CORE_VERSION)
+CORE_ROOT <- file.path("results", "core")
+INTERIM_ROOT <- file.path(CORE_ROOT, "cache", CORE_VERSION)
 SUPPORT_DIR <- file.path(INTERIM_ROOT, "supports")
 METRIC_DIR <- file.path(INTERIM_ROOT, "metrics")
 CONTEXT_DIR <- file.path(INTERIM_ROOT, "context")
 WEATHER_DIR <- file.path(INTERIM_ROOT, "weather")
+DURATION_PART_DIR <- file.path(INTERIM_ROOT, "duration_parts")
 
-for (d in c(SUPPORT_DIR, METRIC_DIR, CONTEXT_DIR, WEATHER_DIR, "data/derived/core", "logs")) {
+for (d in c(SUPPORT_DIR, METRIC_DIR, CONTEXT_DIR, WEATHER_DIR, DURATION_PART_DIR, CORE_ROOT, "results/diagnostics", "results/logs")) {
   dir.create(d, recursive = TRUE, showWarnings = FALSE)
+}
+write_core_csv <- function(x, path) {
+  x <- as.data.frame(x)
+  if (grepl("\\.gz$", path)) {
+    con <- gzfile(path, open = "wt")
+    utils::write.csv(x, con, row.names = FALSE, na = "")
+    close(con)
+  } else {
+    utils::write.csv(x, path, row.names = FALSE, na = "")
+  }
 }
 message("Core artifact build: version=", CORE_VERSION, ", R ", getRversion(), ", workers=", workers, ", force=", force_rebuild)
 
@@ -66,6 +80,8 @@ parallel_core_lapply <- function(X, FUN, exports = character()) {
     source("scripts/utils/core_artifacts.R")
     source("scripts/utils/core_temporal_sampling.R")
     source("scripts/utils/core_context.R")
+    source("scripts/utils/protocol_windows.R")
+    source("scripts/utils/duration_artifacts.R")
     source("scripts/utils/weather_era5.R")
     NULL
   }, root)
@@ -77,6 +93,95 @@ parallel_core_lapply <- function(X, FUN, exports = character()) {
 metric_types <- read_excel("external/zauner_position/data/metric_types.xlsx") |>
   transmute(metric = name, metric_class = metric_type)
 if (n_distinct(metric_types$metric) != 54L) stop("Expected 54 metric definitions")
+
+emit_duration_artifacts <- function(duration_artifacts) {
+  duration_manifest <- duration_artifacts$manifest
+  duration_metric_cube <- duration_artifacts$cube
+  if (nrow(duration_manifest)) {
+    saveRDS(duration_manifest, file.path(CORE_ROOT, "duration_window_manifest.rds"), compress = "xz")
+    write_core_csv(duration_manifest |>
+      dplyr::mutate(member_dates = purrr::map_chr(member_dates, ~paste(as.character(.x), collapse = ";"))),
+      file.path(CORE_ROOT, "duration_window_manifest.csv"))
+  } else {
+    saveRDS(duration_manifest, file.path(CORE_ROOT, "duration_window_manifest.rds"), compress = "xz")
+  }
+  if (duration_cube_is_partitioned(duration_metric_cube)) {
+    duration_metric_cube$core_artifact_version <- CORE_VERSION
+    saveRDS(duration_metric_cube, file.path(CORE_ROOT, "duration_metric_cube.rds"), compress = "xz")
+    part_manifest <- duration_metric_cube$part_manifest |>
+      dplyr::mutate(
+        artifact_type = duration_metric_cube$artifact_type,
+        core_artifact_version = CORE_VERSION,
+        duration_artifact_version = duration_metric_cube$duration_artifact_version,
+        .before = 1
+      )
+    write_core_csv(part_manifest, file.path(CORE_ROOT, "duration_metric_cube.csv.gz"))
+    write_core_csv(part_manifest, file.path(CORE_ROOT, "duration_metric_cube_parts.csv"))
+    duration_rows <- sum(part_manifest$rows, na.rm = TRUE)
+    # Part keys are validated while each part is materialised; do not read all
+    # large parts back merely to repeat the same check at manifest time.
+  } else {
+    duration_metric_cube <- duration_metric_cube |>
+      dplyr::mutate(core_artifact_version = CORE_VERSION, .before = 1)
+    saveRDS(duration_metric_cube, file.path(CORE_ROOT, "duration_metric_cube.rds"), compress = "xz")
+    write_core_csv(duration_metric_cube, file.path(CORE_ROOT, "duration_metric_cube.csv.gz"))
+    duration_rows <- nrow(duration_metric_cube)
+    if (nrow(duration_metric_cube)) {
+      duration_key <- c("support_id", "site", "Id", "window_id", "placement", "optical", "resolution_s", "metric")
+      if (anyDuplicated(duration_metric_cube[duration_key])) stop("Duplicate scientific keys in duration_metric_cube")
+    }
+  }
+  write_core_csv(duration_artifacts$audit, file.path("results", "diagnostics", "duration_cohort_audit.csv"))
+  attr(duration_metric_cube, "duration_rows") <- duration_rows
+  duration_metric_cube
+}
+
+# Keep the key/value manifest synchronized when only the durable duration stage
+# is resumed after the expensive support/metric/context stage already exists.
+write_core_manifest <- function() {
+  manifest <- tibble(
+    key = c(
+      "core_artifact_version", "temporal_operator", "source_grid_s",
+      "primary_resolutions_s", "reserve_resolutions_s", "duration_primary_domain",
+      "duration_operator", "duration_window_artifact"
+    ),
+    value = c(
+      CORE_VERSION,
+      "participant-source-grid-phase-anchored systematic sparse subsampling; retained source values unchanged; no bin averaging or interpolation",
+      "10",
+      paste(core_primary_resolutions(), collapse = ","),
+      paste(core_reserve_resolutions(), collapse = ","),
+      "1-6 complete analysis days from consecutive complete-day runs",
+      "daily metrics aggregated from participant-day cube; IS/IV rebuilt from exact selected dates using stored hourly basis",
+      "duration_window_manifest + partitioned duration_metric_cube manifest and RDS parts"
+    )
+  )
+  write_core_csv(manifest, file.path(CORE_ROOT, "core_manifest.csv"))
+}
+
+# A killed process no longer requires re-running extraction and all support
+# blocks.  Set CORE_DURATION_ONLY=1 to resume the durable duration stage from
+# already-materialised v3 core files on either Windows or Linux.
+if (identical(Sys.getenv("CORE_DURATION_ONLY", unset = "0"), "1")) {
+  metric_path <- file.path(CORE_ROOT, "metric_cube.csv.gz")
+  context_path <- file.path(CORE_ROOT, "unit_context.csv.gz")
+  if (!file.exists(metric_path) || !file.exists(context_path)) {
+    stop("CORE_DURATION_ONLY=1 requires results/core/metric_cube.csv.gz and unit_context.csv.gz")
+  }
+  message("[duration-only] reading durable v3 core inputs")
+  metric_cube <- readr::read_csv(metric_path, show_col_types = FALSE, progress = FALSE) |>
+    dplyr::mutate(Date = as.Date(Date))
+  unit_context <- readr::read_csv(context_path, show_col_types = FALSE, progress = FALSE) |>
+    dplyr::mutate(Date = as.Date(Date))
+  if (!all(unique(na.omit(metric_cube$core_artifact_version)) == CORE_VERSION)) {
+    stop("CORE_DURATION_ONLY inputs do not match current core version: ", CORE_VERSION)
+  }
+  duration_artifacts <- build_duration_metric_cube(metric_cube, unit_context, metric_types, max_days = 6L, part_dir = DURATION_PART_DIR, reuse_parts = !force_rebuild)
+  invisible(emit_duration_artifacts(duration_artifacts))
+  write_core_manifest()
+  message("Done: duration artifacts resumed for ", CORE_VERSION)
+  quit(save = "no", status = 0)
+}
 
 site_meta <- core_site_metadata()
 expected_weather_files <- file.path("data", "raw", "era5", paste0(site_meta$site, ".csv"))
@@ -111,8 +216,11 @@ weather_daily <- map_dfr(weather_daily_paths, readRDS)
 weather_1min <- map_dfr(weather_minute_paths, readRDS) |>
   mutate(core_artifact_version = CORE_VERSION, .before = 1)
 weather_qc <- map_dfr(weather_qc_paths, readRDS)
-readr::write_csv(weather_1min, "data/derived/core/weather_1min.csv.gz", na = "")
-readr::write_csv(weather_qc, "logs/era5_qc.csv", na = "")
+# readr/vroom on the pinned Windows runtime can reject POSIXct raw-backed
+# columns in this large table; base write.csv over a gz connection is equivalent
+# and keeps the weather artifact portable.
+utils::write.csv(weather_1min, gzfile(file.path(CORE_ROOT, "weather_1min.csv.gz")), row.names = FALSE, na = "")
+write_core_csv(weather_qc, file.path("results", "logs", "era5_qc.csv"))
 
 # Stage 1: explicit support lattices.
 message("[supports] prepare explicit comparison supports")
@@ -164,7 +272,7 @@ temporal_audit <- map_dfr(setdiff(core_all_resolutions(), 10L), function(r) {
     retained_MEDI_exact_pass = medi_value_pass, retained_LIGHT_exact_pass = light_value_pass
   )
 })
-readr::write_csv(temporal_audit, "logs/core_temporal_sampling_audit.csv", na = "")
+write_core_csv(temporal_audit, file.path("results", "logs", "core_temporal_sampling_audit.csv"))
 
 # Stage 2: configuration-level metrics/context. The versioned directory is the
 # cache key, so pre-v2 mean-binned artifacts can never be silently reused.
@@ -202,11 +310,11 @@ duplicate_metric_keys <- metric_cube |>
   summarise(n = n(), .groups = "drop") |>
   filter(n > 1L)
 if (nrow(duplicate_metric_keys)) {
-  write.csv(duplicate_metric_keys, "logs/core_metric_duplicate_keys.csv", row.names = FALSE)
+  write.csv(duplicate_metric_keys, file.path("results", "logs", "core_metric_duplicate_keys.csv"), row.names = FALSE)
   stop("Duplicate scientific keys in metric_cube")
 }
 if (any(metric_cube$resolution_s == 15L)) stop("15-s configuration survived into v2 metric cube")
-readr::write_csv(metric_cube, "data/derived/core/metric_cube.csv.gz", na = "")
+write_core_csv(metric_cube, file.path(CORE_ROOT, "metric_cube.csv.gz"))
 
 # Stage 4: daily configuration context, including protocol dates.
 config_context <- map_dfr(context_paths, readRDS)
@@ -255,49 +363,43 @@ duplicate_context_keys <- unit_context |>
   summarise(n = n(), .groups = "drop") |>
   filter(n > 1L)
 if (nrow(duplicate_context_keys)) {
-  write.csv(duplicate_context_keys, "logs/core_context_duplicate_keys.csv", row.names = FALSE)
+  write.csv(duplicate_context_keys, file.path("results", "logs", "core_context_duplicate_keys.csv"), row.names = FALSE)
   stop("Duplicate scientific keys in unit_context")
 }
 if (any(unit_context$resolution_s == 15L)) stop("15-s configuration survived into v2 unit_context")
-readr::write_csv(unit_context, "data/derived/core/unit_context.csv.gz", na = "")
+write_core_csv(unit_context, file.path(CORE_ROOT, "unit_context.csv.gz"))
 
 missing_study_weather <- unit_context |>
   filter(!era5_context_available) |>
   distinct(site, Date) |>
   arrange(site, Date)
-write.csv(missing_study_weather, "logs/era5_missing_study_dates.csv", row.names = FALSE)
+write.csv(missing_study_weather, file.path("results", "logs", "era5_missing_study_dates.csv"), row.names = FALSE)
 
-# Version/fingerprint manifest. Downstream scripts use this to reject stale caches.
-manifest <- tibble(
-  key = c(
-    "core_artifact_version", "temporal_operator", "source_grid_s",
-    "primary_resolutions_s", "reserve_resolutions_s", "duration_protocol_metadata"
-  ),
-  value = c(
-    CORE_VERSION,
-    "participant-source-grid-phase-anchored systematic sparse subsampling; retained source values unchanged; no bin averaging or interpolation",
-    "10",
-    paste(core_primary_resolutions(), collapse = ","),
-    paste(core_reserve_resolutions(), collapse = ","),
-    "MeLiDos trial_times (datetime_trial_start/end); protocol calendar Days 1-7 fixed downstream; later return-day dates cannot substitute"
-  )
-)
-readr::write_csv(manifest, "data/derived/core/core_manifest.csv", na = "")
+# Stage 5: complete-analysis-day duration artifact. This is intentionally built
+# from durable participant-day values plus the stored hourly IS/IV basis; it does
+# not revisit raw 10-s observations or redefine daily metric operators.
+message("[duration] complete-day runs and 1-6 d windows")
+duration_artifacts <- build_duration_metric_cube(metric_cube, unit_context, metric_types, max_days = 6L, part_dir = DURATION_PART_DIR, reuse_parts = !force_rebuild)
+duration_metric_cube <- emit_duration_artifacts(duration_artifacts)
+
+write_core_manifest()
 
 n_metric_participants <- metric_cube |> distinct(site, Id) |> nrow()
 n_context_participants <- unit_context |> distinct(site, Id) |> nrow()
 diag <- tibble(
-  artifact = c("metric_cube", "unit_context", "weather_1min"),
-  rows = c(nrow(metric_cube), nrow(unit_context), nrow(weather_1min)),
+  artifact = c("metric_cube", "unit_context", "duration_metric_cube", "weather_1min"),
+  rows = c(nrow(metric_cube), nrow(unit_context), attr(duration_metric_cube, "duration_rows"), nrow(weather_1min)),
   participants = c(n_metric_participants, n_context_participants, NA_integer_),
   sites = c(n_distinct(metric_cube$site), n_distinct(unit_context$site), n_distinct(weather_1min$site)),
   core_artifact_version = CORE_VERSION
 )
-write.csv(diag, "logs/core_artifact_summary.csv", row.names = FALSE)
-writeLines(capture.output(sessionInfo()), "logs/sessionInfo_core_artifacts.txt")
+write.csv(diag, file.path("results", "logs", "core_artifact_summary.csv"), row.names = FALSE)
+writeLines(capture.output(sessionInfo()), file.path("results", "logs", "sessionInfo_core_artifacts.txt"))
 
 message("Done: ", CORE_VERSION)
-message("  data/derived/core/metric_cube.csv.gz")
-message("  data/derived/core/unit_context.csv.gz")
-message("  data/derived/core/weather_1min.csv.gz")
-message("  data/derived/core/core_manifest.csv")
+message("  results/core/metric_cube.csv.gz")
+message("  results/core/unit_context.csv.gz")
+message("  results/core/duration_metric_cube.rds")
+message("  results/core/duration_window_manifest.rds")
+message("  results/core/weather_1min.csv.gz")
+message("  results/core/core_manifest.csv")

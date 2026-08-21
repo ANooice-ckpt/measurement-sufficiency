@@ -1,431 +1,561 @@
-suppressPackageStartupMessages({
-  library(tidyverse)
-  library(LightLogR)
-})
+suppressPackageStartupMessages(library(tidyverse))
 source("scripts/utils/protocol_windows.R")
+source("scripts/utils/paths.R")
+source("scripts/utils/duration_artifacts.R")
+source("scripts/utils/parallel_runtime.R")
+source("scripts/utils/rq1_pairwise_artifacts.R")
 
-# RQ1 downstream analysis. Inputs are durable core artifacts only.
-CORE_METRICS <- "data/derived/core/metric_cube.csv.gz"
-CORE_CONTEXT <- "data/derived/core/unit_context.csv.gz"
-OUT_DATA <- "data/derived/rq1"
-OUT_RESULTS <- "results/rq1"
-OUT_DIAG <- "results/diagnostics"
-
+# RQ1 canonical object: pairwise representation change between two observed
+# configuration states.  Orientation is unique: state_a is the less demanding
+# state for ordered dimensions (coarser temporal sampling / shorter duration),
+# state_b is the more demanding state; delta = value_a - value_b.  Placement and
+# optical pairs use the explicit left-to-right facet orientation documented below.
+CORE_ROOT <- file.path("results", "core")
+CORE_METRICS <- file.path(CORE_ROOT, "metric_cube.csv.gz")
+DURATION_CUBE <- file.path(CORE_ROOT, "duration_metric_cube.rds")
+DURATION_MANIFEST <- file.path(CORE_ROOT, "duration_window_manifest.rds")
+OUT <- file.path("results", "rq1")
+DIAG <- file.path("results", "diagnostics")
 B_BOOT <- suppressWarnings(as.integer(Sys.getenv("RQ1_BOOT", unset = "1000")))
 if (!is.finite(B_BOOT) || B_BOOT < 0L) B_BOOT <- 1000L
+BOOT_WORKERS <- ms_resolve_workers("RQ1_BOOT_WORKERS", default = 1L, cap = 48L)
+rq1_default_part_workers <- function() {
+  logical <- suppressWarnings(parallel::detectCores(logical = TRUE))
+  physical <- suppressWarnings(parallel::detectCores(logical = FALSE))
+  detected <- if (is.finite(physical) && physical > 0) physical else logical
+  if (!is.finite(detected) || detected < 1) return(1L)
+  max(1L, min(24L, as.integer(floor(detected / 2))))
+}
+PART_WORKERS <- ms_resolve_workers("RQ1_PART_WORKERS", default = rq1_default_part_workers(), cap = 48L)
 BOOT_SEED <- 20260820L
-PRIMARY_TEMPORAL_S <- c(20L, 30L, 60L, 300L, 900L, 1800L)
+PRIMARY_TEMPORAL_S <- c(10L, 20L, 30L, 60L, 300L, 900L, 1800L)
 DUAL_CHANNEL_METRICS <- c("MDER", "nvRD")
 ISIV_METRICS <- c("interdaily_stability", "intradaily_variability")
 NUMERIC_TOL <- 1e-12
 
-for (p in c(CORE_METRICS, CORE_CONTEXT)) if (!file.exists(p)) stop("Missing required core artifact: ", p)
-for (d in c(OUT_DATA, OUT_RESULTS, OUT_DIAG)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
+for (p in c(CORE_METRICS, DURATION_CUBE, DURATION_MANIFEST)) if (!file.exists(p)) stop("Missing required core artifact: ", p)
+ensure_result_dirs(OUT, DIAG)
 
-message("RQ1: read versioned core artifacts")
-cube <- readr::read_csv(CORE_METRICS, show_col_types = FALSE, progress = FALSE) |> mutate(Date = as.Date(Date))
-context <- readr::read_csv(CORE_CONTEXT, show_col_types = FALSE, progress = FALSE) |>
-  mutate(
-    Date = as.Date(Date), protocol_start_date = as.Date(protocol_start_date),
-    protocol_end_date = as.Date(protocol_end_date)
-  )
-
-required_cube <- c(
-  "core_artifact_version", "support_id", "site", "Id", "analysis_unit_type", "analysis_unit_id", "Date",
-  "placement", "optical", "resolution_s", "is_primary_resolution", "config_id",
-  "metric", "metric_class", "metric_scope", "metric_geometry", "value", "available", "unavailable_reason"
-)
-required_context <- c(
-  "core_artifact_version", "support_id", "site", "Id", "Date", "placement", "optical", "resolution_s",
-  "config_id", "support_valid_day_count", "protocol_start", "protocol_end",
-  "protocol_start_date", "protocol_end_date", "protocol_metadata_available"
-)
-miss_cube <- setdiff(required_cube, names(cube)); miss_context <- setdiff(required_context, names(context))
-if (length(miss_cube)) stop("metric_cube missing columns: ", paste(miss_cube, collapse = ", "))
-if (length(miss_context)) stop("unit_context missing columns: ", paste(miss_context, collapse = ", "))
-core_versions <- union(unique(cube$core_artifact_version), unique(context$core_artifact_version))
-core_versions <- core_versions[!is.na(core_versions)]
-if (length(core_versions) != 1L) stop("Core artifact version mismatch: ", paste(core_versions, collapse = ", "))
+cube <- readr::read_csv(CORE_METRICS, show_col_types = FALSE, progress = FALSE) |>
+  mutate(Date = as.Date(Date))
+duration_artifact <- readRDS(DURATION_CUBE)
+duration_part_paths <- if (duration_cube_is_partitioned(duration_artifact)) {
+  file.path(duration_artifact$part_dir, duration_artifact$parts)
+} else {
+  character()
+}
+duration_manifest <- readRDS(DURATION_MANIFEST) |>
+  mutate(window_start = as.Date(window_start), window_end = as.Date(window_end))
+core_versions <- unique(na.omit(c(cube$core_artifact_version, duration_artifact$core_artifact_version)))
+if (length(core_versions) != 1L) stop("Core artifact version mismatch")
 CORE_VERSION <- core_versions[[1]]
-RQ1_ANALYSIS_VERSION <- paste0("rq1_v3_first7valid__", CORE_VERSION)
-if (any(cube$resolution_s == 15L) || any(context$resolution_s == 15L)) stop("Stale 15-s core artifact detected; rebuild v2 core")
-if (!all(c(10L, PRIMARY_TEMPORAL_S) %in% unique(cube$resolution_s))) stop("Core artifact lacks one or more primary temporal resolutions")
-
+if (any(cube$resolution_s == 15L)) stop("15-s state detected")
+if (!all(PRIMARY_TEMPORAL_S %in% unique(cube$resolution_s))) stop("Primary temporal state missing")
 metric_meta <- cube |> distinct(metric, metric_class, metric_scope, metric_geometry)
 if (n_distinct(metric_meta$metric) != 54L) stop("Expected 54 target metrics")
+RQ1_ANALYSIS_VERSION <- paste0("rq1_v5_adaptive_partitioned_pairwise_config_keyed__", CORE_VERSION)
 
-temporal_label <- function(x) case_when(x < 60L ~ paste0(x, " s"), x %% 60L == 0L ~ paste0(x %/% 60L, " min"), TRUE ~ paste0(x, " s"))
-short_temporal_code <- function(x) case_when(x < 60L ~ paste0(x, "s"), x %% 60L == 0L ~ paste0(x %/% 60L, "min"), TRUE ~ paste0(x, "s"))
+temporal_label <- function(x) case_when(
+  x < 60L ~ paste0(x, " s"), x %% 60L == 0L ~ paste0(x %/% 60L, " min"), TRUE ~ paste0(x, " s")
+)
 circular_delta <- function(a, b, period = 86400) ((a - b + period / 2) %% period) - period / 2
 circular_mean <- function(x, period = 86400) {
   x <- x[is.finite(x)]; if (!length(x)) return(NA_real_)
-  th <- 2*pi*x/period; (atan2(mean(sin(th)), mean(cos(th))) %% (2*pi))*period/(2*pi)
+  th <- 2 * pi * x / period
+  (atan2(mean(sin(th)), mean(cos(th))) %% (2 * pi)) * period / (2 * pi)
 }
-aggregate_daily_representation <- function(x, geometry) {
-  if (!length(x) || any(!is.finite(x))) return(NA_real_)
-  if (identical(geometry, "circular_time")) circular_mean(x) else mean(x)
-}
-reference_scale <- function(x, geometry) {
+scale_primary <- function(x, geometry) {
   x <- x[is.finite(x)]; if (length(x) < 2L) return(NA_real_)
-  if (identical(geometry, "circular_time")) {
-    center <- circular_mean(x); return(stats::sd(circular_delta(x, center)))
-  }
-  stats::sd(x)
+  if (identical(geometry, "circular_time")) stats::sd(circular_delta(x, circular_mean(x))) else stats::sd(x)
 }
-robust_reference_scale <- function(x, geometry) {
+scale_robust <- function(x, geometry) {
   x <- x[is.finite(x)]; if (length(x) < 2L) return(NA_real_)
-  z <- if (identical(geometry, "circular_time")) circular_delta(x, circular_mean(x)) else x
-  s <- stats::IQR(z, na.rm = TRUE, type = 7) / 1.349
+  if (identical(geometry, "circular_time")) x <- circular_delta(x, circular_mean(x))
+  s <- stats::IQR(x, na.rm = TRUE, type = 7) / 1.349
   if (is.finite(s) && s > sqrt(.Machine$double.eps)) s else NA_real_
 }
-safe_quantile <- function(x, p) {
-  x <- x[is.finite(x)]; if (!length(x)) return(NA_real_)
-  unname(stats::quantile(x, p, names = FALSE, type = 7))
-}
-choose_metric_support <- function(df, medi_support, full_support) {
-  df |> filter((metric %in% DUAL_CHANNEL_METRICS & support_id == full_support) |
-                (!metric %in% DUAL_CHANNEL_METRICS & support_id == medi_support))
+safe_q <- function(x, p) { x <- x[is.finite(x)]; if (length(x)) unname(stats::quantile(x, p, names = FALSE)) else NA_real_ }
+
+bootstrap_pair_group <- function(task) {
+  group <- task$group
+  reps <- task$reps
+  participants <- unique(group[c("site", "Id")])
+  if (!reps || !nrow(group) || !nrow(participants)) {
+    return(tibble(A_boot_q025 = NA_real_, A_boot_q975 = NA_real_,
+                  B_boot_q025 = NA_real_, B_boot_q975 = NA_real_,
+                  bootstrap_reps = 0L, bootstrap_sites = n_distinct(group$site),
+                  bootstrap_participants = nrow(participants)))
+  }
+  set.seed(task$seed)
+  a <- b <- rep(NA_real_, reps)
+  for (j in seq_len(reps)) {
+    sampled <- split(participants$Id, participants$site) |>
+      lapply(function(ids) sample(ids, length(ids), replace = TRUE))
+    sampled <- tibble(site = rep(names(sampled), lengths(sampled)), Id = unlist(sampled, use.names = FALSE))
+    boot <- merge(sampled, group, by = c("site", "Id"), all = FALSE, sort = FALSE)
+    z <- boot$z[is.finite(boot$z)]
+    if (length(z)) { a[[j]] <- mean(abs(z)); b[[j]] <- mean(z) }
+  }
+  tibble(
+    A_boot_q025 = safe_q(a, .025), A_boot_q975 = safe_q(a, .975),
+    B_boot_q025 = safe_q(b, .025), B_boot_q975 = safe_q(b, .975),
+    bootstrap_reps = sum(is.finite(a) & is.finite(b)),
+    bootstrap_sites = n_distinct(group$site), bootstrap_participants = nrow(participants)
+  )
 }
 
-pair_core_values <- function(candidate, reference, dimension, configuration, configuration_label,
-                             configuration_order, comparison_lattice, reference_configuration,
-                             ordered_dimension = FALSE) {
-  keys <- c("support_id", "site", "Id", "analysis_unit_type", "analysis_unit_id", "Date", "metric")
-  cnd <- candidate |> select(all_of(keys), metric_class, metric_scope, metric_geometry,
-                             candidate_config_id = config_id, candidate_value = value,
-                             candidate_available = available, candidate_unavailable_reason = unavailable_reason)
-  ref <- reference |> select(all_of(keys), reference_config_id = config_id, reference_value = value,
-                             reference_available = available, reference_unavailable_reason = unavailable_reason)
-  inner_join(cnd, ref, by = keys) |>
+choose_metric_support <- function(df, medi_support, full_support) {
+  df |> filter((metric %in% DUAL_CHANNEL_METRICS & support_id == full_support) |
+                 (!metric %in% DUAL_CHANNEL_METRICS & support_id == medi_support))
+}
+
+pair_configuration_values <- function(state_a, state_b, dimension, lattice, pair_id,
+                                      config_a_label, config_b_label,
+                                      ordered_dimension = FALSE, adjacent = FALSE,
+                                      anchor_projection = FALSE, relation = "unordered") {
+  keys <- c("support_id", "site", "Id", "analysis_unit_type", "Date", "metric")
+  a <- state_a |>
+    select(all_of(keys), metric_class, metric_scope, metric_geometry,
+           analysis_unit_id_a = analysis_unit_id, config_a_id = config_id, value_a = value, available_a = available,
+           unavailable_reason_a = unavailable_reason)
+  b <- state_b |>
+    select(all_of(keys), analysis_unit_id_b = analysis_unit_id, config_b_id = config_id, value_b = value, available_b = available,
+           unavailable_reason_b = unavailable_reason)
+  inner_join(a, b, by = keys, relationship = "many-to-many") |>
     mutate(
-      dimension = dimension, configuration = configuration, configuration_label = configuration_label,
-      configuration_order = configuration_order, ordered_dimension = ordered_dimension,
-      comparison_lattice = comparison_lattice, reference_configuration = reference_configuration,
-      reference_unit_id = analysis_unit_id, reference_id = NA_character_,
-      reference_window_start = as.Date(NA), reference_window_end = as.Date(NA),
-      window_id = NA_character_, window_index = NA_integer_, window_start = as.Date(NA), window_end = as.Date(NA),
-      n_days = NA_integer_, pair_available = candidate_available & reference_available & is.finite(candidate_value) & is.finite(reference_value),
+      dimension = dimension, comparison_lattice = lattice, comparison_pair_id = pair_id,
+      config_a_label = config_a_label, config_b_label = config_b_label,
+      ordered_dimension = ordered_dimension, adjacent_transition = adjacent,
+      anchor_projection = anchor_projection, requirement_relation = relation,
+      window_id_a = NA_character_, window_id_b = NA_character_,
+      n_days_a = NA_integer_, n_days_b = NA_integer_,
+      pair_available = coalesce(available_a, FALSE) & coalesce(available_b, FALSE) &
+        is.finite(value_a) & is.finite(value_b),
       pair_unavailable_reason = case_when(
-        !reference_available | !is.finite(reference_value) ~ coalesce(reference_unavailable_reason, "reference representation unavailable"),
-        !candidate_available | !is.finite(candidate_value) ~ coalesce(candidate_unavailable_reason, "candidate representation unavailable"),
+        !coalesce(available_a, FALSE) | !is.finite(value_a) ~ coalesce(unavailable_reason_a, "state_a unavailable"),
+        !coalesce(available_b, FALSE) | !is.finite(value_b) ~ coalesce(unavailable_reason_b, "state_b unavailable"),
         TRUE ~ NA_character_
       )
     ) |>
-    select(dimension, configuration, configuration_label, configuration_order, ordered_dimension,
-           comparison_lattice, reference_configuration, support_id, site, Id, analysis_unit_type,
-           analysis_unit_id, reference_unit_id, reference_id, Date, reference_window_start, reference_window_end,
-           window_id, window_index, window_start, window_end, n_days, metric, metric_class, metric_scope,
-           metric_geometry, candidate_config_id, reference_config_id, reference_value, candidate_value,
-           pair_available, pair_unavailable_reason)
+    select(
+      dimension, comparison_lattice, comparison_pair_id, config_a_id, config_b_id,
+      config_a_label, config_b_label, ordered_dimension, adjacent_transition,
+      anchor_projection, requirement_relation, support_id, site, Id, analysis_unit_type,
+      analysis_unit_id_a, analysis_unit_id_b, Date, window_id_a, window_id_b, n_days_a, n_days_b,
+      metric, metric_class, metric_scope, metric_geometry, value_a, value_b,
+      available_a, available_b, pair_available, pair_unavailable_reason
+    )
 }
 
-message("RQ1: placement, optical, and temporal comparison lattices")
 placement_pairs <- map_dfr(c("chest", "wrist"), function(pos) {
   medi_support <- paste0("eye_", pos, "_medi"); full_support <- paste0("eye_", pos, "_full")
   z <- cube |>
     filter(support_id %in% c(medi_support, full_support), placement %in% c("eye", pos), optical == "MEDI", resolution_s == 10L) |>
     choose_metric_support(medi_support, full_support)
-  pair_core_values(z |> filter(placement == pos), z |> filter(placement == "eye"),
-                   "placement", pos, stringr::str_to_title(pos), match(pos, c("chest", "wrist")),
-                   paste0("placement_", pos), "Eye MEDI, 10 s", FALSE)
+  pair_configuration_values(
+    z |> filter(placement == pos), z |> filter(placement == "eye"), "placement",
+    paste0("placement_", pos), paste0(pos, "_vs_eye"), stringr::str_to_title(pos), "Eye",
+    relation = "unordered_facet"
+  )
 })
 
 optical_base <- cube |> filter(support_id == "eye_full", placement == "eye", optical %in% c("MEDI", "LIGHT"), resolution_s == 10L)
-optical_pairs <- pair_core_values(
+optical_pairs <- pair_configuration_values(
   optical_base |> filter(optical == "LIGHT"), optical_base |> filter(optical == "MEDI"),
-  "optical", "LIGHT", "Photopic illuminance", 1L, "optical", "Eye MEDI, 10 s", FALSE
+  "optical", "optical", "LIGHT_vs_MEDI", "LIGHT", "MEDI", relation = "unordered_facet"
 )
 
-temporal_pairs <- map_dfr(seq_along(PRIMARY_TEMPORAL_S), function(j) {
-  r <- PRIMARY_TEMPORAL_S[j]
+temporal_pairs <- map_dfr(combn(PRIMARY_TEMPORAL_S, 2L, simplify = FALSE), function(x) {
+  coarse <- max(x); fine <- min(x); adjacent <- abs(match(coarse, PRIMARY_TEMPORAL_S) - match(fine, PRIMARY_TEMPORAL_S)) == 1L
   z <- cube |>
-    filter(support_id %in% c("eye_medi", "eye_full"), placement == "eye", optical == "MEDI", resolution_s %in% c(10L, r)) |>
+    filter(support_id %in% c("eye_medi", "eye_full"), placement == "eye", optical == "MEDI", resolution_s %in% x) |>
     choose_metric_support("eye_medi", "eye_full")
-  pair_core_values(z |> filter(resolution_s == r), z |> filter(resolution_s == 10L),
-                   "temporal", short_temporal_code(r), temporal_label(r), j, "temporal", "Eye MEDI, 10 s", TRUE)
+  pair_configuration_values(
+    z |> filter(resolution_s == coarse), z |> filter(resolution_s == fine), "temporal", "temporal",
+    paste0(coarse, "s_vs_", fine, "s"), temporal_label(coarse), temporal_label(fine),
+    ordered_dimension = TRUE, adjacent = adjacent, anchor_projection = fine == 10L,
+    relation = "a_coarser_than_b"
+  )
 })
 
-message("RQ1: protocol-anchored monitoring-duration representations")
-duration_context <- context |>
-  filter(support_id %in% c("eye_medi", "eye_full"), placement == "eye", optical == "MEDI", resolution_s == 10L) |>
-  distinct(support_id, site, Id, Date, .keep_all = TRUE)
-duration_cohort <- protocol_reference_cohort(duration_context)
-readr::write_csv(protocol_reference_audit_table(duration_cohort), file.path(OUT_DIAG, "rq1_duration_cohort_audit.csv"), na = "")
-eligible_duration <- duration_cohort |> filter(eligible_protocol_7)
-duration_windows <- make_protocol_duration_windows(eligible_duration, include_reference = FALSE)
-if (nrow(duration_windows)) {
-  readr::write_csv(duration_windows |>
-    mutate(selected_dates = map_chr(selected_dates, ~paste(as.character(.x), collapse = ";")),
-           reference_dates = map_chr(reference_dates, ~paste(as.character(.x), collapse = ";"))),
-    file.path(OUT_DIAG, "rq1_duration_windows.csv"), na = "")
-} else {
-  readr::write_csv(tibble(), file.path(OUT_DIAG, "rq1_duration_windows.csv"))
-}
-
-# 52 participant-day target representations.
-duration_daily <- cube |>
-  filter(support_id %in% c("eye_medi", "eye_full"), placement == "eye", optical == "MEDI", resolution_s == 10L,
-         analysis_unit_type == "participant_day", !metric %in% ISIV_METRICS) |>
-  choose_metric_support("eye_medi", "eye_full") |>
-  semi_join(eligible_duration |> select(support_id, site, Id), by = c("support_id", "site", "Id"))
-
-daily_ref_list <- vector("list", nrow(eligible_duration))
-for (i in seq_len(nrow(eligible_duration))) {
-  u <- eligible_duration[i, ]; dates <- u$reference_dates[[1]]
-  daily_ref_list[[i]] <- duration_daily |>
-    filter(support_id == u$support_id, site == u$site, Id == u$Id, Date %in% dates) |>
-    group_by(support_id, site, Id, metric, metric_class, metric_scope, metric_geometry) |>
-    summarise(
-      n_days_present = n_distinct(Date),
-      reference_available = n_days_present == 7L && all(replace_na(available, FALSE) & is.finite(value)),
-      reference_value = if (n_days_present == 7L && all(replace_na(available, FALSE) & is.finite(value)))
-        aggregate_daily_representation(value, first(metric_geometry)) else NA_real_,
-      .groups = "drop"
-    ) |>
-    mutate(reference_id = u$reference_id, reference_window_start = u$reference_start,
-           reference_window_end = u$reference_end,
-           reference_unavailable_reason = if_else(reference_available, NA_character_, "one or more protocol reference-day representations unavailable"))
-}
-duration_daily_ref <- bind_rows(daily_ref_list)
-
-duration_daily_pairs_list <- vector("list", nrow(duration_windows))
-for (i in seq_len(nrow(duration_windows))) {
-  w <- duration_windows[i, ]; selected <- w$selected_dates[[1]]
-  duration_daily_pairs_list[[i]] <- duration_daily |>
-    filter(support_id == w$support_id, site == w$site, Id == w$Id, Date %in% selected) |>
-    group_by(support_id, site, Id, metric, metric_class, metric_scope, metric_geometry) |>
-    summarise(
-      n_days_present = n_distinct(Date),
-      candidate_available = n_days_present == w$n_days && all(replace_na(available, FALSE) & is.finite(value)),
-      candidate_value = if (n_days_present == w$n_days && all(replace_na(available, FALSE) & is.finite(value)))
-        aggregate_daily_representation(value, first(metric_geometry)) else NA_real_,
-      .groups = "drop"
-    ) |>
-    left_join(duration_daily_ref |> filter(reference_id == w$reference_id),
-              by = c("support_id", "site", "Id", "metric", "metric_class", "metric_scope", "metric_geometry")) |>
-    transmute(
-      dimension = "duration", configuration = paste0(w$n_days, "d"), configuration_label = paste0(w$n_days, " d"),
-      configuration_order = 7L - w$n_days, ordered_dimension = TRUE, comparison_lattice = "duration",
-      reference_configuration = "7 protocol-anchored days", support_id, site, Id,
-      analysis_unit_type = "participant_window", analysis_unit_id = w$window_id,
-      reference_unit_id = w$reference_id, reference_id = w$reference_id, Date = as.Date(NA),
-      reference_window_start = w$reference_start, reference_window_end = w$reference_end,
-      window_id = w$window_id, window_index = w$window_index, window_start = w$window_start,
-      window_end = w$window_end, n_days = w$n_days, metric, metric_class, metric_scope, metric_geometry,
-      candidate_config_id = paste0("duration_", w$n_days, "d"), reference_config_id = "duration_protocol_7d",
-      reference_value, candidate_value,
-      pair_available = candidate_available & reference_available & is.finite(candidate_value) & is.finite(reference_value),
-      pair_unavailable_reason = case_when(
-        !reference_available | !is.finite(reference_value) ~ reference_unavailable_reason,
-        !candidate_available | !is.finite(candidate_value) ~ "one or more candidate-day representations unavailable",
-        TRUE ~ NA_character_
-      )
-    )
-}
-duration_daily_pairs <- bind_rows(duration_daily_pairs_list)
-
-# IS/IV are rebuilt from the stored hourly basis over exactly the selected dates.
-hour_cols <- grep("^isiv_h\\d\\d$", names(context), value = TRUE)
-if (length(hour_cols) != 24L) stop("Expected isiv_h00-isiv_h23 in unit_context")
-isiv_from_basis <- function(x) {
-  long <- x |> select(Date, all_of(hour_cols)) |>
-    pivot_longer(all_of(hour_cols), names_to = "hour_name", values_to = "hourly_log_light") |>
-    mutate(hour = as.integer(sub("^isiv_h", "", hour_name)),
-           Datetime = as.POSIXct(as.numeric(Date)*86400 + hour*3600, origin = "1970-01-01", tz = "UTC")) |>
-    arrange(Datetime)
-  is <- tryCatch(suppressWarnings(LightLogR::interdaily_stability(long$hourly_log_light, long$Datetime, na.rm = TRUE, as.df = FALSE)), error = function(e) NA_real_)
-  iv <- tryCatch(suppressWarnings(LightLogR::intradaily_variability(long$hourly_log_light, long$Datetime, na.rm = TRUE, as.df = FALSE)), error = function(e) NA_real_)
-  tibble(metric = ISIV_METRICS, value = c(as.numeric(is), as.numeric(iv)))
-}
-duration_isiv_context <- duration_context |> filter(support_id == "eye_medi") |>
-  semi_join(eligible_duration |> filter(support_id == "eye_medi") |> select(support_id, site, Id), by = c("support_id", "site", "Id"))
-eligible_isiv <- eligible_duration |> filter(support_id == "eye_medi")
-isiv_ref_list <- vector("list", nrow(eligible_isiv))
-for (i in seq_len(nrow(eligible_isiv))) {
-  u <- eligible_isiv[i, ]; dates <- u$reference_dates[[1]]
-  vals <- isiv_from_basis(duration_isiv_context |> filter(site == u$site, Id == u$Id, Date %in% dates)) |>
-    left_join(metric_meta, by = "metric")
-  isiv_ref_list[[i]] <- vals |> transmute(
-    support_id = u$support_id, site = u$site, Id = u$Id, reference_id = u$reference_id,
-    reference_window_start = u$reference_start, reference_window_end = u$reference_end,
-    metric, metric_class, metric_scope, metric_geometry, reference_value = value,
-    reference_available = is.finite(value),
-    reference_unavailable_reason = if_else(is.finite(value), NA_character_, "IS/IV undefined on protocol seven-day hourly basis")
-  )
-}
-duration_isiv_ref <- bind_rows(isiv_ref_list)
-
-isiv_pairs <- vector("list", 0L); k <- 0L
-for (i in seq_len(nrow(duration_windows))) {
-  w <- duration_windows[i, ]; if (w$support_id != "eye_medi") next
-  vals <- isiv_from_basis(duration_isiv_context |>
-    filter(site == w$site, Id == w$Id, Date %in% w$selected_dates[[1]])) |>
-    left_join(metric_meta, by = "metric")
-  k <- k + 1L
-  isiv_pairs[[k]] <- vals |>
-    transmute(support_id = w$support_id, site = w$site, Id = w$Id, metric, metric_class, metric_scope, metric_geometry,
-              candidate_value = value, candidate_available = is.finite(value)) |>
-    left_join(duration_isiv_ref |> filter(reference_id == w$reference_id),
-              by = c("support_id", "site", "Id", "metric", "metric_class", "metric_scope", "metric_geometry")) |>
-    transmute(
-      dimension = "duration", configuration = paste0(w$n_days, "d"), configuration_label = paste0(w$n_days, " d"),
-      configuration_order = 7L - w$n_days, ordered_dimension = TRUE, comparison_lattice = "duration",
-      reference_configuration = "7 protocol-anchored days", support_id, site, Id,
-      analysis_unit_type = "participant_window", analysis_unit_id = w$window_id,
-      reference_unit_id = w$reference_id, reference_id = w$reference_id, Date = as.Date(NA),
-      reference_window_start = w$reference_start, reference_window_end = w$reference_end,
-      window_id = w$window_id, window_index = w$window_index, window_start = w$window_start, window_end = w$window_end,
-      n_days = w$n_days, metric, metric_class, metric_scope, metric_geometry,
-      candidate_config_id = paste0("duration_", w$n_days, "d"), reference_config_id = "duration_protocol_7d",
-      reference_value, candidate_value,
-      pair_available = candidate_available & reference_available & is.finite(candidate_value) & is.finite(reference_value),
-      pair_unavailable_reason = case_when(
-        !reference_available | !is.finite(reference_value) ~ reference_unavailable_reason,
-        !candidate_available | !is.finite(candidate_value) ~ "IS/IV undefined on selected hourly basis",
-        TRUE ~ NA_character_
-      )
-    )
-}
-duration_isiv_pairs <- bind_rows(isiv_pairs)
-duration_pairs <- bind_rows(duration_daily_pairs, duration_isiv_pairs)
-
-# Diagnostic: the selected reference is exactly the first seven chronologically
-# ordered valid dates within the protocol interval. Calendar consecutiveness is
-# retained for audit but is not an eligibility requirement.
-duration_ref_audit <- eligible_duration |>
-  transmute(support_id, site, Id, reference_id, reference_start, reference_end,
-            n_reference_days = map_int(reference_dates, length), reference_dates_consecutive,
-            n_valid_dates_in_protocol, n_extra_valid_dates,
-            pass = n_reference_days == 7L & n_valid_dates_in_protocol >= 7L)
-readr::write_csv(duration_ref_audit, file.path(OUT_DIAG, "rq1_duration_reference_invariant.csv"), na = "")
-if (nrow(duration_ref_audit) && any(!duration_ref_audit$pass)) stop("Protocol duration reference invariant failed")
-
-message("RQ1: standardized signed distortion")
-pairs <- bind_rows(placement_pairs, optical_pairs, temporal_pairs, duration_pairs)
-if (!nrow(pairs)) stop("No RQ1 comparison rows were constructed")
-reference_basis <- pairs |> filter(is.finite(reference_value)) |>
-  distinct(comparison_lattice, metric, metric_geometry, site, Id, reference_unit_id, reference_value)
-standardizers <- reference_basis |> group_by(comparison_lattice, metric, metric_geometry) |>
-  summarise(n_reference_units = n(), standardizer = reference_scale(reference_value, first(metric_geometry)),
-            robust_standardizer = robust_reference_scale(reference_value, first(metric_geometry)), .groups = "drop") |>
-  mutate(zero_or_near_zero = !is.finite(standardizer) | standardizer <= sqrt(.Machine$double.eps))
-readr::write_csv(standardizers, file.path(OUT_DIAG, "rq1_standardizer_audit.csv"), na = "")
-
-canonical <- pairs |> left_join(standardizers, by = c("comparison_lattice", "metric", "metric_geometry")) |>
-  mutate(
-    zero_or_near_zero = replace_na(zero_or_near_zero, TRUE),
-    delta = if_else(metric_geometry == "circular_time", circular_delta(candidate_value, reference_value), candidate_value - reference_value),
-    available = pair_available & !zero_or_near_zero & is.finite(delta) & is.finite(standardizer),
-    unavailable_reason = case_when(
-      !pair_available ~ pair_unavailable_reason, zero_or_near_zero ~ "reference dispersion zero or undefined",
-      !is.finite(delta) ~ "representation difference undefined", TRUE ~ NA_character_),
-    e = if_else(available, delta / standardizer, NA_real_),
-    core_artifact_version = CORE_VERSION, rq1_analysis_version = RQ1_ANALYSIS_VERSION
+duration_window_pairs <- duration_manifest |>
+  rename(window_a = window_id, n_days_a = n_days, start_a = window_start, end_a = window_end,
+         dates_a = member_dates) |>
+  inner_join(
+    duration_manifest |>
+      rename(window_b = window_id, n_days_b = n_days, start_b = window_start, end_b = window_end,
+             dates_b = member_dates),
+    by = c("support_id", "site", "Id", "run_id"), relationship = "many-to-many"
   ) |>
-  select(core_artifact_version, rq1_analysis_version, dimension, configuration, configuration_label, configuration_order,
-         ordered_dimension, comparison_lattice, reference_configuration, support_id, site, Id, analysis_unit_type,
-         analysis_unit_id, reference_unit_id, reference_id, Date, reference_window_start, reference_window_end,
-         window_id, window_index, window_start, window_end, n_days, metric, metric_class, metric_scope, metric_geometry,
-         candidate_config_id, reference_config_id, reference_value, candidate_value, pair_available, delta, standardizer, robust_standardizer,
-         e, available, unavailable_reason)
-saveRDS(canonical, file.path(OUT_DATA, "rq1_distortion_long.rds"), compress = "xz")
+  filter(n_days_a < n_days_b) |>
+  rowwise() |>
+  mutate(nested = all(dates_a %in% dates_b)) |>
+  ungroup() |>
+  filter(nested) |>
+  mutate(
+    adjacent_transition = n_days_b == n_days_a + 1L,
+    pair_id = paste(window_a, window_b, sep = "__to__")
+  ) |>
+  select(support_id, site, Id, run_id, window_a, window_b, n_days_a, n_days_b,
+         start_a, end_a, start_b, end_b, adjacent_transition, pair_id)
 
-configuration_manifest <- canonical |> distinct(dimension, configuration, configuration_label, configuration_order,
-                                                 ordered_dimension, reference_configuration) |>
-  arrange(factor(dimension, levels = c("placement", "optical", "temporal", "duration")), configuration_order)
-readr::write_csv(configuration_manifest, file.path(OUT_RESULTS, "rq1_configuration_manifest.csv"), na = "")
-
-bootstrap_ci <- function(g, B = B_BOOT) {
-  site_counts <- g |> distinct(site, Id) |> count(site, name = "n_participants")
-  supported <- B > 0L && n_distinct(paste(g$site, g$Id, sep = "|")) >= 2L && any(site_counts$n_participants > 1L)
-  if (!supported) return(tibble(bootstrap_supported = FALSE, B_ci_low = NA_real_, B_ci_high = NA_real_, A_ci_low = NA_real_, A_ci_high = NA_real_))
-  clusters <- g |> group_by(site, Id) |> summarise(sum_e = sum(e), sum_abs_e = sum(abs(e)), n = n(), .groups = "drop")
-  by_site <- split(clusters, clusters$site)
-  vals <- replicate(B, {
-    sampled <- map_dfr(by_site, ~.x[sample.int(nrow(.x), nrow(.x), replace = TRUE), , drop = FALSE])
-    c(B = sum(sampled$sum_e)/sum(sampled$n), A = sum(sampled$sum_abs_e)/sum(sampled$n))
-  })
-  tibble(bootstrap_supported = TRUE, B_ci_low = safe_quantile(vals["B",], .025), B_ci_high = safe_quantile(vals["B",], .975),
-         A_ci_low = safe_quantile(vals["A",], .025), A_ci_high = safe_quantile(vals["A",], .975))
+build_duration_pair_chunk <- function(duration_values, window_pairs) {
+  if (!nrow(duration_values) || !nrow(window_pairs)) return(tibble())
+  duration_a <- window_pairs |>
+    select(support_id, site, Id, window_a, window_b, n_days_a, n_days_b, start_a, end_a,
+           start_b, end_b, adjacent_transition, pair_id) |>
+    inner_join(duration_values |> rename(window_a = window_id),
+               by = c("support_id", "site", "Id", "window_a"), relationship = "many-to-many") |>
+    transmute(
+      support_id, site, Id, window_a, window_b, n_days_a, n_days_b, start_a, end_a, start_b, end_b,
+      adjacent_transition, pair_id, config_id, metric, metric_class, metric_scope, metric_geometry,
+      placement, optical, resolution_s, analysis_unit_id_a = analysis_unit_id, value_a = value,
+      available_a = available, unavailable_reason_a = unavailable_reason
+    )
+  duration_b <- window_pairs |>
+    select(support_id, site, Id, window_a, window_b, pair_id) |>
+    inner_join(duration_values |> rename(window_b = window_id),
+               by = c("support_id", "site", "Id", "window_b"), relationship = "many-to-many") |>
+    transmute(
+      support_id, site, Id, window_a, window_b, pair_id, config_id, metric,
+      analysis_unit_id_b = analysis_unit_id, value_b = value,
+      available_b = available, unavailable_reason_b = unavailable_reason
+    )
+  inner_join(
+    duration_a, duration_b,
+    by = c("support_id", "site", "Id", "window_a", "window_b", "pair_id", "config_id", "metric"),
+    relationship = "many-to-many"
+  ) |>
+    transmute(
+      dimension = "duration", comparison_lattice = "duration", comparison_pair_id = pair_id,
+      config_a_id = paste0(config_id, "__", window_a), config_b_id = paste0(config_id, "__", window_b),
+      config_a_label = paste0(n_days_a, " d (", as.character(start_a), "–", as.character(end_a), ")"),
+      config_b_label = paste0(n_days_b, " d (", as.character(start_b), "–", as.character(end_b), ")"),
+      ordered_dimension = TRUE, adjacent_transition, anchor_projection = n_days_b == 6L,
+      requirement_relation = "a_shorter_than_b", support_id, site, Id,
+      analysis_unit_type = "participant_window", analysis_unit_id_a, analysis_unit_id_b, Date = as.Date(NA),
+      window_id_a = window_a, window_id_b = window_b, n_days_a = as.integer(n_days_a), n_days_b = as.integer(n_days_b),
+      metric, metric_class, metric_scope, metric_geometry, value_a, value_b,
+      available_a, available_b,
+      pair_available = coalesce(available_a, FALSE) & coalesce(available_b, FALSE) & is.finite(value_a) & is.finite(value_b),
+      pair_unavailable_reason = case_when(
+        !coalesce(available_a, FALSE) | !is.finite(value_a) ~ coalesce(unavailable_reason_a, "state_a unavailable"),
+        !coalesce(available_b, FALSE) | !is.finite(value_b) ~ coalesce(unavailable_reason_b, "state_b unavailable"),
+        TRUE ~ NA_character_
+      )
+    )
 }
 
-message("RQ1: summaries, uncertainty, and diagnostics")
-x <- canonical |> filter(available, is.finite(e))
-group_vars <- c("dimension", "configuration", "configuration_label", "configuration_order", "comparison_lattice", "support_id",
-                "metric", "metric_class", "metric_geometry")
-summary_base <- x |> group_by(across(all_of(group_vars))) |>
-  summarise(n_participants = n_distinct(paste(site, Id, sep = "|")), n_units = n(), median_e = median(e),
-            q25_e = safe_quantile(e,.25), q75_e = safe_quantile(e,.75), p025_e = safe_quantile(e,.025), p975_e = safe_quantile(e,.975),
-            B_mean_signed = mean(e), A_mean_absolute = mean(abs(e)), .groups = "drop")
-set.seed(BOOT_SEED)
-cis <- x |> group_by(across(all_of(group_vars))) |> group_modify(~bootstrap_ci(.x, B_BOOT)) |> ungroup()
-summary <- summary_base |> left_join(cis, by = group_vars) |>
+# Duration blocks are large.  Keep only one support/site block in each worker;
+# never bind all duration pairwise rows in the master process.  The standardizer
+# is computed once from the frozen anchor states and then applied independently
+# to every immutable RQ1 part.
+duration_columns <- c("support_id", "site", "Id", "window_id", "config_id", "metric", "metric_class",
+                      "metric_scope", "metric_geometry", "placement", "optical", "resolution_s",
+                      "analysis_unit_id", "value", "available", "unavailable_reason")
+duration_anchor_values <- if (length(duration_part_paths)) {
+  map_dfr(duration_part_paths, function(part_path) {
+    readRDS(part_path) |>
+      filter(n_days == 6L) |>
+      select(metric, metric_geometry, value)
+  })
+} else {
+  duration_artifact |>
+    filter(n_days == 6L) |>
+    select(metric, metric_geometry, value)
+}
+
+# One standardizer per comparison lattice x metric. The pair relation and scale
+# anchor are distinct objects: every pair below joins the same denominator.
+anchor_values <- bind_rows(
+  map_dfr(c("chest", "wrist"), function(pos) {
+    medi_support <- paste0("eye_", pos, "_medi")
+    full_support <- paste0("eye_", pos, "_full")
+    cube |>
+      filter(support_id %in% c(medi_support, full_support), placement == "eye", optical == "MEDI", resolution_s == 10L) |>
+      choose_metric_support(medi_support, full_support) |>
+      transmute(comparison_lattice = paste0("placement_", pos), metric, metric_geometry, value, scale_anchor_config = "eye_state")
+  }),
+  cube |> filter(support_id == "eye_full", placement == "eye", optical == "MEDI", resolution_s == 10L) |>
+    transmute(comparison_lattice = "optical", metric, metric_geometry, value, scale_anchor_config = "MEDI_state"),
+  cube |> filter(support_id %in% c("eye_medi", "eye_full"), placement == "eye", optical == "MEDI", resolution_s == 10L) |>
+    choose_metric_support("eye_medi", "eye_full") |>
+    transmute(comparison_lattice = "temporal", metric, metric_geometry, value, scale_anchor_config = "eye__MEDI__10s"),
+  duration_anchor_values |>
+    transmute(comparison_lattice = "duration", metric, metric_geometry, value, scale_anchor_config = "longest_observed_window_in_run")
+) |>
+  filter(is.finite(value))
+standardizers <- anchor_values |>
+  group_by(comparison_lattice, metric, metric_geometry, scale_anchor_config) |>
+  summarise(
+    n_scale_units = n(), standardizer = scale_primary(value, first(metric_geometry)),
+    robust_standardizer = scale_robust(value, first(metric_geometry)), .groups = "drop"
+  ) |>
+  mutate(zero_or_near_zero = !is.finite(standardizer) | standardizer <= sqrt(.Machine$double.eps))
+readr::write_csv(standardizers, file.path(DIAG, "rq1_standardizer_audit.csv"), na = "")
+
+summary_groups <- c("dimension", "comparison_lattice", "comparison_pair_id", "config_a_id", "config_b_id",
+                    "config_a_label", "config_b_label", "ordered_dimension", "adjacent_transition",
+                    "anchor_projection", "requirement_relation", "metric", "metric_class", "metric_geometry")
+
+canonicalize_pairs <- function(raw) {
+  if (!nrow(raw)) return(tibble())
+  out <- raw |>
+    mutate(
+      pair_key = paste(dimension, comparison_lattice, comparison_pair_id, config_a_id, config_b_id,
+                       support_id, site, Id, analysis_unit_id_a, analysis_unit_id_b, metric, sep = "|"),
+      scale_anchor_config = case_when(
+        dimension == "temporal" ~ "eye__MEDI__10s",
+        dimension == "duration" ~ "longest_observed_window_in_run",
+        dimension == "placement" ~ "eye_state",
+        dimension == "optical" ~ "MEDI_state",
+        TRUE ~ NA_character_
+      )
+    ) |>
+    left_join(standardizers, by = c("comparison_lattice", "metric", "scale_anchor_config", "metric_geometry")) |>
+    mutate(
+      delta = if_else(metric_geometry == "circular_time", circular_delta(value_a, value_b), value_a - value_b),
+      available = pair_available & !coalesce(zero_or_near_zero, TRUE) & is.finite(delta) & is.finite(standardizer),
+      unavailable_reason = case_when(
+        !pair_available ~ pair_unavailable_reason,
+        coalesce(zero_or_near_zero, TRUE) ~ "scale anchor dispersion zero or undefined",
+        !is.finite(delta) ~ "representation difference undefined", TRUE ~ NA_character_
+      ),
+      z = if_else(available, delta / standardizer, NA_real_),
+      robust_z = if_else(pair_available & is.finite(delta) & is.finite(robust_standardizer) & robust_standardizer > 0,
+                         delta / robust_standardizer, NA_real_),
+      core_artifact_version = CORE_VERSION, rq1_analysis_version = RQ1_ANALYSIS_VERSION
+    ) |>
+    select(core_artifact_version, rq1_analysis_version, pair_key, dimension, comparison_lattice,
+           comparison_pair_id, config_a_id, config_b_id, config_a_label, config_b_label,
+           ordered_dimension, adjacent_transition, anchor_projection, requirement_relation,
+           scale_anchor_config, support_id, site, Id, analysis_unit_type,
+           analysis_unit_id_a, analysis_unit_id_b, Date, window_id_a, window_id_b, n_days_a, n_days_b,
+           metric, metric_class, metric_scope, metric_geometry, value_a, value_b, delta, z, robust_z,
+           available_a, available_b, pair_available, available, unavailable_reason)
+  duplicate_rows <- which(duplicated(out$pair_key) | duplicated(out$pair_key, fromLast = TRUE))
+  if (length(duplicate_rows)) {
+    sample_keys <- unique(out$pair_key[duplicate_rows])[seq_len(min(5L, length(unique(out$pair_key[duplicate_rows]))))]
+    stop("Duplicate RQ1 scientific pair keys within part: ", paste(sample_keys, collapse = " || "))
+  }
+  out
+}
+
+rq1_marker_rows <- function(path) {
+  ok <- paste0(path, ".ok")
+  if (!file.exists(path) || !file.exists(ok)) return(NA_integer_)
+  lines <- readLines(ok, warn = FALSE)
+  hit <- lines[grepl("^rows=", lines)]
+  if (!length(hit)) return(NA_integer_)
+  suppressWarnings(as.integer(sub("^rows=", "", hit[[1]])))
+}
+
+rq1_process_duration_part <- function(task) {
+  existing <- rq1_marker_rows(task$part_path)
+  if (is.finite(existing)) return(tibble(part_index = task$part_index, part = basename(task$part_path), dimension = "duration", rows = existing, status = "reused"))
+  values <- readRDS(task$duration_path) |> select(all_of(duration_columns))
+  keys <- values |> distinct(support_id, site)
+  window_pairs <- duration_window_pairs |> semi_join(keys, by = c("support_id", "site"))
+  raw <- build_duration_pair_chunk(values, window_pairs)
+  rm(values, keys, window_pairs)
+  invisible(gc(FALSE))
+  canonical <- canonicalize_pairs(raw)
+  rm(raw)
+  rq1_write_part_atomic(canonical, task$part_path)
+  rows <- nrow(canonical)
+  rm(canonical)
+  invisible(gc(FALSE))
+  tibble(part_index = task$part_index, part = basename(task$part_path), dimension = "duration", rows = rows, status = "written")
+}
+
+pairwise_part_dir <- file.path(OUT, "pairwise_parts", RQ1_ANALYSIS_VERSION)
+dir.create(pairwise_part_dir, recursive = TRUE, showWarnings = FALSE)
+non_duration_raw <- tibble::as_tibble(data.table::rbindlist(
+  list(placement_pairs, optical_pairs, temporal_pairs), use.names = TRUE, fill = TRUE
+))
+if (!nrow(non_duration_raw)) stop("No non-duration pairwise configuration changes were constructed")
+non_duration_path <- file.path(pairwise_part_dir, "rq1_pairwise_part_000.rds")
+non_duration_rows <- rq1_marker_rows(non_duration_path)
+if (!is.finite(non_duration_rows)) {
+  non_duration_canonical <- canonicalize_pairs(non_duration_raw)
+  rq1_write_part_atomic(non_duration_canonical, non_duration_path)
+  non_duration_rows <- nrow(non_duration_canonical)
+  rm(non_duration_canonical)
+}
+rm(non_duration_raw, placement_pairs, optical_pairs, temporal_pairs)
+invisible(gc())
+
+duration_tasks <- if (length(duration_part_paths)) {
+  map2(duration_part_paths, seq_along(duration_part_paths), function(path, i) {
+    list(duration_path = path, part_path = file.path(pairwise_part_dir, sprintf("rq1_pairwise_part_%03d.rds", i)), part_index = i)
+  })
+} else list()
+pending_duration <- duration_tasks[!vapply(duration_tasks, function(task) is.finite(rq1_marker_rows(task$part_path)), logical(1))]
+if (length(pending_duration)) {
+  message("RQ1 duration parts pending: ", length(pending_duration), "/", length(duration_tasks), "; workers=", PART_WORKERS)
+  rq1_part_results <- ms_parallel_map(
+    pending_duration, rq1_process_duration_part, workers = PART_WORKERS, seed = BOOT_SEED,
+    packages = c("tidyverse", "data.table"),
+    exports = c("duration_columns", "duration_window_pairs", "standardizers", "CORE_VERSION",
+                "RQ1_ANALYSIS_VERSION", "build_duration_pair_chunk", "canonicalize_pairs",
+                "rq1_write_part_atomic", "rq1_marker_rows", "rq1_process_duration_part",
+                "circular_delta")
+  )
+} else rq1_part_results <- list()
+
+all_part_records <- bind_rows(
+  tibble(part_index = 0L, part = basename(non_duration_path), dimension = "placement_optical_temporal",
+         rows = non_duration_rows, status = if (is.finite(non_duration_rows)) "complete" else "missing"),
+  map_dfr(seq_along(duration_tasks), function(i) {
+    task <- duration_tasks[[i]]
+    hit <- rq1_part_results[vapply(rq1_part_results, function(z) identical(z$part_index, task$part_index), logical(1))]
+    if (length(hit)) return(hit[[1]])
+    tibble(part_index = task$part_index, part = basename(task$part_path), dimension = "duration",
+           rows = rq1_marker_rows(task$part_path), status = "reused")
+  })
+) |>
+  arrange(part_index)
+if (any(!is.finite(all_part_records$rows))) stop("RQ1 part manifest contains incomplete parts")
+readr::write_csv(all_part_records, file.path(pairwise_part_dir, "part_manifest.csv"), na = "")
+
+pairwise_manifest <- list(
+  artifact_type = "partitioned_rq1_pairwise_change",
+  artifact_version = RQ1_ANALYSIS_VERSION,
+  core_artifact_version = CORE_VERSION,
+  rq1_analysis_version = RQ1_ANALYSIS_VERSION,
+  part_dir = normalizePath(pairwise_part_dir, winslash = "/", mustWork = TRUE),
+  parts = all_part_records$part,
+  part_manifest = all_part_records,
+  generated_at = format(Sys.time(), tz = "UTC", usetz = TRUE)
+)
+saveRDS(pairwise_manifest, file.path(OUT, "rq1_pairwise_change_long.rds"), compress = "xz")
+
+part_paths <- file.path(pairwise_part_dir, all_part_records$part)
+make_rq1_fragments <- function(part_path) {
+  canonical <- readRDS(part_path)
+  x <- canonical |> filter(available, is.finite(z))
+  summary_fragment <- x |>
+    group_by(across(all_of(summary_groups))) |>
+    summarise(z_values = list(as.numeric(z)), site_values = list(as.character(site)), id_values = list(as.character(Id)), .groups = "drop")
+  anchor_fragment <- canonical |> filter(anchor_projection) |>
+    group_by(across(all_of(summary_groups))) |>
+    summarise(n_total_units = n(), n_available_units = sum(available),
+              participant_keys = list(unique(paste(site, Id, sep = "|"))),
+              A_sum = sum(abs(z[available & is.finite(z)])), B_sum = sum(z[available & is.finite(z)]), .groups = "drop")
+  availability_fragment <- canonical |>
+    group_by(dimension, comparison_lattice, comparison_pair_id, config_a_id, config_b_id, metric, metric_class) |>
+    summarise(n_total_units = n(), n_available_units = sum(available),
+              participant_keys = list(unique(paste(site, Id, sep = "|"))),
+              available_participant_keys = list(unique(paste(site[available], Id[available], sep = "|"))),
+              representation_available = any(available), unavailable_reasons = list(sort(unique(na.omit(unavailable_reason)))), .groups = "drop")
+  participant_fragment <- x |>
+    group_by(across(all_of(summary_groups)), site, Id) |>
+    summarise(n_units = n(), sum_abs = sum(abs(z)), sum_signed = sum(z), .groups = "drop")
+  robust_fragment <- canonical |> filter(pair_available, is.finite(robust_z)) |>
+    group_by(across(all_of(summary_groups))) |>
+    summarise(sum_abs = sum(abs(robust_z)), sum_signed = sum(robust_z), n_units = n(), .groups = "drop")
+  rm(canonical, x)
+  invisible(gc(FALSE))
+  list(summary = summary_fragment, anchor = anchor_fragment, availability = availability_fragment,
+       participant = participant_fragment, robust = robust_fragment)
+}
+message("RQ1 streaming summaries over ", length(part_paths), " immutable parts")
+fragments <- map(part_paths, make_rq1_fragments)
+summary_fragments <- map_dfr(fragments, "summary")
+summary_base <- summary_fragments |>
+  group_by(across(all_of(summary_groups))) |>
+  summarise(z_values = list(unlist(z_values, use.names = FALSE)),
+            site_values = list(unlist(site_values, use.names = FALSE)),
+            id_values = list(unlist(id_values, use.names = FALSE)), .groups = "drop") |>
+  mutate(
+    n_participants = map2_int(site_values, id_values, ~n_distinct(paste(.x, .y, sep = "|"))),
+    n_units = map_int(z_values, length),
+    median_z = map_dbl(z_values, ~safe_q(.x, .5)), q25_z = map_dbl(z_values, ~safe_q(.x, .25)),
+    q75_z = map_dbl(z_values, ~safe_q(.x, .75)), p025_z = map_dbl(z_values, ~safe_q(.x, .025)),
+    p975_z = map_dbl(z_values, ~safe_q(.x, .975)), B_mean_signed = map_dbl(z_values, mean),
+    A_mean_absolute = map_dbl(z_values, ~mean(abs(.x)))
+  )
+summary <- summary_base |>
+  select(all_of(summary_groups), n_participants, n_units, median_z, q25_z, q75_z, p025_z, p975_z,
+         B_mean_signed, A_mean_absolute) |>
   mutate(core_artifact_version = CORE_VERSION, rq1_analysis_version = RQ1_ANALYSIS_VERSION,
-         uncertainty_method = if_else(bootstrap_supported,
-          paste0(B_BOOT, " participant-cluster bootstrap replicates, stratified by site"),
-          "point estimate and empirical unit distribution only"))
-readr::write_csv(summary, file.path(OUT_RESULTS, "rq1_summary.csv"), na = "")
+         uncertainty_method = if (B_BOOT > 0L) "participant-cluster/site-stratified bootstrap" else "point estimate; bootstrap disabled")
 
-# Robust-scale sensitivity: identical raw delta, IQR/1.349 denominator.
-robust_sens <- canonical |> filter(pair_available, is.finite(delta), is.finite(robust_standardizer), robust_standardizer > 0) |>
-  mutate(e_robust = delta / robust_standardizer) |>
-  group_by(across(all_of(group_vars))) |>
-  summarise(B_robust = mean(e_robust), A_robust = mean(abs(e_robust)), n_units = n(), .groups = "drop")
-readr::write_csv(robust_sens, file.path(OUT_RESULTS, "rq1_robust_scale_sensitivity.csv"), na = "")
+bootstrap_groups <- map(seq_len(nrow(summary_base)), function(i) tibble(
+  site = summary_base$site_values[[i]], Id = summary_base$id_values[[i]], z = summary_base$z_values[[i]]
+))
+bootstrap_tasks <- map(seq_along(bootstrap_groups), function(i) list(group = bootstrap_groups[[i]], reps = B_BOOT, seed = BOOT_SEED + i))
+bootstrap_results <- if (B_BOOT > 0L) {
+  ms_parallel_map(bootstrap_tasks, bootstrap_pair_group, workers = BOOT_WORKERS, seed = BOOT_SEED,
+                  packages = c("tidyverse"), exports = c("bootstrap_pair_group", "safe_q"))
+} else lapply(bootstrap_tasks, bootstrap_pair_group)
+bootstrap_summary <- bind_rows(map(seq_along(bootstrap_groups), function(i) bind_cols(
+  summary_base[i, ] |> select(all_of(summary_groups)), bootstrap_results[[i]]
+)))
+summary <- summary |> left_join(bootstrap_summary, by = summary_groups)
+if (any(summary$A_mean_absolute + NUMERIC_TOL < abs(summary$B_mean_signed))) stop("RQ1 A >= |B| invariant failed")
+readr::write_csv(summary, file.path(OUT, "rq1_pairwise_summary.csv"), na = "")
+readr::write_csv(summary, file.path(OUT, "rq1_summary.csv"), na = "")
+readr::write_csv(bootstrap_summary, file.path(OUT, "rq1_pairwise_bootstrap.csv"), na = "")
 
-# Participant-balanced sensitivity gives each participant total weight one within
-# each metric x configuration, complementary to the primary smallest-unit estimand.
-participant_balanced <- x |> group_by(across(all_of(group_vars)), site, Id) |>
-  summarise(B_participant = mean(e), A_participant = mean(abs(e)), .groups = "drop") |>
-  group_by(across(all_of(group_vars))) |>
-  summarise(B_participant_balanced = mean(B_participant), A_participant_balanced = mean(A_participant), n_participants = n(), .groups = "drop")
-readr::write_csv(participant_balanced, file.path(OUT_RESULTS, "rq1_participant_balanced_sensitivity.csv"), na = "")
+anchor_projection <- map_dfr(fragments, "anchor") |>
+  group_by(across(all_of(summary_groups))) |>
+  summarise(n_participants = n_distinct(unlist(participant_keys)), n_units = sum(n_available_units),
+            A = if (sum(n_available_units) > 0) sum(A_sum) / sum(n_available_units) else NA_real_,
+            B = if (sum(n_available_units) > 0) sum(B_sum) / sum(n_available_units) else NA_real_, .groups = "drop")
+readr::write_csv(anchor_projection, file.path(OUT, "rq1_anchor_projection.csv"), na = "")
+local_summary <- summary |> filter(adjacent_transition) |>
+  transmute(metric, metric_class, dimension, comparison_lattice, lower_level = config_a_label,
+            higher_level = config_b_label, config_a_id, config_b_id, adjacent_transition,
+            G = A_mean_absolute, A = A_mean_absolute, B = B_mean_signed,
+            n_participants, n_units, core_artifact_version, rq1_analysis_version)
+readr::write_csv(local_summary, file.path(OUT, "rq1_local_transition_summary.csv"), na = "")
 
-availability <- canonical |> group_by(dimension, configuration, configuration_label, metric, metric_class, comparison_lattice) |>
-  summarise(n_total_units = n(), n_available_units = sum(available), n_participants_total = n_distinct(paste(site,Id,sep="|")),
-            n_participants_available = n_distinct(paste(site[available],Id[available],sep="|")), representation_available = any(available),
-            unavailable_reason = {z <- sort(unique(na.omit(unavailable_reason))); if(length(z)) paste(z, collapse="; ") else NA_character_}, .groups="drop")
-readr::write_csv(availability, file.path(OUT_RESULTS, "rq1_metric_availability.csv"), na = "")
-sample_flow <- canonical |> group_by(dimension, configuration, configuration_label, site) |>
-  summarise(n_participants_paired = n_distinct(Id), n_participants_available = n_distinct(Id[available]), n_units_paired=n(), n_units_available=sum(available), .groups="drop")
-readr::write_csv(sample_flow, file.path(OUT_RESULTS, "rq1_sample_flow.csv"), na = "")
+availability <- map_dfr(fragments, "availability") |>
+  group_by(dimension, comparison_lattice, comparison_pair_id, config_a_id, config_b_id, metric, metric_class) |>
+  summarise(n_total_units = sum(n_total_units), n_available_units = sum(n_available_units),
+            n_participants_total = n_distinct(unlist(participant_keys)),
+            n_participants_available = n_distinct(unlist(available_participant_keys)),
+            representation_available = any(representation_available),
+            unavailable_reason = paste(sort(unique(unlist(unavailable_reasons))), collapse = "; "), .groups = "drop") |>
+  mutate(unavailable_reason = na_if(unavailable_reason, ""))
+readr::write_csv(availability, file.path(OUT, "rq1_metric_availability.csv"), na = "")
 
-ccc <- function(a,b) {ok<-is.finite(a)&is.finite(b); a<-a[ok];b<-b[ok];if(length(a)<2)return(NA_real_);va<-var(a);vb<-var(b);cv<-cov(a,b);den<-va+vb+(mean(a)-mean(b))^2;if(!is.finite(den)||den<=0) NA_real_ else 2*cv/den}
-retention <- canonical |> filter(available) |> group_by(dimension, configuration, configuration_label, metric, metric_class, metric_geometry) |>
-  summarise(n_units=n(), lin_ccc=if(first(metric_geometry)=="linear") ccc(reference_value,candidate_value) else NA_real_,
-            spearman_rho=if(first(metric_geometry)=="linear" && sum(is.finite(reference_value)&is.finite(candidate_value))>=2)
-              suppressWarnings(cor(reference_value,candidate_value,method="spearman",use="complete.obs")) else NA_real_,
-            diagnostic_note=if_else(first(metric_geometry)=="linear","descriptive representation-retention diagnostic","CCC/Spearman not reported for circular-time representation"), .groups="drop")
-readr::write_csv(retention, file.path(OUT_RESULTS, "rq1_retention_diagnostics.csv"), na = "")
+participant_balanced <- map_dfr(fragments, "participant") |>
+  group_by(across(all_of(summary_groups)), site, Id) |>
+  summarise(n_units = sum(n_units), sum_abs = sum(sum_abs), sum_signed = sum(sum_signed), .groups = "drop") |>
+  mutate(A_participant = sum_abs / n_units, B_participant = sum_signed / n_units) |>
+  group_by(across(all_of(summary_groups))) |>
+  summarise(A_participant_balanced = mean(A_participant), B_participant_balanced = mean(B_participant),
+            n_participants = n(), .groups = "drop")
+readr::write_csv(participant_balanced, file.path(OUT, "rq1_participant_balanced_sensitivity.csv"), na = "")
+robust <- map_dfr(fragments, "robust") |>
+  group_by(across(all_of(summary_groups))) |>
+  summarise(A_robust = sum(sum_abs) / sum(n_units), B_robust = sum(sum_signed) / sum(n_units),
+            n_units = sum(n_units), .groups = "drop")
+readr::write_csv(robust, file.path(OUT, "rq1_robust_scale_sensitivity.csv"), na = "")
 
-geometry_audit <- summary |> transmute(dimension,configuration,metric,A_mean_absolute,B_mean_signed,gap=A_mean_absolute-abs(B_mean_signed),pass=A_mean_absolute+NUMERIC_TOL>=abs(B_mean_signed))
-readr::write_csv(geometry_audit, file.path(OUT_DIAG,"rq1_geometry_invariant.csv"), na="")
-if(any(!geometry_audit$pass)) stop("A >= |B| geometry invariant failed")
-
-support_audit <- canonical |> mutate(expected_support_id = case_when(
-  dimension=="placement" & configuration=="chest" & metric %in% DUAL_CHANNEL_METRICS ~ "eye_chest_full",
-  dimension=="placement" & configuration=="chest" ~ "eye_chest_medi",
-  dimension=="placement" & configuration=="wrist" & metric %in% DUAL_CHANNEL_METRICS ~ "eye_wrist_full",
-  dimension=="placement" & configuration=="wrist" ~ "eye_wrist_medi",
-  dimension=="optical" ~ "eye_full",
-  dimension %in% c("temporal","duration") & metric %in% DUAL_CHANNEL_METRICS ~ "eye_full",
-  dimension %in% c("temporal","duration") ~ "eye_medi", TRUE ~ NA_character_),
-  support_pass=support_id==expected_support_id) |>
-  distinct(dimension,configuration,metric,comparison_lattice,support_id,expected_support_id,support_pass,reference_config_id,candidate_config_id)
-readr::write_csv(support_audit,file.path(OUT_DIAG,"rq1_support_audit.csv"),na="")
-if(any(!support_audit$support_pass)) stop("RQ1 support-lattice audit failed")
+readr::write_csv(duration_cohort_audit(duration_manifest), file.path(DIAG, "duration_cohort_audit.csv"), na = "")
+readr::write_csv(duration_manifest |>
+  mutate(member_dates = map_chr(member_dates, ~paste(as.character(.x), collapse = ";"))),
+  file.path(DIAG, "duration_window_manifest_audit.csv"), na = "")
+pair_counts <- summary |>
+  group_by(dimension, metric) |>
+  summarise(n_pair_types = n_distinct(comparison_pair_id), n_available_pair_types = n_distinct(comparison_pair_id[A_mean_absolute >= 0]), .groups = "drop")
+readr::write_csv(pair_counts, file.path(OUT, "rq1_pair_type_counts.csv"), na = "")
+geom_audit <- summary |> transmute(dimension, comparison_pair_id, metric, A = A_mean_absolute, B = B_mean_signed,
+                                   gap = A - abs(B), pass = A + NUMERIC_TOL >= abs(B))
+readr::write_csv(geom_audit, file.path(DIAG, "rq1_geometry_invariant.csv"), na = "")
 
 writeLines(c(
-  "# RQ1 run report", "", sprintf("Generated: %s", Sys.time()),
-  paste0("Core artifact version: ", CORE_VERSION), paste0("RQ1 analysis version: ", RQ1_ANALYSIS_VERSION),
-  paste0("Canonical distortion rows: ", nrow(canonical)), paste0("Finite/available rows: ", nrow(x)),
-  paste0("Bootstrap replicates where supported: ", B_BOOT),
-  "Primary temporal candidates: 20 s, 30 s, 1 min, 5 min, 15 min, 30 min; generated by sparse systematic subsampling of the 10-s grid.",
-  paste0("Duration: first seven valid dates among participants with >=7 valid protocol-interval dates; eligible participants across supports: ", nrow(eligible_duration), "; all ordered 1-6 d windows within the selected reference."),
-  "Duration bootstrap is participant-cluster/site-stratified whenever the resulting protocol cohort supports it.",
-  "Sensitivity outputs: robust reference scale (IQR/1.349) and participant-balanced A/B."
-), file.path(OUT_RESULTS,"RQ1_RUN_REPORT.md"))
-
-message("RQ1 complete: ", RQ1_ANALYSIS_VERSION)
-message("  ", file.path(OUT_DATA,"rq1_distortion_long.rds"))
-message("  ", file.path(OUT_RESULTS,"rq1_summary.csv"))
+  "# RQ1 run report", "", paste0("Core artifact version: ", CORE_VERSION), paste0("RQ1 analysis version: ", RQ1_ANALYSIS_VERSION),
+  paste0("Pairwise change rows: ", sum(all_part_records$rows)), paste0("Finite/available rows: ", sum(summary$n_units)),
+  paste0("Canonical storage: ", normalizePath(file.path(OUT, "rq1_pairwise_change_long.rds"), winslash = "/", mustWork = FALSE)),
+  paste0("Pairwise part count: ", nrow(all_part_records), "; duration part workers: ", PART_WORKERS, "; bootstrap workers: ", BOOT_WORKERS),
+  "Canonical orientation: state_a is the less demanding state for ordered dimensions; delta = value_a - value_b.",
+  "Temporal map: all 21 pair types among 10, 20, 30, 60, 300, 900, 1800 s; adjacent transitions are separately flagged.",
+  "Duration map: all nested windows within consecutive complete-analysis-day runs, limited to 1-6 d; no protocol seven-day reference.",
+  "The 10-s temporal and longest observed duration states are scale anchors only; they are not forced into the pair ontology.",
+  "Placement and optical comparisons are unordered empirical facets, not burden-ordered sufficiency dimensions."
+), file.path(OUT, "RQ1_RUN_REPORT.md"))
+message("RQ1 complete: ", RQ1_ANALYSIS_VERSION, "; rows=", sum(all_part_records$rows), "; parts=", nrow(all_part_records))

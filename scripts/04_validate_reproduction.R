@@ -3,7 +3,7 @@ suppressPackageStartupMessages({ library(dplyr); library(readxl) })
 up <- new.env(parent = emptyenv())
 ours <- new.env(parent = emptyenv())
 load("external/zauner_position/data/prepared_metrics.RData", envir = up)
-load("data/derived/zauner_metrics.RData", envir = ours)
+load(file.path("results", "core", "cache", "upstream", "zauner_metrics.RData"), envir = ours)
 
 sites <- intersect(unique(ours$metrics$site), unique(up$metrics$site))
 reference <- up$metrics |> filter(.data$site %in% sites)
