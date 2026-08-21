@@ -25,6 +25,11 @@ Reference implementation:
 
 Checked-out reference: tag `v0.9.9`, commit `a74ec2acc84258ce87cc85b196f71b3a651522c4` (sparse checkout of reproduction inputs).
 
+The fresh-server core runner fetches and verifies this checkout when
+`external/zauner_position/` is absent. It is therefore not necessary to upload
+the upstream checkout with the project, but the server needs outbound GitHub
+access during the core preflight.
+
 Use this repository to reproduce:
 - preprocessing
 - completeness rules

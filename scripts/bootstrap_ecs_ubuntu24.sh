@@ -22,7 +22,8 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   libharfbuzz-dev libfribidi-dev libpng-dev libjpeg-dev libtiff-dev \
   libgit2-dev libssh2-1-dev \
   libv8-dev libabsl-dev libudunits2-dev \
-  libgdal-dev libgeos-dev libproj-dev libsqlite3-dev
+  libgdal-dev libgeos-dev libproj-dev libsqlite3-dev \
+  gdal-bin libx11-dev pandoc
 
 if [[ ! -x "${R_PREFIX}/bin/R" ]]; then
   work="$(mktemp -d)"

@@ -36,7 +36,9 @@ project_runtime <- c(
   "tidyverse",
   "readxl",
   "gt",
-  "cowplot"
+  "cowplot",
+  "nlme",
+  "lattice"
 )
 
 if (identical(lock_r_version, "4.5.0")) {
@@ -54,6 +56,20 @@ if (identical(lock_r_version, "4.5.0")) {
   # runtime dependencies first, then re-assert the two scientific package pins.
   renv::install(project_runtime, prompt = FALSE)
   renv::install(scientific_pins, prompt = FALSE)
+}
+
+# RQ2 uses nlme directly. Keep it and its recommended-package dependency
+# available even when the system R installation does not expose them outside
+# the project library, without updating them on every already-complete run.
+direct_runtime <- c("nlme", "lattice")
+missing_direct_runtime <- direct_runtime[!vapply(
+  direct_runtime,
+  requireNamespace,
+  logical(1),
+  quietly = TRUE
+)]
+if (length(missing_direct_runtime)) {
+  renv::install(missing_direct_runtime, prompt = FALSE)
 }
 
 # Scientific package versions are part of the reproduction boundary.

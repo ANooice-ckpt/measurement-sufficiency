@@ -18,6 +18,10 @@ export RQ2_CV_FOLDS="${RQ2_CV_FOLDS:-5}"
 export RQ2_RUN_MODELS="${RQ2_RUN_MODELS:-1}"
 export RQ3_WORKERS="${RQ3_WORKERS:-8}"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "${PROJECT_ROOT}"
+
 mkdir -p results/logs
 
 echo "[preflight] R parse"

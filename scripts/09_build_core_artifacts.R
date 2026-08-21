@@ -188,8 +188,8 @@ expected_weather_files <- file.path("data", "raw", "era5", paste0(site_meta$site
 missing_weather <- expected_weather_files[!file.exists(expected_weather_files)]
 if (length(missing_weather)) stop("Missing ERA5 files: ", paste(missing_weather, collapse = ", "))
 
-# Stage 0: validate / cache weather under the core version. Weather itself did not
-# change in v2, but versioning prevents a mixed old/new artifact tree.
+# Stage 0: validate / cache weather under the core version. Versioning prevents
+# a mixed old/new artifact tree when the scientific core changes.
 message("[weather] validate, summarize, and interpolate ERA5")
 weather_build_one <- function(i) {
   site <- site_meta$site[i]
@@ -275,7 +275,8 @@ temporal_audit <- map_dfr(setdiff(core_all_resolutions(), 10L), function(r) {
 write_core_csv(temporal_audit, file.path("results", "logs", "core_temporal_sampling_audit.csv"))
 
 # Stage 2: configuration-level metrics/context. The versioned directory is the
-# cache key, so pre-v2 mean-binned artifacts can never be silently reused.
+# cache key, so artifacts from an older temporal operator can never be silently
+# reused.
 compute_one <- function(path) {
   key <- tools::file_path_sans_ext(basename(path))
   metric_out <- file.path(METRIC_DIR, paste0(key, "__metrics.rds"))
@@ -313,7 +314,7 @@ if (nrow(duplicate_metric_keys)) {
   write.csv(duplicate_metric_keys, file.path("results", "logs", "core_metric_duplicate_keys.csv"), row.names = FALSE)
   stop("Duplicate scientific keys in metric_cube")
 }
-if (any(metric_cube$resolution_s == 15L)) stop("15-s configuration survived into v2 metric cube")
+if (any(metric_cube$resolution_s == 15L)) stop("15-s configuration survived into v3 metric cube")
 write_core_csv(metric_cube, file.path(CORE_ROOT, "metric_cube.csv.gz"))
 
 # Stage 4: daily configuration context, including protocol dates.
@@ -366,7 +367,7 @@ if (nrow(duplicate_context_keys)) {
   write.csv(duplicate_context_keys, file.path("results", "logs", "core_context_duplicate_keys.csv"), row.names = FALSE)
   stop("Duplicate scientific keys in unit_context")
 }
-if (any(unit_context$resolution_s == 15L)) stop("15-s configuration survived into v2 unit_context")
+if (any(unit_context$resolution_s == 15L)) stop("15-s configuration survived into v3 unit_context")
 write_core_csv(unit_context, file.path(CORE_ROOT, "unit_context.csv.gz"))
 
 missing_study_weather <- unit_context |>

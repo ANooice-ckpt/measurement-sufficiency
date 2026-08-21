@@ -423,7 +423,7 @@ pairwise_manifest <- list(
   artifact_version = RQ1_ANALYSIS_VERSION,
   core_artifact_version = CORE_VERSION,
   rq1_analysis_version = RQ1_ANALYSIS_VERSION,
-  part_dir = normalizePath(pairwise_part_dir, winslash = "/", mustWork = TRUE),
+  part_dir = pairwise_part_dir,
   parts = all_part_records$part,
   part_manifest = all_part_records,
   generated_at = format(Sys.time(), tz = "UTC", usetz = TRUE)

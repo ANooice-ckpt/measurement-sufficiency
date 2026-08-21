@@ -288,7 +288,7 @@ model_manifest <- dplyr::bind_rows(lapply(model_tasks, function(task) {
     comparison_pair_id = task$meta$comparison_pair_id[[1]],
     metric = task$meta$metric[[1]],
     metric_class = task$meta$metric_class[[1]],
-    checkpoint_path = normalizePath(task$checkpoint_path, winslash = "/", mustWork = FALSE),
+    checkpoint_path = task$checkpoint_path,
     checkpoint_version = task$checkpoint_version,
     checkpoint_present = file.exists(task$checkpoint_path),
     checkpoint_complete = !is.null(obj) && isTRUE(obj$complete),

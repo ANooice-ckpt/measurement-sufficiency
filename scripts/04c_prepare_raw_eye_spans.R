@@ -26,7 +26,7 @@ raw_spans <- map_dfr(melidos_sites(), function(site_i) {
 trial_meta <- map_dfr(melidos_sites(), function(site_i) {
   path <- raw_data_path(site_i, "trial_times")
   if (!file.exists(path)) {
-    warning("trial_times unavailable for ", site_i, "; duration analysis will exclude that site's participants lacking protocol metadata")
+    warning("trial_times unavailable for ", site_i, "; protocol audit metadata will be absent")
     return(tibble())
   }
   tt <- tryCatch(
@@ -105,7 +105,7 @@ write.csv(
 if (nrow(missing_protocol)) {
   warning(
     nrow(missing_protocol),
-    " near-corneal participants lack trial_times metadata; they remain usable for RQ1 placement/optical/temporal but are ineligible for protocol-anchored duration analyses."
+    " near-corneal participants lack trial_times metadata; complete-day duration windows remain usable, but protocol audit/sensitivity fields are unavailable."
   )
 }
 

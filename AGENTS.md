@@ -24,20 +24,20 @@ Plot scripts read frozen outputs only and must not silently refit/recompute thei
 - Scientific object: `configuration -> observed exposure process -> target representation`.
 - 54 published exposure metrics are analytical units; six metric classes are descriptive only.
 - Distribution first: preserve smallest-unit distortion before A/B, models, sufficiency, or Pareto projections.
-- High-information benchmark is eye / MEDI / 10 s / protocol-anchored seven-day reference; it is an empirical benchmark, not biological truth.
+- High-information benchmark is eye / MEDI / 10 s; it is an empirical benchmark, not biological truth.
 - Support is part of the estimand. Pairwise placement analyses keep maximal eye–chest / eye–wrist supports.
 - Optical LIGHT is an operational proxy. MDER/nvRD are unavailable when the candidate configuration has LIGHT only.
 - Temporal primary levels: **10, 20, 30, 60, 300, 900, 1800 s**. Reserve: 120, 600, 3600 s. 15 s is prohibited.
 - Coarse temporal configurations are **systematic sparse subsamples of the 10-s grid**, not bin means. Retained source values cannot change.
-- Monitoring duration uses MeLiDos `trial_times` to anchor a fixed seven-day reference. Enumerate all contiguous 1–6 d candidate windows; do not substitute arbitrary non-contiguous subsets.
+- Monitoring duration is 1–6 complete analysis days from consecutive runs. `trial_times` is audit/descriptive metadata only; enumerate all contiguous candidate windows and do not substitute arbitrary non-contiguous subsets.
 - Unavailable configurations are unavailable, not high-distortion/insufficient.
 - RQ3 Pareto dominance applies only to justified ordered dimensions (temporal resolution, duration). Placement/optical are incomparable facets.
 - Multidimensional RQ3 uses facet-specific maximal supports, not a gratuitous eye+chest+wrist full-support intersection.
 
 ## Artifact/cache rules
-Current core version: `v2_sparse_sampling_protocol7`.
+Current core version: `v3_sparse_sampling_complete_days`.
 
-Interim core blocks are versioned under `data/interim/core/<core_version>/`. Do not point v2 at pre-v2 cache paths. Final core artifacts carry `core_artifact_version` and `data/derived/core/core_manifest.csv` records the temporal operator.
+Interim core blocks are versioned under `results/core/cache/<core_version>/`. Do not reuse older core or downstream caches across a scientific version change. Final core artifacts carry `core_artifact_version` and `results/core/core_manifest.csv` records the temporal operator.
 
 RQ1 outputs carry `rq1_analysis_version`; RQ2 checkpoint paths include that upstream version. Never reuse old RQ2 checkpoints after an upstream scientific version changes.
 
@@ -47,6 +47,6 @@ Full rebuilds use R 4.5.0, LightLogR 0.10.3, melidosData 1.0.6. On the 96-vCPU L
 ## Do not
 - Return to the raw 10-s source for ordinary RQ1–RQ3 changes after a validated core exists.
 - Average hidden high-frequency observations to simulate a slower logger.
-- Use Day 8 to replace a missing protocol reference day merely to reach seven days.
+- Do not substitute arbitrary days or manufacture a protocol seven-day reference; duration uses complete analysis-day runs.
 - Treat metric classes as inferential replicates.
 - Invent universal sufficiency thresholds or universal burden orders for placement/optical.

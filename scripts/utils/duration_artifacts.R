@@ -193,16 +193,27 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
       site_value <- as.character(block_keys$site[[i]])
       if (reuse_parts && file.exists(part_path)) {
         # A completed RDS is accompanied by a tiny marker written only after
-        # the RDS has been closed.  This avoids reloading 100--500 MB parts
-        # merely to resume a run after a process interruption.  Older v3
-        # parts predate the marker; their versioned directory and substantial
-        # size are sufficient evidence for this one-time migration, while
-        # tiny/incomplete files are rebuilt.
+        # the RDS has been closed. This avoids reloading 100--500 MB parts
+        # merely to resume a run after a process interruption. Older markers
+        # may not contain a row count, so those parts are read once to rebuild
+        # the manifest accurately.
         size_ok <- isTRUE(file.info(part_path)$size >= 5e6)
         marker_ok <- file.exists(part_marker)
+        marker_rows <- if (marker_ok) {
+          marker_lines <- readLines(part_marker, warn = FALSE)
+          hit <- marker_lines[grepl("^rows=", marker_lines)]
+          if (length(hit)) suppressWarnings(as.integer(sub("^rows=", "", hit[[1L]]))) else NA_integer_
+        } else {
+          NA_integer_
+        }
         if (marker_ok || size_ok) {
+          reused_rows <- if (length(marker_rows) == 1L && is.finite(marker_rows)) {
+            marker_rows
+          } else {
+            nrow(readRDS(part_path))
+          }
           part_paths[[i]] <- part_path
-          part_rows[[i]] <- NA_integer_
+          part_rows[[i]] <- reused_rows
           part_support[[i]] <- support_value
           part_site[[i]] <- site_value
           next
@@ -216,7 +227,10 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
       if (!file.rename(tmp_path, part_path)) {
         stop("Could not atomically install duration checkpoint: ", part_path)
       }
-      writeLines("duration_complete_analysis_days_v1", part_marker, useBytes = TRUE)
+      writeLines(c(
+        "duration_complete_analysis_days_v1",
+        paste0("rows=", nrow(part))
+      ), part_marker, useBytes = TRUE)
       part_paths[[i]] <- part_path
       part_rows[[i]] <- nrow(part)
       part_support[[i]] <- support_value
@@ -234,7 +248,7 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
       artifact_type = "partitioned_duration_metric_cube",
       duration_artifact_version = "duration_complete_analysis_days_v1",
       part_dir = part_dir, parts = part_manifest$part,
-      part_manifest = part_manifest, rows = sum(part_manifest$rows)
+      part_manifest = part_manifest, rows = sum(part_manifest$rows, na.rm = TRUE)
     )
   } else {
     block_parts <- lapply(seq_len(nrow(block_keys)), function(i) {

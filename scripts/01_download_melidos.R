@@ -6,7 +6,10 @@ modalities <- c(
   "light_glasses", "light_chest", "light_wrist",
   "wearlog", "sleepdiaries", "lightexposurediary", "trial_times"
 )
-optional_modalities <- "trial_times"
+# The primary core and upstream reproduction need the five modalities above.
+# These two metadata/context payloads are useful when present but must not make
+# a fresh core build fail when a repository does not publish them.
+optional_modalities <- c("trial_times", "lightexposurediary")
 site_override <- Sys.getenv("MELIDOS_SITES", "")
 modality_override <- Sys.getenv("MELIDOS_MODALITIES", "")
 if (nzchar(site_override)) sites <- trimws(strsplit(site_override, ",", fixed = TRUE)[[1]])
@@ -67,6 +70,6 @@ optional_failures <- !manifest$required & grepl("^failed", manifest$status)
 if (any(optional_failures)) {
   warning(
     sum(optional_failures),
-    " optional trial_times payload(s) were unavailable/invalid; those participants remain usable for placement/optical/temporal analyses but cannot enter protocol-anchored duration analysis."
+    " optional metadata/context payload(s) were unavailable/invalid; primary placement/optical/temporal analyses remain usable, while protocol/context-sensitive analyses use only available metadata."
   )
 }
