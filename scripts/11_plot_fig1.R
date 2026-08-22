@@ -60,7 +60,7 @@ summary <- summary |>
   mutate(
     metric_class = factor(metric_class, levels = METRIC_CLASSES),
     dimension = factor(dimension, levels = DIMENSIONS),
-    pair_label = paste(config_a_label, "→", config_b_label),
+    pair_label = paste(config_a_label, "to", config_b_label),
     direction_ratio = ms_direction_ratio(B_mean_signed, A_mean_absolute)
   )
 availability <- availability |>
@@ -79,32 +79,7 @@ readr::write_csv(metric_order, file.path("results", "rq1", "figure_metric_order.
 summary_plot <- summary |> mutate(dimension = as.character(dimension)) |> ms_add_metric_order(metric_order)
 availability_plot <- availability |> mutate(dimension = as.character(dimension)) |> ms_add_metric_order(metric_order)
 
-# a. Scientific orientation is prespecified by the measurement task. Placement
-# and optical comparisons use target alignment; temporal and duration use
-# measurement refinement / accumulation.
-orientation <- tribble(
-  ~orientation_family, ~dimension, ~path,
-  "Target alignment", "Placement", "Chest / Wrist  →  Eye",
-  "Target alignment", "Optical representation", "LIGHT  →  MEDI",
-  "Measurement requirement", "Temporal resolution", "30 min  →  15 min  →  5 min  →  1 min  →  30 s  →  20 s  →  10 s",
-  "Measurement requirement", "Monitoring duration", "1 d  →  2 d  →  3 d  →  4 d  →  5 d  →  6 d"
-) |>
-  mutate(
-    orientation_family = factor(orientation_family, levels = c("Target alignment", "Measurement requirement")),
-    dimension = factor(dimension, levels = rev(c("Placement", "Optical representation", "Temporal resolution", "Monitoring duration")))
-  )
-p1a <- ggplot(orientation, aes(x = 0, y = dimension, label = path)) +
-  geom_text(hjust = 0, size = 2.35) +
-  facet_wrap(~orientation_family, ncol = 1, scales = "free_y") +
-  xlim(0, 1) +
-  labs(title = "a  Scientific orientation of configuration change", x = NULL, y = NULL) +
-  theme_ms(base_size = 6.5, legend_position = "none") +
-  theme(
-    panel.grid = element_blank(), axis.text.x = element_blank(), axis.ticks = element_blank(),
-    strip.text = element_text(face = "bold", hjust = 0), panel.border = element_blank()
-  )
-
-# b. Aggregated configuration-response structure. The main panel should expose
+# a. Aggregated configuration-response structure. The main panel should expose
 # topology rather than ask the reader to decode all 54 metrics simultaneously.
 # A is first collapsed to one display value per metric x oriented pair, then
 # divided by that metric's maximum A across the complete RQ1 configuration
@@ -137,20 +112,26 @@ alignment_summary <- pair_display |>
     dimension = factor(dimension, levels = c("placement", "optical"),
                        labels = c("Placement", "Optical representation"))
   )
-if (!nrow(alignment_summary)) stop("No target-alignment rows available for aggregated Fig. 1b")
+if (!nrow(alignment_summary)) stop("No target-alignment rows available for aggregated Fig. 1a")
 
-p1b_alignment <- ggplot(alignment_summary, aes(pair_label, metric_class, fill = A_relative_median)) +
+p1a_alignment <- ggplot(alignment_summary, aes(pair_label, metric_class, fill = A_relative_median)) +
   geom_tile(color = "white", linewidth = .18) +
   facet_grid(. ~ dimension, scales = "free_x", space = "free_x") +
   scale_fill_ms_sequential(
     limits = c(0, 1), oob = scales::squish,
     labels = scales::label_number(accuracy = .1), name = "median relative A"
   ) +
-  labs(title = "b  Target-aligned response", x = "oriented comparison", y = NULL) +
+  labs(title = "a  Target-aligned response", x = "oriented comparison", y = NULL) +
   theme_ms(base_size = 6.1, legend_position = "bottom") +
   theme(
-    axis.text.x = element_text(angle = 38, hjust = 1, size = 5.0),
-    axis.ticks.y = element_blank(), panel.grid = element_blank()
+    axis.text.x = element_text(angle = 34, hjust = 1, size = 4.7),
+    axis.ticks.y = element_blank(), panel.grid = element_blank(),
+    plot.margin = margin(2, 2, 2, 2),
+    legend.margin = margin(0, 0, 0, 0),
+    legend.box.margin = margin(0, 0, 0, 0),
+    legend.key.height = grid::unit(2.4, "mm"),
+    legend.text = element_text(size = 4.7),
+    legend.title = element_text(size = 5.0)
   )
 
 parse_temporal_seconds <- function(x) {
@@ -181,10 +162,10 @@ ordered_candidates <- pair_display |>
     )
   )
 if (any(ordered_candidates$dimension == "temporal" & (!is.finite(ordered_candidates$state_rank_a) | !is.finite(ordered_candidates$state_rank_b)))) {
-  stop("Fig. 1b could not parse one or more temporal configuration labels")
+  stop("Fig. 1a could not parse one or more temporal configuration labels")
 }
 if (any(ordered_candidates$dimension == "duration" & (!is.finite(ordered_candidates$state_rank_a) | !is.finite(ordered_candidates$state_rank_b)))) {
-  stop("Fig. 1b could not parse one or more duration configuration labels")
+  stop("Fig. 1a could not parse one or more duration configuration labels")
 }
 
 ordered_metric <- ordered_candidates |>
@@ -198,7 +179,7 @@ ordered_baseline <- ordered_candidates |>
 ordered_metric <- bind_rows(ordered_baseline, ordered_metric) |>
   group_by(dimension, metric, metric_class, state_rank) |>
   summarise(state_label = first(state_label), A_relative = median(A_relative, na.rm = TRUE), .groups = "drop")
-if (!nrow(ordered_metric)) stop("No ordered-axis rows available for aggregated Fig. 1b")
+if (!nrow(ordered_metric)) stop("No ordered-axis rows available for aggregated Fig. 1a")
 
 ordered_summary <- ordered_metric |>
   group_by(dimension, state_rank, state_label, metric_class) |>
@@ -215,7 +196,7 @@ ordered_response_panel <- function(dim, title) {
   ds <- ordered_summary |>
     filter(dimension == dim) |>
     mutate(metric_class = factor(metric_class, levels = METRIC_CLASSES))
-  if (!nrow(dm) || !nrow(ds)) stop("No aggregated ordered response rows for Fig. 1b dimension: ", dim)
+  if (!nrow(dm) || !nrow(ds)) stop("No aggregated ordered response rows for Fig. 1a dimension: ", dim)
   labels <- dm |>
     group_by(state_rank) |>
     summarise(state_label = first(state_label), .groups = "drop") |>
@@ -251,14 +232,14 @@ ordered_response_panel <- function(dim, title) {
     theme(axis.text.x = element_text(angle = 38, hjust = 1, size = 5.0))
 }
 
-p1b_temporal <- ordered_response_panel("temporal", "Temporal resolution")
-p1b_duration <- ordered_response_panel("duration", "Monitoring duration")
-p1b <- cowplot::plot_grid(
-  p1b_alignment, p1b_temporal, p1b_duration,
-  ncol = 3, rel_widths = c(1.05, 1.15, 1.05), align = "hv", axis = "tblr"
+p1a_temporal <- ordered_response_panel("temporal", "Temporal resolution")
+p1a_duration <- ordered_response_panel("duration", "Monitoring duration")
+p1a <- cowplot::plot_grid(
+  p1a_alignment, p1a_temporal, p1a_duration,
+  ncol = 3, rel_widths = c(.98, 1.12, 1.02), align = "hv", axis = "tblr", greedy = TRUE
 )
 
-panel_b_export <- bind_rows(
+panel_a_export <- bind_rows(
   alignment_summary |>
     transmute(
       display = "target_alignment", dimension = as.character(dimension), pair_label,
@@ -272,12 +253,12 @@ panel_b_export <- bind_rows(
       n_metrics, A_relative_median, A_relative_q25, A_relative_q75
     )
 )
-readr::write_csv(panel_b_export, file.path("results", "rq1", "fig1_panel_b_aggregated.csv"), na = "")
+readr::write_csv(panel_a_export, file.path("results", "rq1", "fig1_panel_a_aggregated.csv"), na = "")
 
 # The former main-panel atlas is retained verbatim as supplementary detail.
 atlas <- summary_plot |> filter(is.finite(A_mean_absolute), is.finite(B_mean_signed))
 atlas_bg <- availability_plot
-p1b_atlas <- ggplot(atlas, aes(pair_label, metric)) +
+p_atlas <- ggplot(atlas, aes(pair_label, metric)) +
   geom_tile(data = atlas_bg |> filter(representation_available), fill = "#F3F3F3",
             color = "white", linewidth = .10) +
   geom_point(data = atlas_bg |> filter(!representation_available), shape = 4,
@@ -308,6 +289,11 @@ target_geometry_panel <- function(dim, letter) {
                        d$B_boot_q025, d$B_boot_q975), na.rm = TRUE)
   if (!is.finite(max_display) || max_display <= 0) max_display <- 1
   ci <- d |> filter(is.finite(A_boot_q025), is.finite(A_boot_q975), is.finite(B_boot_q025), is.finite(B_boot_q975))
+  transition_note <- if (dim == "placement") {
+    "shape: circle = Chest to Eye; triangle = Wrist to Eye"
+  } else {
+    "LIGHT to MEDI"
+  }
   ggplot(d, aes(B_mean_signed, A_mean_absolute, color = metric_class)) +
     geom_vline(xintercept = 0, linewidth = .26, color = "#D8D8D8") +
     geom_abline(slope = c(-1, 1), intercept = 0, linetype = 2, linewidth = .32, color = "#8A8A8A") +
@@ -324,11 +310,16 @@ target_geometry_panel <- function(dim, letter) {
     scale_y_continuous(trans = scales::transform_asinh(), limits = c(0, max_display * 1.06),
                        breaks = scales::breaks_extended(n = 4)) +
     labs(title = paste0(letter, "  ", DIM_TITLES[[dim]], " target-aligned change"),
+         subtitle = transition_note,
          x = "B: mean signed change", y = "A: mean absolute change") +
-    theme_ms(base_size = 6.3, legend_position = "bottom")
+    theme_ms(base_size = 6.3, legend_position = "none") +
+    theme(
+      plot.margin = margin(2, 2, 2, 2),
+      plot.subtitle = element_text(size = 5.0, colour = "#555555", margin = margin(t = -1, b = 2))
+    )
 }
 
-# e-f. Local response along ordered axes. For duration, multiple nested windows
+# d-e. Local response along ordered axes. For duration, multiple nested windows
 # can represent the same d -> d+1 step; medians here are display summaries of
 # the already-computed pair-level G values, not new estimands from raw data.
 local_display <- local |>
@@ -338,14 +329,14 @@ local_display <- local |>
     to_days = if_else(dimension == "duration", suppressWarnings(as.integer(str_extract(higher_level, "^\\d+"))), NA_integer_),
     transition = if_else(
       dimension == "duration",
-      paste0(from_days, " d → ", to_days, " d"),
-      paste(lower_level, "→", higher_level)
+      paste0(from_days, " d to ", to_days, " d"),
+      paste(lower_level, "to", higher_level)
     ),
     step_order = case_when(
       dimension == "duration" ~ as.numeric(from_days),
       dimension == "temporal" ~ match(
         transition,
-        c("30 min → 15 min", "15 min → 5 min", "5 min → 1 min", "1 min → 30 s", "30 s → 20 s", "20 s → 10 s")
+        c("30 min to 15 min", "15 min to 5 min", "5 min to 1 min", "1 min to 30 s", "30 s to 20 s", "20 s to 10 s")
       ),
       TRUE ~ NA_real_
     )
@@ -371,33 +362,55 @@ local_response_panel <- function(dim, letter) {
     labs(title = paste0(letter, "  ", DIM_TITLES[[dim]], " local response"),
          x = "adjacent oriented transition", y = "G = mean |z|") +
     theme_ms(base_size = 6.1, legend_position = "none") +
-    theme(axis.text.x = element_text(angle = 42, hjust = 1, size = 5.0))
+    theme(
+      axis.text.x = element_text(angle = 42, hjust = 1, size = 5.0),
+      strip.text = element_blank(),
+      strip.background = element_blank(),
+      strip.switch.pad.grid = grid::unit(0, "mm"),
+      panel.spacing.y = grid::unit(.45, "mm"),
+      plot.margin = margin(1.5, 2, 1.5, 2)
+    )
 }
 
-p1c <- target_geometry_panel("placement", "c")
-p1d <- target_geometry_panel("optical", "d")
-p1e <- local_response_panel("temporal", "e")
-p1f <- local_response_panel("duration", "f")
+p1b <- target_geometry_panel("placement", "b")
+p1c <- target_geometry_panel("optical", "c")
+p1d <- local_response_panel("temporal", "d")
+p1e <- local_response_panel("duration", "e")
 
 metric_legend_source <- ggplot(
   tibble(metric_class = factor(METRIC_CLASSES, levels = METRIC_CLASSES), x = seq_along(METRIC_CLASSES), y = 1),
   aes(x, y, color = metric_class)
 ) +
   geom_point(size = 1.8) + scale_color_ms_metric() +
-  guides(color = guide_legend(title = "metric class", nrow = 1, byrow = TRUE)) +
-  theme_void(base_family = MS_FONT, base_size = 8) + theme(legend.position = "bottom")
+  guides(color = guide_legend(
+    title = "metric class", nrow = 1, byrow = TRUE,
+    override.aes = list(size = 1.45)
+  )) +
+  theme_void(base_family = MS_FONT, base_size = 7) +
+  theme(
+    legend.position = "bottom", legend.direction = "horizontal",
+    legend.margin = margin(0, 0, 0, 0), legend.box.margin = margin(0, 0, 0, 0),
+    legend.title = element_text(size = 5.6, face = "bold"),
+    legend.text = element_text(size = 5.2),
+    legend.key.width = grid::unit(3.2, "mm")
+  )
 metric_legend <- cowplot::get_legend(metric_legend_source)
 
-middle <- cowplot::plot_grid(p1c, p1d, ncol = 2, align = "hv", axis = "tblr")
-bottom <- cowplot::plot_grid(p1e, p1f, ncol = 2, align = "hv", axis = "tblr")
-fig1body <- cowplot::plot_grid(p1a, p1b, middle, bottom, ncol = 1, rel_heights = c(.72, 1.35, 1.1, 1.15))
-fig1 <- cowplot::plot_grid(fig1body, metric_legend, ncol = 1, rel_heights = c(1, .045))
-ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.pdf"), 15.8, 11.8)
-ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.png"), 15.8, 11.8)
+middle <- cowplot::plot_grid(p1b, p1c, ncol = 2, rel_widths = c(1, 1),
+                             align = "hv", axis = "tblr", greedy = TRUE)
+bottom <- cowplot::plot_grid(p1d, p1e, ncol = 2, rel_widths = c(1, 1),
+                             align = "hv", axis = "tblr", greedy = TRUE)
+fig1body <- cowplot::plot_grid(p1a, middle, bottom, ncol = 1,
+                               rel_heights = c(.96, 1.10, 1.30),
+                               align = "v", axis = "l", greedy = TRUE)
+fig1 <- cowplot::plot_grid(metric_legend, fig1body, ncol = 1,
+                           rel_heights = c(.035, 1), align = "v", greedy = TRUE)
+ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.pdf"), 12.4, 9.8)
+ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.png"), 12.4, 9.8)
 
 # Supplement: complete metric-level atlas and empirical z distributions.
-ms_plot_save(p1b_atlas, file.path(OUT_DIR, "FigS_RQ1_pairwise_atlas.pdf"), 16, 10)
-ms_plot_save(p1b_atlas, file.path(OUT_DIR, "FigS_RQ1_pairwise_atlas.png"), 16, 10)
+ms_plot_save(p_atlas, file.path(OUT_DIR, "FigS_RQ1_pairwise_atlas.pdf"), 16, 10)
+ms_plot_save(p_atlas, file.path(OUT_DIR, "FigS_RQ1_pairwise_atlas.png"), 16, 10)
 
 distribution_panel <- function(dim, letter) {
   d <- summary_plot |>
