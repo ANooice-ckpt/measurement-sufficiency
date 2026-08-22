@@ -4,8 +4,9 @@ source("scripts/utils/parallel_runtime.R")
 source("scripts/utils/duration_artifacts.R")
 source("scripts/utils/rq1_pairwise_artifacts.R")
 
-# RQ3 is a projection of observed pairwise change. Ordered dimensions use
-# observed residual instability; placement/optical remain unordered facets.
+# RQ3 is a projection of observed pairwise change. Temporal and duration use
+# observed residual instability along measurement-requirement directions;
+# placement/optical use target-aligned substitutability without a burden order.
 RQ1_LONG <- file.path("results", "rq1", "rq1_pairwise_change_long.rds")
 RQ1_SUMMARY <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
 LOCAL <- file.path("results", "rq1", "rq1_local_transition_summary.csv")
@@ -171,10 +172,13 @@ single_requirement <- sufficiency_long |>
   ungroup()
 readr::write_csv(single_requirement, file.path(OUT, "rq3_single_dimension_requirement.csv"), na = "")
 
+# Placement/optical pairs are oriented alternative -> target-aligned state, but
+# remain outside the temporal/duration measurement-burden order.
 unordered <- pair_summary |>
   filter(dimension %in% c("placement", "optical")) |>
   transmute(
     dimension, comparison_pair_id, config_a_id, config_b_id, config_a_label, config_b_label,
+    orientation_type, orientation_basis,
     metric, metric_class, metric_geometry, epsilon_entry = A_mean_absolute,
     A = A_mean_absolute, B = B_mean_signed,
     substitutable_at_epsilon = epsilon_entry <= 0,
@@ -243,7 +247,7 @@ build_joint_pairs <- function(g) {
     ) |>
     mutate(
       config_a_id = joint_a, config_b_id = joint_b,
-      delta = if_else(metric_geometry == "circular_time", circular_delta(value_a, value_b), value_a - value_b),
+      delta = if_else(metric_geometry == "circular_time", circular_delta(value_b, value_a), value_b - value_a),
       requirement_relation = "a_no_more_demanding_than_b"
     )
 }
@@ -379,8 +383,9 @@ writeLines(c(
   paste0("RQ3 analysis version: ", RQ3_VERSION),
   "Single-dimension estimand: R_obs(c)=max A(c,c') over all higher observed states.",
   "Observed upper boundaries have n_higher_observed=0, R_obs=NA, status=boundary_unresolved.",
-  "Placement/optical use empirical substitutability only and have no burden order.",
+  "Placement/optical substitutability is evaluated along target-aligned comparisons; these dimensions have no measurement-burden order.",
   "Joint stability uses actual duration_metric_cube values within placement x optical facets.",
+  "Joint signed changes use the same lower-requirement -> higher-requirement orientation as RQ1.",
   "Pareto persistence is deterministic tolerance-domain occupancy over intervals bounded by observed R_obs."
 ), file.path(OUT, "RQ3_RUN_REPORT.md"))
 message("RQ3 complete: ", RQ3_VERSION)
