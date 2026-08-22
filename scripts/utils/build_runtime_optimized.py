@@ -14,13 +14,163 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Duration: on Linux/ECS, fork support x site blocks from the already-split
+# in-memory metric/context objects. Each child writes its own checkpoint
+# atomically and returns metadata only. This preserves the durable artifact
+# format while avoiding both PSOCK copies and large result transfers.
+# ---------------------------------------------------------------------------
+duration_path = ROOT / "scripts" / "utils" / "duration_artifacts.R"
+duration = duration_path.read_text(encoding="utf-8")
+
+duration_old = '''    part_paths <- character(nrow(block_keys))
+    part_rows <- integer(nrow(block_keys))
+    part_support <- character(nrow(block_keys))
+    part_site <- character(nrow(block_keys))
+    for (i in seq_len(nrow(block_keys))) {
+      part_name <- sprintf("duration_metric_cube_part_%03d.rds", i)
+      part_path <- file.path(part_dir, part_name)
+      part_marker <- paste0(part_path, ".ok")
+      support_value <- as.character(block_keys$support_id[[i]])
+      site_value <- as.character(block_keys$site[[i]])
+      if (reuse_parts && file.exists(part_path)) {
+        # A completed RDS is accompanied by a tiny marker written only after
+        # the RDS has been closed.  This avoids reloading 100--500 MB parts
+        # merely to resume a run after a process interruption.  Older v3
+        # parts predate the marker; their versioned directory and substantial
+        # size are sufficient evidence for this one-time migration, while
+        # tiny/incomplete files are rebuilt.
+        size_ok <- isTRUE(file.info(part_path)$size >= 5e6)
+        marker_ok <- file.exists(part_marker)
+        if (marker_ok || size_ok) {
+          part_paths[[i]] <- part_path
+          part_rows[[i]] <- NA_integer_
+          part_support[[i]] <- support_value
+          part_site[[i]] <- site_value
+          next
+        }
+      }
+      block <- build_block(block_keys[i, , drop = FALSE])
+      part <- finalize_part(block)
+      tmp_path <- paste0(part_path, ".tmp")
+      if (file.exists(tmp_path)) unlink(tmp_path)
+      saveRDS(part, tmp_path, compress = FALSE)
+      if (!file.rename(tmp_path, part_path)) {
+        stop("Could not atomically install duration checkpoint: ", part_path)
+      }
+      writeLines("duration_complete_analysis_days_v1", part_marker, useBytes = TRUE)
+      part_paths[[i]] <- part_path
+      part_rows[[i]] <- nrow(part)
+      part_support[[i]] <- support_value
+      part_site[[i]] <- site_value
+      rm(block, part)
+      invisible(gc())
+    }
+'''
+
+duration_new = '''    part_paths <- character(nrow(block_keys))
+    part_rows <- integer(nrow(block_keys))
+    part_support <- character(nrow(block_keys))
+    part_site <- character(nrow(block_keys))
+
+    duration_workers <- suppressWarnings(as.integer(Sys.getenv("CORE_DURATION_WORKERS", unset = "1")))
+    if (!is.finite(duration_workers) || duration_workers < 1L) duration_workers <- 1L
+    detected_cores <- suppressWarnings(parallel::detectCores(logical = FALSE))
+    if (!is.finite(detected_cores) || detected_cores < 1L) detected_cores <- parallel::detectCores(logical = TRUE)
+    if (is.finite(detected_cores) && detected_cores > 0L) duration_workers <- min(duration_workers, detected_cores)
+    duration_workers <- min(duration_workers, nrow(block_keys))
+
+    build_part <- function(i) {
+      part_name <- sprintf("duration_metric_cube_part_%03d.rds", i)
+      part_path <- file.path(part_dir, part_name)
+      part_marker <- paste0(part_path, ".ok")
+      support_value <- as.character(block_keys$support_id[[i]])
+      site_value <- as.character(block_keys$site[[i]])
+      if (reuse_parts && file.exists(part_path)) {
+        # A completed RDS is accompanied by a tiny marker written only after
+        # the RDS has been closed.  This avoids reloading 100--500 MB parts
+        # merely to resume a run after a process interruption.  Older v3
+        # parts predate the marker; their versioned directory and substantial
+        # size are sufficient evidence for this one-time migration, while
+        # tiny/incomplete files are rebuilt.
+        size_ok <- isTRUE(file.info(part_path)$size >= 5e6)
+        marker_ok <- file.exists(part_marker)
+        if (marker_ok || size_ok) {
+          return(list(i = i, path = part_path, rows = NA_integer_, support = support_value,
+                      site = site_value, status = "reused"))
+        }
+      }
+      block <- build_block(block_keys[i, , drop = FALSE])
+      part <- finalize_part(block)
+      tmp_path <- paste0(part_path, ".tmp")
+      if (file.exists(tmp_path)) unlink(tmp_path)
+      saveRDS(part, tmp_path, compress = FALSE)
+      if (!file.rename(tmp_path, part_path)) {
+        stop("Could not atomically install duration checkpoint: ", part_path)
+      }
+      writeLines("duration_complete_analysis_days_v1", part_marker, useBytes = TRUE)
+      rows <- nrow(part)
+      rm(block, part)
+      invisible(gc(FALSE))
+      list(i = i, path = part_path, rows = rows, support = support_value,
+           site = site_value, status = "written")
+    }
+
+    # Longest-processing-time-first proxy. The metric/context row counts capture
+    # site/support scale, while duration membership rows capture how many window
+    # memberships must participate in the many-to-many joins.
+    block_cost <- vapply(seq_len(nrow(block_keys)), function(i) {
+      support_value <- as.character(block_keys$support_id[[i]])
+      site_value <- as.character(block_keys$site[[i]])
+      key <- block_token(support_value, site_value)
+      metric_n <- if (is.null(metric_blocks[[key]])) 0 else nrow(metric_blocks[[key]])
+      context_n <- if (is.null(context_blocks[[key]])) 0 else nrow(context_blocks[[key]])
+      membership_n <- sum(membership$support_id == support_value & membership$site == site_value)
+      as.numeric(metric_n + context_n + 10 * membership_n)
+    }, numeric(1))
+    schedule_idx <- order(block_cost, decreasing = TRUE, na.last = TRUE)
+    message("[duration] LPT schedule: ", nrow(block_keys), " blocks; workers=", duration_workers)
+
+    if (.Platform$OS.type != "windows" && duration_workers > 1L) {
+      part_records_scheduled <- parallel::mclapply(
+        schedule_idx, build_part, mc.cores = duration_workers,
+        mc.preschedule = FALSE, mc.set.seed = FALSE
+      )
+    } else {
+      part_records_scheduled <- lapply(schedule_idx, build_part)
+    }
+    failed <- vapply(part_records_scheduled, inherits, logical(1), "try-error")
+    if (any(failed)) {
+      stop("Duration checkpoint worker failed: ", as.character(part_records_scheduled[[which(failed)[1L]]]))
+    }
+    part_records <- part_records_scheduled[order(schedule_idx)]
+    for (rec in part_records) {
+      i <- rec$i
+      part_paths[[i]] <- rec$path
+      part_rows[[i]] <- rec$rows
+      part_support[[i]] <- rec$support
+      part_site[[i]] <- rec$site
+    }
+'''
+duration = replace_once(duration, duration_old, duration_new, "duration fork/LPT patch")
+duration_out = OUT / "duration_artifacts.optimized.R"
+duration_out.write_text(duration, encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
 # Core: preserve the existing dynamic scheduler, but feed longest estimated
 # tasks first. Estimated cost = uncompressed support bytes x configuration count.
 # Results are restored to the original support order before downstream binding,
-# so this changes scheduling only, not scientific row ordering.
+# so this changes scheduling only, not scientific row ordering. The optimized
+# core entry point also sources the runtime-only duration implementation above.
 # ---------------------------------------------------------------------------
 core_path = ROOT / "scripts" / "09_build_core_artifacts.R"
 core = core_path.read_text(encoding="utf-8")
+core = replace_once(
+    core,
+    'source("scripts/utils/duration_artifacts.R")',
+    'source("results/runtime/duration_artifacts.optimized.R")',
+    "core optimized duration source patch",
+)
 
 core_old = '''block_paths <- parallel_core_lapply(
   support_paths, compute_one,
@@ -117,5 +267,6 @@ rq1 = replace_once(rq1, rq1_fragment_old, rq1_fragment_new, "RQ1 fragment parall
 rq1_out = OUT / "10_rq1_analysis.optimized.R"
 rq1_out.write_text(rq1, encoding="utf-8")
 
+print(duration_out.relative_to(ROOT))
 print(core_out.relative_to(ROOT))
 print(rq1_out.relative_to(ROOT))
