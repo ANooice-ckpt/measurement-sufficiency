@@ -8,10 +8,10 @@ mkdir -p results/logs results/runtime
 export RQ1_BOOT="${RQ1_BOOT:-1000}"
 export RQ1_STARTUP_WORKERS="${RQ1_STARTUP_WORKERS:-24}"
 export RQ1_PART_WORKERS="${RQ1_PART_WORKERS:-44}"
-# First validated memory-safe run uses 4. The summary checkpoints remove the
-# accumulating-master failure mode, but individual canonical parts can still
-# transiently expand to ~25 GiB while being summarized.
-export RQ1_FRAGMENT_WORKERS="${RQ1_FRAGMENT_WORKERS:-4}"
+# Memory-safe summary checkpoints were validated at 8 workers with an observed
+# whole-node peak near 85 GiB on the 185-GiB usable ECS node. Use 10 by default
+# to improve throughput while retaining substantial memory headroom.
+export RQ1_FRAGMENT_WORKERS="${RQ1_FRAGMENT_WORKERS:-10}"
 export RQ1_BOOT_WORKERS="${RQ1_BOOT_WORKERS:-40}"
 export RQ1_PART_COMPRESSION="${RQ1_PART_COMPRESSION:-gzip}"
 
