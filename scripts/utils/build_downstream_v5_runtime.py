@@ -32,7 +32,30 @@ def patch_rq2(text: str) -> str:
       -external_radiation_b, -external_direct_fraction_b, -external_cloud_b,
       -solar_noon_elevation_deg_b, -shorter_window_variability
     )'''
-    return replace_once(text, old, new, "RQ2 temporary duration-column patch")
+    text = replace_once(text, old, new, "RQ2 temporary duration-column patch")
+
+    # Participant-grouped CV must use one frozen fold assignment per scientific
+    # task. Re-drawing folds inside each model-family/outcome loop makes model
+    # performance comparisons depend on different test participants.
+    old_seed = '''  set.seed(task$seed)
+  coefs <- list(); perfs <- list(); ci <- 0L; pi <- 0L'''
+    new_seed = '''  set.seed(task$seed)
+  pm_base <- dat |>
+    distinct(site, participant_key) |>
+    group_by(site) |>
+    mutate(fold = sample(rep(seq_len(task$folds), length.out = n()))) |>
+    ungroup()
+  coefs <- list(); perfs <- list(); ci <- 0L; pi <- 0L'''
+    text = replace_once(text, old_seed, new_seed, "RQ2 frozen CV-fold map patch")
+
+    old_pm = '''    pm <- d |> distinct(site, participant_key) |>
+      group_by(site) |>
+      mutate(fold = sample(rep(seq_len(task$folds), length.out = n()))) |>
+      ungroup()
+    d_cv <- d |> left_join(pm, by = c("site", "participant_key"))'''
+    new_pm = '''    d_cv <- d |> left_join(pm_base, by = c("site", "participant_key"))'''
+    text = replace_once(text, old_pm, new_pm, "RQ2 reuse frozen CV folds patch")
+    return text
 
 
 def patch_rq3(text: str) -> str:
