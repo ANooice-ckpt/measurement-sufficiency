@@ -227,6 +227,12 @@ def patch_rq3(text: str) -> str:
   mutate(config_id = paste0("r", resolution_s, "__d", n_days))'''
     text = replace_once(text, old_catalog, new_catalog, "RQ3 analysable joint-state catalogue patch")
 
+    # joint_state_catalog names the generic state config_id, while outgoing
+    # comparisons necessarily carry the same state as config_a_id.
+    old_joint_join = '"n_days" = "n_days_a", "config_id", "metric", "metric_class", "metric_geometry")'
+    new_joint_join = '"n_days" = "n_days_a", "config_id" = "config_a_id", "metric", "metric_class", "metric_geometry")'
+    text = replace_once(text, old_joint_join, new_joint_join, "RQ3 joint config-id join patch")
+
     # Fig. 4d is a pair-level fraction across metrics. Grouping by metric_class
     # creates duplicate epsilon rows that the plot then incorrectly connects as
     # one line, so metric class must not define the coverage estimand.
