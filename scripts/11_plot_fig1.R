@@ -147,9 +147,8 @@ target_geometry_panel <- function(dim, letter) {
     geom_segment(data = ci, aes(x = B_mean_signed, xend = B_mean_signed, y = A_boot_q025, yend = A_boot_q975),
                  inherit.aes = FALSE, alpha = .16, linewidth = .25) +
     geom_point(aes(shape = transition), size = 1.45, alpha = .86) +
-    geom_text(data = lab, aes(label = metric), inherit.aes = FALSE,
-              x = lab$B_mean_signed, y = lab$A_mean_absolute, size = 1.85,
-              color = "#252525", check_overlap = TRUE, vjust = -.65) +
+    geom_text(data = lab, aes(x = B_mean_signed, y = A_mean_absolute, label = metric), inherit.aes = FALSE,
+              size = 1.85, color = "#252525", check_overlap = TRUE, vjust = -.65) +
     scale_color_ms_metric() +
     scale_x_continuous(trans = scales::transform_asinh(), limits = c(-max_display * 1.06, max_display * 1.06),
                        breaks = scales::breaks_extended(n = 4)) +
@@ -177,7 +176,7 @@ local_display <- local |>
       dimension == "duration" ~ as.numeric(from_days),
       dimension == "temporal" ~ match(
         transition,
-        c("30 min→15 min", "15 min→5 min", "5 min→1 min", "1 min→30 s", "30 s→20 s", "20 s→10 s")
+        c("30 min → 15 min", "15 min → 5 min", "5 min → 1 min", "1 min → 30 s", "30 s → 20 s", "20 s → 10 s")
       ),
       TRUE ~ NA_real_
     )
