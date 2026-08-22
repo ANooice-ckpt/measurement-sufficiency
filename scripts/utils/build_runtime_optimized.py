@@ -215,9 +215,10 @@ core_out.write_text(core, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
-# RQ1: (1) longest duration parts first; (2) parallelize the formerly serial
-# fragment-construction pass with a deliberately bounded worker pool; (3) order
-# fragment jobs by part size and restore original order afterward.
+# RQ1: (1) optimize serial startup work; (2) longest duration parts first;
+# (3) parallelize the formerly serial fragment-construction pass and order large
+# fragments first. Every optimization preserves the original scientific order
+# before downstream binding/aggregation.
 # ---------------------------------------------------------------------------
 rq1_path = ROOT / "scripts" / "10_rq1_analysis.R"
 rq1 = rq1_path.read_text(encoding="utf-8")
@@ -226,10 +227,130 @@ rq1_workers_old = '''PART_WORKERS <- ms_resolve_workers("RQ1_PART_WORKERS", defa
 BOOT_SEED <- 20260820L
 '''
 rq1_workers_new = '''PART_WORKERS <- ms_resolve_workers("RQ1_PART_WORKERS", default = rq1_default_part_workers(), cap = 48L)
+STARTUP_WORKERS <- ms_resolve_workers("RQ1_STARTUP_WORKERS", default = min(24L, PART_WORKERS), cap = 32L)
 FRAGMENT_WORKERS <- ms_resolve_workers("RQ1_FRAGMENT_WORKERS", default = min(16L, PART_WORKERS), cap = 24L)
 BOOT_SEED <- 20260820L
 '''
-rq1 = replace_once(rq1, rq1_workers_old, rq1_workers_new, "RQ1 fragment worker patch")
+rq1 = replace_once(rq1, rq1_workers_old, rq1_workers_new, "RQ1 startup/fragment worker patch")
+
+rq1_read_old = '''cube <- readr::read_csv(CORE_METRICS, show_col_types = FALSE, progress = FALSE) |>
+  mutate(Date = as.Date(Date))
+duration_artifact <- readRDS(DURATION_CUBE)
+duration_part_paths <- if (duration_cube_is_partitioned(duration_artifact)) {
+  file.path(duration_artifact$part_dir, duration_artifact$parts)
+} else {
+  character()
+}
+duration_manifest <- readRDS(DURATION_MANIFEST) |>
+  mutate(window_start = as.Date(window_start), window_end = as.Date(window_end))
+'''
+rq1_read_new = '''message("RQ1 startup: read core metric cube")
+cube <- readr::read_csv(CORE_METRICS, show_col_types = FALSE, progress = FALSE) |>
+  mutate(Date = as.Date(Date))
+message("RQ1 startup: read duration manifests")
+duration_artifact <- readRDS(DURATION_CUBE)
+duration_part_paths <- if (duration_cube_is_partitioned(duration_artifact)) {
+  file.path(duration_artifact$part_dir, duration_artifact$parts)
+} else {
+  character()
+}
+duration_manifest <- readRDS(DURATION_MANIFEST) |>
+  mutate(window_start = as.Date(window_start), window_end = as.Date(window_end))
+'''
+rq1 = replace_once(rq1, rq1_read_old, rq1_read_new, "RQ1 startup progress patch")
+
+rq1_window_old = '''duration_window_pairs <- duration_manifest |>
+  rename(window_a = window_id, n_days_a = n_days, start_a = window_start, end_a = window_end,
+         dates_a = member_dates) |>
+  inner_join(
+    duration_manifest |>
+      rename(window_b = window_id, n_days_b = n_days, start_b = window_start, end_b = window_end,
+             dates_b = member_dates),
+    by = c("support_id", "site", "Id", "run_id"), relationship = "many-to-many"
+  ) |>
+  filter(n_days_a < n_days_b) |>
+  rowwise() |>
+  mutate(nested = all(dates_a %in% dates_b)) |>
+  ungroup() |>
+  filter(nested) |>
+  mutate(
+    adjacent_transition = n_days_b == n_days_a + 1L,
+    pair_id = paste(window_a, window_b, sep = "__to__")
+  ) |>
+  select(support_id, site, Id, run_id, window_a, window_b, n_days_a, n_days_b,
+         start_a, end_a, start_b, end_b, adjacent_transition, pair_id)
+'''
+rq1_window_new = '''message("RQ1 startup: build nested duration-window pairs (vectorized)")
+# duration_window_manifest() constructs every window from consecutive dates
+# within an already-consecutive complete-day run. Therefore A is a strict
+# subset of longer B iff B starts no later than A and ends no earlier than A.
+# Verify the invariant before replacing the old rowwise list-membership test.
+window_span_days <- as.integer(duration_manifest$window_end - duration_manifest$window_start) + 1L
+if (any(window_span_days != duration_manifest$n_days)) {
+  stop("Duration-window contiguity invariant failed; cannot use vectorized nesting test")
+}
+duration_window_pairs <- duration_manifest |>
+  select(-member_dates) |>
+  rename(window_a = window_id, n_days_a = n_days, start_a = window_start, end_a = window_end) |>
+  inner_join(
+    duration_manifest |>
+      select(-member_dates) |>
+      rename(window_b = window_id, n_days_b = n_days, start_b = window_start, end_b = window_end),
+    by = c("support_id", "site", "Id", "run_id"), relationship = "many-to-many"
+  ) |>
+  filter(n_days_a < n_days_b, start_b <= start_a, end_a <= end_b) |>
+  mutate(
+    adjacent_transition = n_days_b == n_days_a + 1L,
+    pair_id = paste(window_a, window_b, sep = "__to__")
+  ) |>
+  select(support_id, site, Id, run_id, window_a, window_b, n_days_a, n_days_b,
+         start_a, end_a, start_b, end_b, adjacent_transition, pair_id)
+'''
+rq1 = replace_once(rq1, rq1_window_old, rq1_window_new, "RQ1 duration-window vectorization patch")
+
+rq1_anchor_old = '''duration_anchor_values <- if (length(duration_part_paths)) {
+  map_dfr(duration_part_paths, function(part_path) {
+    readRDS(part_path) |>
+      filter(n_days == 6L) |>
+      select(metric, metric_geometry, value)
+  })
+} else {
+  duration_artifact |>
+    filter(n_days == 6L) |>
+    select(metric, metric_geometry, value)
+}
+'''
+rq1_anchor_new = '''read_duration_anchor_part <- function(part_path) {
+  readRDS(part_path) |>
+    filter(n_days == 6L) |>
+    select(metric, metric_geometry, value)
+}
+duration_anchor_values <- if (length(duration_part_paths)) {
+  message(
+    "RQ1 startup: scan ", length(duration_part_paths),
+    " duration anchor parts; workers=", STARTUP_WORKERS
+  )
+  anchor_schedule_idx <- order(
+    as.numeric(file.info(duration_part_paths)$size), decreasing = TRUE, na.last = TRUE
+  )
+  if (.Platform$OS.type != "windows" && STARTUP_WORKERS > 1L) {
+    anchor_parts_scheduled <- parallel::mclapply(
+      duration_part_paths[anchor_schedule_idx], read_duration_anchor_part,
+      mc.cores = min(STARTUP_WORKERS, length(duration_part_paths)),
+      mc.preschedule = FALSE, mc.set.seed = FALSE
+    )
+    anchor_parts <- anchor_parts_scheduled[order(anchor_schedule_idx)]
+    bind_rows(anchor_parts)
+  } else {
+    map_dfr(duration_part_paths, read_duration_anchor_part)
+  }
+} else {
+  duration_artifact |>
+    filter(n_days == 6L) |>
+    select(metric, metric_geometry, value)
+}
+'''
+rq1 = replace_once(rq1, rq1_anchor_old, rq1_anchor_new, "RQ1 duration-anchor parallel patch")
 
 rq1_duration_old = '''pending_duration <- duration_tasks[!vapply(duration_tasks, function(task) is.finite(rq1_marker_rows(task$part_path)), logical(1))]
 if (length(pending_duration)) {
