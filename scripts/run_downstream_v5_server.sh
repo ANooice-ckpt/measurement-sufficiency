@@ -60,6 +60,10 @@ LOG="results/logs/downstream_v5.log"
     cat("Structural preflight passed: 67 canonical parts; 15 duration types; 5 adjacent duration types\n")
   '
 
+  # Retired v4 checkpoint files are scientifically incompatible with v5 and can
+  # be large. Remove them now; v5 uses a separate checkpoints_v5 directory.
+  rm -rf results/rq2/checkpoints
+
   # Remove only stale final products. Versioned v5 checkpoints/shards are kept
   # so an interrupted RQ2 run remains resumable.
   rm -f \
