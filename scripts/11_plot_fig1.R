@@ -25,6 +25,8 @@ DIM_TITLES <- c(
   temporal = "Temporal resolution", duration = "Monitoring duration"
 )
 METRIC_CLASSES <- MS_METRIC_CLASSES
+FIG1_PANEL_TITLE_SIZE <- 7.6
+FIG1_SUBPANEL_TITLE_SIZE <- 6.5
 
 pairwise_artifact <- readRDS(RQ1_LONG)
 summary <- readr::read_csv(SUMMARY_CSV, show_col_types = FALSE, progress = FALSE)
@@ -58,7 +60,7 @@ if (any(!is.na(summary$rq1_analysis_version) & summary$rq1_analysis_version != R
 }
 
 pretty_transition <- function(x) {
-  stringr::str_replace_all(as.character(x), "\\s+to\\s+", " → ")
+  stringr::str_replace_all(as.character(x), "\\s+to\\s+", " to ")
 }
 
 theme_fig1 <- function(base_size = 6.8, legend_position = "none") {
@@ -72,8 +74,8 @@ theme_fig1 <- function(base_size = 6.8, legend_position = "none") {
       axis.ticks = element_line(colour = "#4F5356", linewidth = .28),
       strip.background = element_blank(),
       strip.text = element_text(face = "bold", colour = "#25282A", margin = margin(1, 2, 2, 2)),
-      plot.title = element_text(size = base_size + .8, face = "bold", margin = margin(b = 3)),
-      plot.margin = margin(3, 4, 3, 4)
+      plot.title = element_text(size = FIG1_PANEL_TITLE_SIZE, face = "bold", margin = margin(b = 3)),
+      plot.margin = margin(2, 3, 2, 3)
     )
 }
 
@@ -191,9 +193,11 @@ p1a <- ggplot(dimension_metric, aes(A_relative, metric_class, color = metric_cla
     panel.grid.major.y = element_blank(),
     axis.line.y = element_blank(), axis.ticks.y = element_blank(),
     axis.text.y = element_text(size = 6.0, face = "bold"),
-    strip.text.x = element_text(size = 6.5),
+    strip.text.x = element_text(size = FIG1_SUBPANEL_TITLE_SIZE, hjust = .5),
     panel.spacing.x = grid::unit(2.4, "mm"),
-    plot.margin = margin(2, 4, 3, 4)
+    # Reserve the same left-side visual gutter used by panel b's y-axis
+    # title/ticks so the first panel-a axis endpoint sits over panel b.
+    plot.margin = margin(2, 3, 2, 18)
   )
 
 # -----------------------------------------------------------------------------
@@ -243,15 +247,15 @@ target_geometry <- summary |>
     A_mean_absolute, B_mean_signed, transition = pair_label,
     A_boot_q025, A_boot_q975, B_boot_q025, B_boot_q975,
     facet_label = case_when(
-      dimension == "placement" ~ "Placement  ·  Chest/Wrist → Eye",
-      dimension == "optical" ~ "Optical  ·  LIGHT → MEDI",
+      dimension == "placement" ~ "Placement | Chest/Wrist to Eye",
+      dimension == "optical" ~ "Optical | LIGHT to MEDI",
       TRUE ~ dimension
     )
   ) |>
   mutate(
     facet_label = factor(
       facet_label,
-      levels = c("Placement  ·  Chest/Wrist → Eye", "Optical  ·  LIGHT → MEDI")
+      levels = c("Placement | Chest/Wrist to Eye", "Optical | LIGHT to MEDI")
     ),
     metric_class = factor(metric_class, levels = METRIC_CLASSES)
   )
@@ -303,13 +307,14 @@ p1b <- ggplot(target_geometry, aes(B_mean_signed, A_mean_absolute, color = metri
   scale_color_ms_metric(guide = "none") +
   scale_x_continuous(
     trans = scales::transform_asinh(),
-    breaks = scales::breaks_extended(n = 4),
-    expand = expansion(mult = c(.06, .08))
+    breaks = scales::breaks_extended(n = 6),
+    expand = expansion(mult = c(.05, .06))
   ) +
   scale_y_continuous(
     trans = scales::transform_asinh(),
-    breaks = scales::breaks_extended(n = 4),
-    expand = expansion(mult = c(.02, .08))
+    limits = c(0, NA),
+    breaks = scales::breaks_extended(n = 6),
+    expand = expansion(mult = c(0, .06))
   ) +
   labs(
     title = "b  Directionality and magnitude of target-aligned distortion",
@@ -318,9 +323,11 @@ p1b <- ggplot(target_geometry, aes(B_mean_signed, A_mean_absolute, color = metri
   theme_fig1(base_size = 6.7) +
   theme(
     panel.grid.major = element_blank(),
-    strip.text.x = element_text(size = 6.0),
-    panel.spacing.x = grid::unit(3.2, "mm"),
-    plot.margin = margin(2, 4, 2, 4)
+    strip.text.x = element_text(size = FIG1_SUBPANEL_TITLE_SIZE, hjust = .5),
+    panel.spacing.x = grid::unit(2.6, "mm"),
+    # Pull the plotting field left so its vertical axis shares panel a's
+    # first-axis endpoint; the tick labels remain inside the page gutter.
+    plot.margin = margin(2, 3, 2, -20)
   )
 
 # -----------------------------------------------------------------------------
@@ -397,7 +404,7 @@ readr::write_csv(
   file.path("results", "rq1", "fig1_local_response_aggregated.csv"), na = ""
 )
 
-local_distribution_panel <- function(dim, letter) {
+local_distribution_panel <- function(dim, subpanel_title = DIM_TITLES[[dim]]) {
   d <- local_display |> filter(dimension == dim)
   ds <- local_summary |> filter(dimension == dim)
   if (!nrow(d) || !nrow(ds)) stop("No local response rows for Fig. 1 dimension: ", dim)
@@ -439,7 +446,7 @@ local_distribution_panel <- function(dim, letter) {
       expand = expansion(add = c(.38, .38))
     ) +
     labs(
-      title = paste0(letter, "  ", DIM_TITLES[[dim]]),
+      title = subpanel_title,
       x = "share of local response", y = NULL
     ) +
     theme_fig1(base_size = 6.55) +
@@ -447,12 +454,24 @@ local_distribution_panel <- function(dim, letter) {
       panel.grid.major.y = element_blank(),
       axis.line.y = element_blank(), axis.ticks.y = element_blank(),
       axis.text.y = element_text(size = 5.35),
-      plot.margin = margin(2, 4, 2, 3)
+      plot.title = element_text(
+        size = FIG1_SUBPANEL_TITLE_SIZE, face = "bold", hjust = .5,
+        margin = margin(b = 2)
+      ),
+      plot.margin = margin(2, 3, 2, 3)
     )
 }
 
-p1c <- local_distribution_panel("temporal", "c")
-p1d <- local_distribution_panel("duration", "d")
+p1c <- local_distribution_panel("temporal", "Temporal resolution") +
+  theme(
+    axis.title.x = element_blank(),
+    # Match the title baseline to panel b while preserving the equal c/d rows.
+    plot.margin = margin(12, 3, .5, 3)
+  )
+p1d <- local_distribution_panel("duration", "Monitoring duration") +
+  theme(
+    plot.margin = margin(.5, 3, .5, 3)
+  )
 
 # One compact legend governs the main figure. Panel a also labels every class,
 # so the legend is a cross-panel color key rather than the only class identifier.
@@ -482,13 +501,26 @@ metric_legend <- cowplot::get_legend(metric_legend_source)
 # Asymmetric composition: the distribution atlas is a compact header; the A/B
 # geometry occupies the main lower-left field; ordered-axis distributions form a
 # dense diagnostic column at right. This avoids equal-size dashboard panels.
-right_column <- cowplot::plot_grid(
-  p1c, p1d, ncol = 1, rel_heights = c(1.10, .92),
+panel_c_spacer <- cowplot::ggdraw()
+right_column_core <- cowplot::plot_grid(
+  panel_c_spacer, p1c, p1d, ncol = 1, rel_heights = c(.14, 1.05, .95),
   align = "v", axis = "l", greedy = TRUE
 )
+right_column <- cowplot::ggdraw() +
+  # A tiny common downward nudge closes the remaining raster-pixel gap
+  # between the c-top/d-bottom frames and panel b's corresponding edges.
+  cowplot::draw_plot(right_column_core, x = 0, y = -.004, width = 1, height = 1) +
+  cowplot::draw_label(
+    "c  Ordered-axis local response",
+    x = 0, y = .92, hjust = 0, vjust = .5,
+    size = FIG1_PANEL_TITLE_SIZE, fontface = "bold",
+    colour = "#151515", fontfamily = MS_FONT
+  )
 lower <- cowplot::plot_grid(
-  p1b, right_column, ncol = 2, rel_widths = c(1.48, .82),
-  align = "hv", axis = "tblr", greedy = TRUE
+  p1b, right_column, ncol = 2, rel_widths = c(1.43, .87),
+  # Expand the right column around the lower-row center so its actual upper
+  # and lower plotting-frame boundaries track panel b together.
+  align = "h", axis = "b", greedy = TRUE, scale = c(1, 1.134)
 )
 fig1body <- cowplot::plot_grid(
   p1a, lower, ncol = 1, rel_heights = c(.72, 1.58),
@@ -498,8 +530,8 @@ fig1 <- cowplot::plot_grid(
   metric_legend, fig1body, ncol = 1,
   rel_heights = c(.040, 1), align = "v", greedy = TRUE
 )
-ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.pdf"), 9.0, 6.0)
-ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.png"), 9.0, 6.0)
+ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.pdf"), 8.6, 5.7)
+ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.png"), 8.6, 5.7)
 
 # -----------------------------------------------------------------------------
 # Supplementary figures
