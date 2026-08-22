@@ -20,7 +20,7 @@ export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
 export VECLIB_MAXIMUM_THREADS="${VECLIB_MAXIMUM_THREADS:-1}"
 export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"
 
-# Defaults tuned for the 48-physical-core / 192-GiB ECS node.
+# Defaults tuned for the 48-physical-core / ~185-GiB usable ECS node.
 export CORE_WORKERS="${CORE_WORKERS:-48}"
 export CORE_DURATION_WORKERS="${CORE_DURATION_WORKERS:-32}"
 export CORE_FORCE="${CORE_FORCE:-0}"
@@ -28,8 +28,8 @@ export RQ1_BOOT="${RQ1_BOOT:-1000}"
 export RQ1_STARTUP_WORKERS="${RQ1_STARTUP_WORKERS:-24}"
 export RQ1_PART_WORKERS="${RQ1_PART_WORKERS:-44}"
 export RQ1_BOOT_WORKERS="${RQ1_BOOT_WORKERS:-40}"
-# Fragment workers are memory-bound: an observed worker peaked near 25 GiB RSS.
-export RQ1_FRAGMENT_WORKERS="${RQ1_FRAGMENT_WORKERS:-6}"
+# Memory-safe fragments were validated at 8 workers with ~85 GiB whole-node peak.
+export RQ1_FRAGMENT_WORKERS="${RQ1_FRAGMENT_WORKERS:-10}"
 export RQ1_PART_COMPRESSION="${RQ1_PART_COMPRESSION:-gzip}"
 export RQ2_WORKERS="${RQ2_WORKERS:-40}"
 export RQ2_CV_FOLDS="${RQ2_CV_FOLDS:-5}"
@@ -62,8 +62,9 @@ export RQ3_WORKERS="${RQ3_WORKERS:-32}"
     cat("Project package preflight passed\n")
   '
 
-  echo "Generate runtime-only scheduling patches"
+  echo "Generate runtime-only scheduling and memory-safe RQ1 patches"
   python3 scripts/utils/build_runtime_optimized.py
+  python3 scripts/utils/patch_rq1_memory_safe.py
   Rscript --vanilla -e 'invisible(lapply(c("results/runtime/duration_artifacts.optimized.R", "results/runtime/09_build_core_artifacts.optimized.R", "results/runtime/10_rq1_analysis.optimized.R"), parse)); cat("Optimized R entry points parse successfully\n")'
   echo
 
