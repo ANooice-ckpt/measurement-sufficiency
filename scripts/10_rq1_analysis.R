@@ -6,10 +6,11 @@ source("scripts/utils/parallel_runtime.R")
 source("scripts/utils/rq1_pairwise_artifacts.R")
 
 # RQ1 canonical object: pairwise representation change between two observed
-# configuration states.  Orientation is unique: state_a is the less demanding
-# state for ordered dimensions (coarser temporal sampling / shorter duration),
-# state_b is the more demanding state; delta = value_a - value_b.  Placement and
-# optical pairs use the explicit left-to-right facet orientation documented below.
+# configuration states. Orientation is unique: state_a is the lower-requirement
+# or less target-aligned state and state_b is the higher-requirement or
+# target-aligned state; delta = value_b - value_a. Placement and optical use
+# task-specific target alignment, while temporal and duration use measurement
+# refinement / accumulation.
 CORE_ROOT <- file.path("results", "core")
 CORE_METRICS <- file.path(CORE_ROOT, "metric_cube.csv.gz")
 DURATION_CUBE <- file.path(CORE_ROOT, "duration_metric_cube.rds")
@@ -53,7 +54,7 @@ if (any(cube$resolution_s == 15L)) stop("15-s state detected")
 if (!all(PRIMARY_TEMPORAL_S %in% unique(cube$resolution_s))) stop("Primary temporal state missing")
 metric_meta <- cube |> distinct(metric, metric_class, metric_scope, metric_geometry)
 if (n_distinct(metric_meta$metric) != 54L) stop("Expected 54 target metrics")
-RQ1_ANALYSIS_VERSION <- paste0("rq1_v5_adaptive_partitioned_pairwise_config_keyed__", CORE_VERSION)
+RQ1_ANALYSIS_VERSION <- paste0("rq1_v5_oriented_pairwise_config_keyed__", CORE_VERSION)
 
 temporal_label <- function(x) case_when(
   x < 60L ~ paste0(x, " s"), x %% 60L == 0L ~ paste0(x %/% 60L, " min"), TRUE ~ paste0(x, " s")
@@ -112,7 +113,9 @@ choose_metric_support <- function(df, medi_support, full_support) {
 pair_configuration_values <- function(state_a, state_b, dimension, lattice, pair_id,
                                       config_a_label, config_b_label,
                                       ordered_dimension = FALSE, adjacent = FALSE,
-                                      anchor_projection = FALSE, relation = "unordered") {
+                                      anchor_projection = FALSE, relation = "scientific_orientation",
+                                      orientation_type = "scientific_orientation",
+                                      orientation_basis = NA_character_) {
   keys <- c("support_id", "site", "Id", "analysis_unit_type", "Date", "metric")
   a <- state_a |>
     select(all_of(keys), metric_class, metric_scope, metric_geometry,
@@ -127,6 +130,7 @@ pair_configuration_values <- function(state_a, state_b, dimension, lattice, pair
       config_a_label = config_a_label, config_b_label = config_b_label,
       ordered_dimension = ordered_dimension, adjacent_transition = adjacent,
       anchor_projection = anchor_projection, requirement_relation = relation,
+      orientation_type = orientation_type, orientation_basis = orientation_basis,
       window_id_a = NA_character_, window_id_b = NA_character_,
       n_days_a = NA_integer_, n_days_b = NA_integer_,
       pair_available = coalesce(available_a, FALSE) & coalesce(available_b, FALSE) &
@@ -140,7 +144,8 @@ pair_configuration_values <- function(state_a, state_b, dimension, lattice, pair
     select(
       dimension, comparison_lattice, comparison_pair_id, config_a_id, config_b_id,
       config_a_label, config_b_label, ordered_dimension, adjacent_transition,
-      anchor_projection, requirement_relation, support_id, site, Id, analysis_unit_type,
+      anchor_projection, requirement_relation, orientation_type, orientation_basis,
+      support_id, site, Id, analysis_unit_type,
       analysis_unit_id_a, analysis_unit_id_b, Date, window_id_a, window_id_b, n_days_a, n_days_b,
       metric, metric_class, metric_scope, metric_geometry, value_a, value_b,
       available_a, available_b, pair_available, pair_unavailable_reason
@@ -155,14 +160,19 @@ placement_pairs <- map_dfr(c("chest", "wrist"), function(pos) {
   pair_configuration_values(
     z |> filter(placement == pos), z |> filter(placement == "eye"), "placement",
     paste0("placement_", pos), paste0(pos, "_vs_eye"), stringr::str_to_title(pos), "Eye",
-    relation = "unordered_facet"
+    relation = "a_alternative_to_b_target_aligned",
+    orientation_type = "target_alignment",
+    orientation_basis = "near-eye placement aligned with ocular exposure target"
   )
 })
 
 optical_base <- cube |> filter(support_id == "eye_full", placement == "eye", optical %in% c("MEDI", "LIGHT"), resolution_s == 10L)
 optical_pairs <- pair_configuration_values(
   optical_base |> filter(optical == "LIGHT"), optical_base |> filter(optical == "MEDI"),
-  "optical", "optical", "LIGHT_vs_MEDI", "LIGHT", "MEDI", relation = "unordered_facet"
+  "optical", "optical", "LIGHT_vs_MEDI", "LIGHT", "MEDI",
+  relation = "a_alternative_to_b_target_aligned",
+  orientation_type = "target_alignment",
+  orientation_basis = "MEDI aligned with non-visual melanopic exposure target"
 )
 
 temporal_pairs <- map_dfr(combn(PRIMARY_TEMPORAL_S, 2L, simplify = FALSE), function(x) {
@@ -174,7 +184,9 @@ temporal_pairs <- map_dfr(combn(PRIMARY_TEMPORAL_S, 2L, simplify = FALSE), funct
     z |> filter(resolution_s == coarse), z |> filter(resolution_s == fine), "temporal", "temporal",
     paste0(coarse, "s_vs_", fine, "s"), temporal_label(coarse), temporal_label(fine),
     ordered_dimension = TRUE, adjacent = adjacent, anchor_projection = fine == 10L,
-    relation = "a_coarser_than_b"
+    relation = "a_coarser_than_b",
+    orientation_type = "measurement_refinement",
+    orientation_basis = "finer temporal sampling"
   )
 })
 
@@ -232,7 +244,10 @@ build_duration_pair_chunk <- function(duration_values, window_pairs) {
       config_a_label = paste0(n_days_a, " d (", as.character(start_a), "–", as.character(end_a), ")"),
       config_b_label = paste0(n_days_b, " d (", as.character(start_b), "–", as.character(end_b), ")"),
       ordered_dimension = TRUE, adjacent_transition, anchor_projection = n_days_b == 6L,
-      requirement_relation = "a_shorter_than_b", support_id, site, Id,
+      requirement_relation = "a_shorter_than_b",
+      orientation_type = "measurement_accumulation",
+      orientation_basis = "longer monitoring duration",
+      support_id, site, Id,
       analysis_unit_type = "participant_window", analysis_unit_id_a, analysis_unit_id_b, Date = as.Date(NA),
       window_id_a = window_a, window_id_b = window_b, n_days_a = as.integer(n_days_a), n_days_b = as.integer(n_days_b),
       metric, metric_class, metric_scope, metric_geometry, value_a, value_b,
@@ -246,8 +261,8 @@ build_duration_pair_chunk <- function(duration_values, window_pairs) {
     )
 }
 
-# Duration blocks are large.  Keep only one support/site block in each worker;
-# never bind all duration pairwise rows in the master process.  The standardizer
+# Duration blocks are large. Keep only one support/site block in each worker;
+# never bind all duration pairwise rows in the master process. The standardizer
 # is computed once from the frozen anchor states and then applied independently
 # to every immutable RQ1 part.
 duration_columns <- c("support_id", "site", "Id", "window_id", "config_id", "metric", "metric_class",
@@ -296,7 +311,8 @@ readr::write_csv(standardizers, file.path(DIAG, "rq1_standardizer_audit.csv"), n
 
 summary_groups <- c("dimension", "comparison_lattice", "comparison_pair_id", "config_a_id", "config_b_id",
                     "config_a_label", "config_b_label", "ordered_dimension", "adjacent_transition",
-                    "anchor_projection", "requirement_relation", "metric", "metric_class", "metric_geometry")
+                    "anchor_projection", "requirement_relation", "orientation_type", "orientation_basis",
+                    "metric", "metric_class", "metric_geometry")
 
 canonicalize_pairs <- function(raw) {
   if (!nrow(raw)) return(tibble())
@@ -314,7 +330,7 @@ canonicalize_pairs <- function(raw) {
     ) |>
     left_join(standardizers, by = c("comparison_lattice", "metric", "scale_anchor_config", "metric_geometry")) |>
     mutate(
-      delta = if_else(metric_geometry == "circular_time", circular_delta(value_a, value_b), value_a - value_b),
+      delta = if_else(metric_geometry == "circular_time", circular_delta(value_b, value_a), value_b - value_a),
       available = pair_available & !coalesce(zero_or_near_zero, TRUE) & is.finite(delta) & is.finite(standardizer),
       unavailable_reason = case_when(
         !pair_available ~ pair_unavailable_reason,
@@ -329,7 +345,7 @@ canonicalize_pairs <- function(raw) {
     select(core_artifact_version, rq1_analysis_version, pair_key, dimension, comparison_lattice,
            comparison_pair_id, config_a_id, config_b_id, config_a_label, config_b_label,
            ordered_dimension, adjacent_transition, anchor_projection, requirement_relation,
-           scale_anchor_config, support_id, site, Id, analysis_unit_type,
+           orientation_type, orientation_basis, scale_anchor_config, support_id, site, Id, analysis_unit_type,
            analysis_unit_id_a, analysis_unit_id_b, Date, window_id_a, window_id_b, n_days_a, n_days_b,
            metric, metric_class, metric_scope, metric_geometry, value_a, value_b, delta, z, robust_z,
            available_a, available_b, pair_available, available, unavailable_reason)
@@ -507,6 +523,7 @@ readr::write_csv(anchor_projection, file.path(OUT, "rq1_anchor_projection.csv"),
 local_summary <- summary |> filter(adjacent_transition) |>
   transmute(metric, metric_class, dimension, comparison_lattice, lower_level = config_a_label,
             higher_level = config_b_label, config_a_id, config_b_id, adjacent_transition,
+            orientation_type, orientation_basis,
             G = A_mean_absolute, A = A_mean_absolute, B = B_mean_signed,
             n_participants, n_units, core_artifact_version, rq1_analysis_version)
 readr::write_csv(local_summary, file.path(OUT, "rq1_local_transition_summary.csv"), na = "")
@@ -552,10 +569,13 @@ writeLines(c(
   paste0("Pairwise change rows: ", sum(all_part_records$rows)), paste0("Finite/available rows: ", sum(summary$n_units)),
   paste0("Canonical storage: ", normalizePath(file.path(OUT, "rq1_pairwise_change_long.rds"), winslash = "/", mustWork = FALSE)),
   paste0("Pairwise part count: ", nrow(all_part_records), "; duration part workers: ", PART_WORKERS, "; bootstrap workers: ", BOOT_WORKERS),
-  "Canonical orientation: state_a is the less demanding state for ordered dimensions; delta = value_a - value_b.",
+  "Canonical scientific orientation: config_a -> config_b; delta = value_b - value_a.",
+  "Temporal orientation: coarser -> finer sampling. Duration orientation: shorter -> longer monitoring.",
+  "Placement orientation: chest/wrist -> eye, based on near-eye target alignment for ocular exposure.",
+  "Optical orientation: LIGHT -> MEDI, based on melanopic/non-visual target alignment.",
   "Temporal map: all 21 pair types among 10, 20, 30, 60, 300, 900, 1800 s; adjacent transitions are separately flagged.",
   "Duration map: all nested windows within consecutive complete-analysis-day runs, limited to 1-6 d; no protocol seven-day reference.",
-  "The 10-s temporal and longest observed duration states are scale anchors only; they are not forced into the pair ontology.",
-  "Placement and optical comparisons are unordered empirical facets, not burden-ordered sufficiency dimensions."
+  "The 10-s temporal and longest observed duration states are scale anchors only; they are not treated as empirical truth states.",
+  "Placement and optical have target-aligned orientations but no complete measurement-burden order."
 ), file.path(OUT, "RQ1_RUN_REPORT.md"))
 message("RQ1 complete: ", RQ1_ANALYSIS_VERSION, "; rows=", sum(all_part_records$rows), "; parts=", nrow(all_part_records))

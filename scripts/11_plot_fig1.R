@@ -8,7 +8,7 @@ source("scripts/utils/rq1_pairwise_artifacts.R")
 source("scripts/utils/plot_contracts.R")
 
 # Fig. 1 is the RQ1 pairwise atlas. It reads frozen summaries only; no
-# distortion values, bootstrap estimates, or scientific estimands are
+# representation changes, bootstrap estimates, or scientific estimands are
 # recomputed here.
 RQ1_LONG <- file.path("results", "rq1", "rq1_pairwise_change_long.rds")
 SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
@@ -20,7 +20,7 @@ dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
 DIMENSIONS <- c("placement", "optical", "temporal", "duration")
 DIM_TITLES <- c(
-  placement = "Placement", optical = "Optical proxy",
+  placement = "Placement", optical = "Optical representation",
   temporal = "Temporal resolution", duration = "Monitoring duration"
 )
 METRIC_CLASSES <- MS_METRIC_CLASSES
@@ -78,7 +78,7 @@ readr::write_csv(metric_order, file.path("results", "rq1", "figure_metric_order.
 summary_plot <- summary |> mutate(dimension = as.character(dimension)) |> ms_add_metric_order(metric_order)
 availability_plot <- availability |> mutate(dimension = as.character(dimension)) |> ms_add_metric_order(metric_order)
 
-# a-d. Pairwise signed-distortion distributions, shown as empirical quantile
+# a-d. Pairwise signed-change distributions, shown as empirical quantile
 # intervals for each metric and comparison pair.
 distribution_panel <- function(dim, letter) {
   d <- summary_plot |>
@@ -93,7 +93,7 @@ distribution_panel <- function(dim, letter) {
     facet_grid(metric_class ~ ., scales = "free_y", space = "free_y", switch = "y") +
     scale_color_ms_metric() +
     scale_x_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
-    labs(title = paste0(letter, "  ", DIM_TITLES[[dim]]), x = "pairwise standardized distortion, z", y = NULL) +
+    labs(title = paste0(letter, "  ", DIM_TITLES[[dim]]), x = "pairwise standardized representation change, z", y = NULL) +
     theme_ms(base_size = 6.0, legend_position = "none") +
     theme(panel.grid.major.y = element_blank(), axis.text.y = element_text(size = 4.8),
           axis.ticks.y = element_blank(), strip.text.y.left = element_text(size = 5.1))
@@ -113,15 +113,14 @@ p1e <- ggplot(atlas, aes(pair_label, metric)) +
   facet_grid(metric_class ~ dimension, scales = "free", space = "free", switch = "y") +
   ms_direction_scale(name = "B / A") +
   ms_magnitude_size_scale(name = "A = mean |z|", range = c(.25, 3.0)) +
-  labs(title = "e  Pairwise representation-change atlas", x = "oriented comparison pair", y = NULL) +
+  labs(title = "e  Pairwise representation-change atlas", x = "scientifically oriented comparison pair", y = NULL) +
   ms_atlas_theme(base_size = 6.1, x_angle = 52) +
   theme(axis.text.x = element_text(size = 5.1))
 readr::write_csv(atlas |> mutate(dimension = as.character(dimension), metric_class = as.character(metric_class)),
                  file.path("results", "rq1", "fig1_pairwise_atlas.csv"), na = "")
 
-# f-i. A/B geometry. Placement and optical are unordered facets. Temporal and
-# duration use explicitly flagged local transitions, not an artificial single
-# path through all pairwise comparisons or all nested windows.
+# f-i. A/B geometry. Placement and optical use target-aligned comparisons;
+# temporal and duration use explicitly flagged local requirement transitions.
 geometry_panel <- function(dim, letter) {
   if (dim %in% c("temporal", "duration")) {
     d <- local |>
@@ -160,7 +159,7 @@ geometry_panel <- function(dim, letter) {
     scale_color_ms_metric() +
     scale_x_continuous(trans = scales::transform_asinh(), limits = c(-max_display * 1.06, max_display * 1.06), breaks = scales::breaks_extended(n = 4)) +
     scale_y_continuous(trans = scales::transform_asinh(), limits = c(0, max_display * 1.06), breaks = scales::breaks_extended(n = 4)) +
-    labs(title = paste0(letter, "  ", DIM_TITLES[[dim]]), x = "B: mean signed distortion", y = "A: mean absolute distortion") +
+    labs(title = paste0(letter, "  ", DIM_TITLES[[dim]]), x = "B: mean signed change", y = "A: mean absolute change") +
     theme_ms(base_size = 6.3, legend_position = if (dim %in% c("placement", "optical")) "bottom" else "none")
 }
 

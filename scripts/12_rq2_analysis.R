@@ -18,6 +18,7 @@ RQ2_CV_FOLDS <- suppressWarnings(as.integer(Sys.getenv("RQ2_CV_FOLDS", unset = "
 if (!is.finite(RQ2_CV_FOLDS) || RQ2_CV_FOLDS < 2L) RQ2_CV_FOLDS <- 5L
 RQ2_WORKERS <- ms_resolve_workers("RQ2_WORKERS", default = 1L, cap = 48L)
 MODEL_SEED <- 20260821L
+TEMPORAL_GAMMA_S <- c(10L, 20L, 30L, 60L, 300L, 900L, 1800L)
 ensure_result_dirs(OUT, DIAG, CHECKPOINTS)
 for (p in c(RQ1_PAIRWISE, CORE_METRICS, CORE_CONTEXT, DURATION_CUBE)) if (!file.exists(p)) stop("Missing RQ2 input: ", p)
 
@@ -26,7 +27,7 @@ rq1_columns <- c(
   "core_artifact_version", "rq1_analysis_version", "pair_key", "dimension", "comparison_lattice",
   "comparison_pair_id", "config_a_id", "config_b_id", "config_a_label", "config_b_label",
   "ordered_dimension", "adjacent_transition", "anchor_projection", "requirement_relation",
-  "scale_anchor_config", "support_id", "site", "Id", "analysis_unit_type",
+  "orientation_type", "orientation_basis", "scale_anchor_config", "support_id", "site", "Id", "analysis_unit_type",
   "analysis_unit_id_a", "analysis_unit_id_b", "Date", "window_id_a", "window_id_b",
   "n_days_a", "n_days_b", "metric", "metric_class", "metric_scope", "metric_geometry",
   "value_a", "value_b", "delta", "z", "robust_z", "available_a", "available_b",
@@ -52,7 +53,7 @@ CORE_VERSION <- unique(na.omit(c(rq1_artifact$core_artifact_version, rq1$core_ar
 if (length(CORE_VERSION) != 1L) stop("Core version mismatch")
 CORE_VERSION <- CORE_VERSION[[1]]
 if (any(cube$resolution_s == 15L)) stop("15-s core state detected")
-RQ2_VERSION <- paste0("rq2_v4_local_pairwise_gamma__", RQ1_VERSION)
+RQ2_VERSION <- paste0("rq2_v4_oriented_local_pairwise_gamma__", RQ1_VERSION)
 
 safe_mean <- function(x) {x <- x[is.finite(x)]; if (length(x)) mean(x) else NA_real_}
 safe_sd <- function(x) {x <- x[is.finite(x)]; if (length(x) >= 2L) sd(x) else NA_real_}
@@ -67,13 +68,13 @@ standardize <- function(x, geometry) {
   if (geometry == "circular_time") sd(circular_delta(x, circular_mean(x))) else sd(x)
 }
 
-# Explicit branch-cut regression: two marginal shifts straddling ±period/2
-# differ by a small circular displacement, not by a full period.
+# Explicit branch-cut regression: two oriented marginal shifts straddling
+# +/-period/2 differ by a small circular displacement, not by a full period.
 branch_cut_test <- tibble(
-  period = 86400, marginal_b = 43200 - 2, marginal_ref = -43200 + 2,
-  ordinary_difference = marginal_b - marginal_ref,
-  circular_second_difference = circular_delta(marginal_b, marginal_ref),
-  pass = abs(circular_delta(marginal_b, marginal_ref)) < 10
+  period = 86400, marginal_from = 43200 - 2, marginal_to = -43200 + 2,
+  ordinary_difference = marginal_to - marginal_from,
+  circular_second_difference = circular_delta(marginal_to, marginal_from),
+  pass = abs(circular_delta(marginal_to, marginal_from)) < 10
 )
 if (!branch_cut_test$pass) stop("Circular gamma branch-cut regression failed")
 readr::write_csv(branch_cut_test, file.path(DIAG, "rq2_circular_gamma_test.csv"), na = "")
@@ -111,9 +112,9 @@ pair_features <- rq1 |>
     # does not use target departure from a seven-day mean.
     duration_state = NA_real_, duration_day_variability = NA_real_,
     primary_state_name = case_when(
-      dimension == "placement" ~ "reference daily MEDI level",
-      dimension == "optical" ~ "reference daily MEDI level",
-      dimension == "temporal" ~ "reference short-term crossing dynamics",
+      dimension == "placement" ~ "target-aligned daily MEDI level",
+      dimension == "optical" ~ "target-aligned daily MEDI level",
+      dimension == "temporal" ~ "higher-resolution short-term crossing dynamics",
       dimension == "duration" ~ "longer-window MEDI level plus pre-addition day variability",
       TRUE ~ "transition-local exposure state"
     ),
@@ -136,8 +137,6 @@ if (any(rq1$dimension == "duration")) {
     filter(analysis_unit_type == "participant_day", support_id == "eye_medi", placement == "eye", optical == "MEDI", resolution_s == 10L, metric == "mean_MEDI") |>
     select(site, Id, Date, value) |>
     distinct()
-  # Use the manifest-like dates carried by duration cube rows, then fall back to
-  # the adjacent-window date interval for the normal local 1->2 ... 5->6 pairs.
   duration_state <- rq1 |>
     filter(dimension == "duration") |>
     select(pair_key, site, Id, window_id_a, window_id_b, n_days_a) |>
@@ -300,42 +299,79 @@ model_manifest <- dplyr::bind_rows(lapply(model_tasks, function(task) {
 readr::write_csv(model_manifest, file.path(OUT, "rq2_model_artifact_manifest.csv"), na = "")
 
 # -----------------------------------------------------------------------------
-# Gamma: actual four-cell configuration values, with circular-aware first and
-# second differences. Primary local temporal transitions are included.
+# Gamma: actual four-cell configuration values. Each first difference follows
+# dimension_a's scientific orientation; the second difference follows
+# dimension_b's scientific orientation. Circular metrics use circular geometry
+# at both levels.
 # -----------------------------------------------------------------------------
 gamma_block <- function(cells, cell_names, dimension_a, dimension_b, transition, lattice, anchor_support) {
   key <- c("support_id", "site", "Id", "analysis_unit_type", "analysis_unit_id", "Date", "metric")
   z <- cells |> filter(cell %in% cell_names) |> select(all_of(key), metric_class, metric_geometry, cell, value, available)
   wide <- z |> select(-available) |> pivot_wider(names_from = cell, values_from = value)
   if (!all(cell_names %in% names(wide))) return(tibble())
-  wide |> mutate(
-    dimension_a = dimension_a, dimension_b = dimension_b, transition = transition, comparison_lattice = lattice,
-    delta_at_b = .data[[cell_names[[1]]]] - .data[[cell_names[[2]]]],
-    delta_at_ref = .data[[cell_names[[3]]]] - .data[[cell_names[[4]]]],
-    gamma_delta = if_else(metric_geometry == "circular_time", circular_delta(delta_at_b, delta_at_ref), delta_at_b - delta_at_ref),
-    anchor_support = anchor_support
-  )
+  wide |>
+    mutate(
+      dimension_a = dimension_a, dimension_b = dimension_b, transition = transition, comparison_lattice = lattice,
+      delta_at_b_from = if_else(
+        metric_geometry == "circular_time",
+        circular_delta(.data[[cell_names[[2]]]], .data[[cell_names[[1]]]]),
+        .data[[cell_names[[2]]]] - .data[[cell_names[[1]]]]
+      ),
+      delta_at_b_to = if_else(
+        metric_geometry == "circular_time",
+        circular_delta(.data[[cell_names[[4]]]], .data[[cell_names[[3]]]]),
+        .data[[cell_names[[4]]]] - .data[[cell_names[[3]]]]
+      ),
+      gamma_delta = if_else(
+        metric_geometry == "circular_time",
+        circular_delta(delta_at_b_to, delta_at_b_from),
+        delta_at_b_to - delta_at_b_from
+      ),
+      # compatibility aliases retained for downstream readers that only inspect
+      # the long artifact; new interpretation is b_from -> b_to.
+      delta_at_b = delta_at_b_from,
+      delta_at_ref = delta_at_b_to,
+      anchor_support = anchor_support
+    )
 }
 gamma_blocks <- list()
-# placement x optical, full support; light-only MDER/nvRD remain unavailable in cube.
+# placement x optical: dimension_a chest/wrist -> eye; dimension_b LIGHT -> MEDI.
 for (pos in c("chest", "wrist")) {
   sup <- paste0("eye_", pos, "_full")
   cells <- cube |> filter(support_id == sup, resolution_s == 10L, metric %in% unique(rq1$metric)) |>
     mutate(cell = paste(placement, optical, sep = "__"))
-  gamma_blocks[[length(gamma_blocks) + 1L]] <- gamma_block(cells, c(paste(pos, "LIGHT", sep = "__"), paste("eye", "LIGHT", sep = "__"), paste(pos, "MEDI", sep = "__"), paste("eye", "MEDI", sep = "__")), "placement", "optical", paste0(pos, "_MEDI_to_LIGHT"), paste0("placement_", pos, "_x_optical"), sup)
+  gamma_blocks[[length(gamma_blocks) + 1L]] <- gamma_block(
+    cells,
+    c(paste(pos, "LIGHT", sep = "__"), paste("eye", "LIGHT", sep = "__"),
+      paste(pos, "MEDI", sep = "__"), paste("eye", "MEDI", sep = "__")),
+    "placement", "optical", paste0(pos, "_LIGHT_to_MEDI"), paste0("placement_", pos, "_x_optical"), sup
+  )
 }
-# placement x temporal and optical x temporal, using the local adjacent primary transitions.
-for (pos in c("chest", "wrist")) for (j in seq_len(length(c(10L, 20L, 30L, 60L, 300L, 900L)) - 1L)) {
-  lo <- c(10L, 20L, 30L, 60L, 300L, 900L)[j]; hi <- c(10L, 20L, 30L, 60L, 300L, 900L)[j + 1L]; sup <- paste0("eye_", pos, "_full")
-  cells <- cube |> filter(support_id == sup, optical == "MEDI", resolution_s %in% c(lo, hi)) |>
+# placement x temporal and optical x temporal. Temporal orientation is coarse -> fine.
+for (pos in c("chest", "wrist")) for (j in seq_len(length(TEMPORAL_GAMMA_S) - 1L)) {
+  fine <- TEMPORAL_GAMMA_S[j]
+  coarse <- TEMPORAL_GAMMA_S[j + 1L]
+  sup <- paste0("eye_", pos, "_full")
+  cells <- cube |> filter(support_id == sup, optical == "MEDI", resolution_s %in% c(fine, coarse)) |>
     mutate(cell = paste(placement, resolution_s, sep = "__"))
-  gamma_blocks[[length(gamma_blocks) + 1L]] <- gamma_block(cells, c(paste(pos, hi, sep = "__"), paste("eye", hi, sep = "__"), paste(pos, lo, sep = "__"), paste("eye", lo, sep = "__")), "placement", "temporal", paste0(pos, "_", lo, "to", hi), paste0("placement_", pos, "_x_temporal"), sup)
+  gamma_blocks[[length(gamma_blocks) + 1L]] <- gamma_block(
+    cells,
+    c(paste(pos, coarse, sep = "__"), paste("eye", coarse, sep = "__"),
+      paste(pos, fine, sep = "__"), paste("eye", fine, sep = "__")),
+    "placement", "temporal", paste0(pos, "_", coarse, "to", fine), paste0("placement_", pos, "_x_temporal"), sup
+  )
 }
-for (j in seq_len(length(c(10L, 20L, 30L, 60L, 300L, 900L)) - 1L)) {
-  lo <- c(10L, 20L, 30L, 60L, 300L, 900L)[j]; hi <- c(10L, 20L, 30L, 60L, 300L, 900L)[j + 1L]
-  cells <- cube |> filter(support_id == "eye_full", placement == "eye", resolution_s %in% c(lo, hi)) |>
+for (j in seq_len(length(TEMPORAL_GAMMA_S) - 1L)) {
+  fine <- TEMPORAL_GAMMA_S[j]
+  coarse <- TEMPORAL_GAMMA_S[j + 1L]
+  cells <- cube |> filter(support_id == "eye_full", placement == "eye", resolution_s %in% c(fine, coarse)) |>
     mutate(cell = paste(optical, resolution_s, sep = "__"))
-  gamma_blocks[[length(gamma_blocks) + 1L]] <- gamma_block(cells, c(paste("LIGHT", hi, sep = "__"), paste("MEDI", hi, sep = "__"), paste("LIGHT", lo, sep = "__"), paste("MEDI", lo, sep = "__")), "optical", "temporal", paste0(lo, "to", hi), "optical_x_temporal", "eye_full")
+  gamma_blocks[[length(gamma_blocks) + 1L]] <- gamma_block(
+    cells,
+    c(paste("LIGHT", coarse, sep = "__"), paste("MEDI", coarse, sep = "__"),
+      paste("LIGHT", fine, sep = "__"), paste("MEDI", fine, sep = "__")),
+    "optical", "temporal", paste0(coarse, "to", fine), "optical_x_temporal", "eye_full"
+  )
 }
 gamma_raw <- bind_rows(gamma_blocks)
 if (nrow(gamma_raw)) {
@@ -349,7 +385,8 @@ if (nrow(gamma_raw)) {
            core_artifact_version = CORE_VERSION, rq1_analysis_version = RQ1_VERSION, rq2_analysis_version = RQ2_VERSION) |>
     select(core_artifact_version, rq1_analysis_version, rq2_analysis_version, dimension_a, dimension_b, transition,
            comparison_lattice, anchor_support, site, Id, analysis_unit_type, analysis_unit_id, Date, metric, metric_class,
-           metric_geometry, delta_at_b, delta_at_ref, gamma_delta, standardizer, gamma, available)
+           metric_geometry, delta_at_b_from, delta_at_b_to, delta_at_b, delta_at_ref,
+           gamma_delta, standardizer, gamma, available)
 } else gamma_long <- tibble()
 saveRDS(gamma_long, file.path(OUT, "rq2_gamma_long.rds"), compress = "xz")
 gamma_summary <- if (nrow(gamma_long)) gamma_long |> filter(available, is.finite(gamma)) |> group_by(dimension_a, dimension_b, comparison_lattice, transition, metric, metric_class, metric_geometry) |> summarise(n_participants = n_distinct(paste(site, Id, sep = "|")), n_units = n(), R = mean(gamma), Q = mean(abs(gamma)), .groups = "drop") else tibble()
@@ -358,12 +395,12 @@ readr::write_csv(gamma_summary, file.path(OUT, "rq2_gamma_summary.csv"), na = ""
 readr::write_csv(gamma_summary, file.path(OUT, "rq2_conditional_geometry_gamma.csv"), na = "")
 readr::write_csv(tibble(
   dimension_pair = c("placement x optical", "placement x temporal", "optical x temporal", "duration-containing"),
-  primary_scope = c(TRUE, TRUE, TRUE, FALSE), note = c("local full-support four-cell contrast", "adjacent primary temporal transitions", "adjacent primary temporal transitions", "duration enters RQ3 joint stability")
+  primary_scope = c(TRUE, TRUE, TRUE, FALSE), note = c("target-aligned local full-support four-cell contrast", "adjacent primary temporal transitions", "adjacent primary temporal transitions", "duration enters RQ3 joint stability")
 ), file.path(OUT, "rq2_interaction_scope.csv"), na = "")
 
 writeLines(c(
   "# RQ2 run report", "", paste0("RQ1 upstream: ", RQ1_VERSION), paste0("RQ2 analysis version: ", RQ2_VERSION),
-  "Primary conditional transitions: placement, optical, adjacent temporal, and adjacent nested duration windows.",
+  "Primary conditional transitions inherit RQ1 scientific orientation: chest/wrist -> eye; LIGHT -> MEDI; coarse -> fine; short -> long.",
   "Duration state: log(absolute longer-window mean MEDI) plus SD of daily mean MEDI before the added day; no seven-day departure predictor.",
   paste0("Circular gamma branch-cut test passed: gamma_delta = ", format(branch_cut_test$circular_second_difference, digits = 8)),
   paste0("Mixed models executed: ", RUN_MODELS), "Checkpoint directory: results/rq2/checkpoints/"
