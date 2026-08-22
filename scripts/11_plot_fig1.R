@@ -9,7 +9,7 @@ source("scripts/utils/plot_contracts.R")
 
 # Fig. 1 follows the RQ1 logic: prespecified scientific orientation ->
 # representation response -> local change along ordered measurement axes.
-# Complete pairwise z distributions remain available as a supplementary figure.
+# Complete metric-level pairwise detail remains available in supplementary figures.
 RQ1_LONG <- file.path("results", "rq1", "rq1_pairwise_change_long.rds")
 SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
 AVAILABILITY_CSV <- file.path("results", "rq1", "rq1_metric_availability.csv")
@@ -104,11 +104,180 @@ p1a <- ggplot(orientation, aes(x = 0, y = dimension, label = path)) +
     strip.text = element_text(face = "bold", hjust = 0), panel.border = element_blank()
   )
 
-# b. Complete oriented pairwise map. Bubble area is A and fill is B/A;
-# unavailable cells remain visible as crosses rather than being treated as zero.
+# b. Aggregated configuration-response structure. The main panel should expose
+# topology rather than ask the reader to decode all 54 metrics simultaneously.
+# A is first collapsed to one display value per metric x oriented pair, then
+# divided by that metric's maximum A across the complete RQ1 configuration
+# space. Thus relative A retains within-metric effect structure while preventing
+# naturally large-scale metrics from dominating class-level summaries.
+pair_display <- summary |>
+  filter(is.finite(A_mean_absolute)) |>
+  mutate(dimension = as.character(dimension)) |>
+  group_by(dimension, metric, metric_class, pair_label, config_a_label, config_b_label) |>
+  summarise(A_display = median(A_mean_absolute, na.rm = TRUE), .groups = "drop") |>
+  group_by(metric) |>
+  mutate(
+    A_metric_max = max(A_display, na.rm = TRUE),
+    A_relative = if_else(is.finite(A_metric_max) & A_metric_max > 0, A_display / A_metric_max, NA_real_)
+  ) |>
+  ungroup()
+
+alignment_summary <- pair_display |>
+  filter(dimension %in% c("placement", "optical"), is.finite(A_relative)) |>
+  group_by(dimension, pair_label, metric_class) |>
+  summarise(
+    n_metrics = n_distinct(metric),
+    A_relative_median = median(A_relative, na.rm = TRUE),
+    A_relative_q25 = quantile(A_relative, .25, na.rm = TRUE, names = FALSE),
+    A_relative_q75 = quantile(A_relative, .75, na.rm = TRUE, names = FALSE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    metric_class = factor(metric_class, levels = METRIC_CLASSES),
+    dimension = factor(dimension, levels = c("placement", "optical"),
+                       labels = c("Placement", "Optical representation"))
+  )
+if (!nrow(alignment_summary)) stop("No target-alignment rows available for aggregated Fig. 1b")
+
+p1b_alignment <- ggplot(alignment_summary, aes(pair_label, metric_class, fill = A_relative_median)) +
+  geom_tile(color = "white", linewidth = .18) +
+  facet_grid(. ~ dimension, scales = "free_x", space = "free_x") +
+  scale_fill_ms_sequential(
+    limits = c(0, 1), oob = scales::squish,
+    labels = scales::label_number(accuracy = .1), name = "median relative A"
+  ) +
+  labs(title = "b  Target-aligned response", x = "oriented comparison", y = NULL) +
+  theme_ms(base_size = 6.1, legend_position = "bottom") +
+  theme(
+    axis.text.x = element_text(angle = 38, hjust = 1, size = 5.0),
+    axis.ticks.y = element_blank(), panel.grid = element_blank()
+  )
+
+parse_temporal_seconds <- function(x) {
+  x <- str_to_lower(str_trim(as.character(x)))
+  value <- suppressWarnings(as.numeric(str_extract(x, "[0-9.]+")))
+  case_when(
+    str_detect(x, "min") ~ value * 60,
+    str_detect(x, "s") ~ value,
+    TRUE ~ NA_real_
+  )
+}
+parse_duration_days <- function(x) suppressWarnings(as.numeric(str_extract(as.character(x), "[0-9.]+")))
+
+ordered_candidates <- pair_display |>
+  filter(dimension %in% c("temporal", "duration"), is.finite(A_relative)) |>
+  mutate(
+    state_a_value = if_else(dimension == "temporal", parse_temporal_seconds(config_a_label), parse_duration_days(config_a_label)),
+    state_b_value = if_else(dimension == "temporal", parse_temporal_seconds(config_b_label), parse_duration_days(config_b_label)),
+    state_rank_a = case_when(
+      dimension == "temporal" ~ match(state_a_value, c(1800, 900, 300, 60, 30, 20, 10)),
+      dimension == "duration" ~ match(state_a_value, 1:6),
+      TRUE ~ NA_integer_
+    ),
+    state_rank_b = case_when(
+      dimension == "temporal" ~ match(state_b_value, c(1800, 900, 300, 60, 30, 20, 10)),
+      dimension == "duration" ~ match(state_b_value, 1:6),
+      TRUE ~ NA_integer_
+    )
+  )
+if (any(ordered_candidates$dimension == "temporal" & (!is.finite(ordered_candidates$state_rank_a) | !is.finite(ordered_candidates$state_rank_b)))) {
+  stop("Fig. 1b could not parse one or more temporal configuration labels")
+}
+if (any(ordered_candidates$dimension == "duration" & (!is.finite(ordered_candidates$state_rank_a) | !is.finite(ordered_candidates$state_rank_b)))) {
+  stop("Fig. 1b could not parse one or more duration configuration labels")
+}
+
+ordered_metric <- ordered_candidates |>
+  filter(state_rank_a == 1L, state_rank_b > 1L) |>
+  group_by(dimension, metric, metric_class, state_rank = state_rank_b, state_label = config_b_label) |>
+  summarise(A_relative = median(A_relative, na.rm = TRUE), .groups = "drop")
+ordered_baseline <- ordered_candidates |>
+  filter(state_rank_a == 1L) |>
+  distinct(dimension, metric, metric_class, state_label = config_a_label) |>
+  mutate(state_rank = 1L, A_relative = 0)
+ordered_metric <- bind_rows(ordered_baseline, ordered_metric) |>
+  group_by(dimension, metric, metric_class, state_rank) |>
+  summarise(state_label = first(state_label), A_relative = median(A_relative, na.rm = TRUE), .groups = "drop")
+if (!nrow(ordered_metric)) stop("No ordered-axis rows available for aggregated Fig. 1b")
+
+ordered_summary <- ordered_metric |>
+  group_by(dimension, state_rank, state_label, metric_class) |>
+  summarise(
+    n_metrics = n_distinct(metric),
+    A_relative_median = median(A_relative, na.rm = TRUE),
+    A_relative_q25 = quantile(A_relative, .25, na.rm = TRUE, names = FALSE),
+    A_relative_q75 = quantile(A_relative, .75, na.rm = TRUE, names = FALSE),
+    .groups = "drop"
+  )
+
+ordered_response_panel <- function(dim, title) {
+  dm <- ordered_metric |> filter(dimension == dim)
+  ds <- ordered_summary |>
+    filter(dimension == dim) |>
+    mutate(metric_class = factor(metric_class, levels = METRIC_CLASSES))
+  if (!nrow(dm) || !nrow(ds)) stop("No aggregated ordered response rows for Fig. 1b dimension: ", dim)
+  labels <- dm |>
+    group_by(state_rank) |>
+    summarise(state_label = first(state_label), .groups = "drop") |>
+    arrange(state_rank)
+  ggplot() +
+    geom_line(
+      data = dm,
+      aes(state_rank, A_relative, group = metric),
+      color = "#AFAFAF", alpha = .12, linewidth = .24
+    ) +
+    geom_ribbon(
+      data = ds,
+      aes(state_rank, ymin = A_relative_q25, ymax = A_relative_q75,
+          fill = metric_class, group = metric_class),
+      alpha = .10, color = NA
+    ) +
+    geom_line(
+      data = ds,
+      aes(state_rank, A_relative_median, color = metric_class, group = metric_class),
+      linewidth = .62, alpha = .92
+    ) +
+    geom_point(
+      data = ds,
+      aes(state_rank, A_relative_median, color = metric_class),
+      size = .70, alpha = .92
+    ) +
+    scale_color_ms_metric() +
+    scale_fill_ms_metric(guide = "none") +
+    scale_x_continuous(breaks = labels$state_rank, labels = labels$state_label) +
+    scale_y_continuous(limits = c(0, 1.02), breaks = c(0, .25, .5, .75, 1)) +
+    labs(title = title, x = "measurement state", y = "relative A\n(within-metric max = 1)") +
+    theme_ms(base_size = 6.1, legend_position = "none") +
+    theme(axis.text.x = element_text(angle = 38, hjust = 1, size = 5.0))
+}
+
+p1b_temporal <- ordered_response_panel("temporal", "Temporal resolution")
+p1b_duration <- ordered_response_panel("duration", "Monitoring duration")
+p1b <- cowplot::plot_grid(
+  p1b_alignment, p1b_temporal, p1b_duration,
+  ncol = 3, rel_widths = c(1.05, 1.15, 1.05), align = "hv", axis = "tblr"
+)
+
+panel_b_export <- bind_rows(
+  alignment_summary |>
+    transmute(
+      display = "target_alignment", dimension = as.character(dimension), pair_label,
+      state_rank = NA_integer_, state_label = NA_character_, metric_class = as.character(metric_class),
+      n_metrics, A_relative_median, A_relative_q25, A_relative_q75
+    ),
+  ordered_summary |>
+    transmute(
+      display = "measurement_requirement", dimension, pair_label = NA_character_,
+      state_rank, state_label, metric_class = as.character(metric_class),
+      n_metrics, A_relative_median, A_relative_q25, A_relative_q75
+    )
+)
+readr::write_csv(panel_b_export, file.path("results", "rq1", "fig1_panel_b_aggregated.csv"), na = "")
+
+# The former main-panel atlas is retained verbatim as supplementary detail.
 atlas <- summary_plot |> filter(is.finite(A_mean_absolute), is.finite(B_mean_signed))
 atlas_bg <- availability_plot
-p1b <- ggplot(atlas, aes(pair_label, metric)) +
+p1b_atlas <- ggplot(atlas, aes(pair_label, metric)) +
   geom_tile(data = atlas_bg |> filter(representation_available), fill = "#F3F3F3",
             color = "white", linewidth = .10) +
   geom_point(data = atlas_bg |> filter(!representation_available), shape = 4,
@@ -118,7 +287,7 @@ p1b <- ggplot(atlas, aes(pair_label, metric)) +
   facet_grid(metric_class ~ dimension, scales = "free", space = "free", switch = "y") +
   ms_direction_scale(name = "B / A") +
   ms_magnitude_size_scale(name = "A = mean |z|", range = c(.25, 3.0)) +
-  labs(title = "b  Oriented configuration-response atlas", x = "scientifically oriented comparison pair", y = NULL) +
+  labs(title = "Complete oriented configuration-response atlas", x = "scientifically oriented comparison pair", y = NULL) +
   ms_atlas_theme(base_size = 6.1, x_angle = 52) +
   theme(axis.text.x = element_text(size = 5.1))
 readr::write_csv(atlas |> mutate(dimension = as.character(dimension), metric_class = as.character(metric_class)),
@@ -221,12 +390,15 @@ metric_legend <- cowplot::get_legend(metric_legend_source)
 
 middle <- cowplot::plot_grid(p1c, p1d, ncol = 2, align = "hv", axis = "tblr")
 bottom <- cowplot::plot_grid(p1e, p1f, ncol = 2, align = "hv", axis = "tblr")
-fig1body <- cowplot::plot_grid(p1a, p1b, middle, bottom, ncol = 1, rel_heights = c(.75, 2.25, 1.1, 1.15))
-fig1 <- cowplot::plot_grid(fig1body, metric_legend, ncol = 1, rel_heights = c(1, .04))
-ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.pdf"), 15.8, 13.2)
-ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.png"), 15.8, 13.2)
+fig1body <- cowplot::plot_grid(p1a, p1b, middle, bottom, ncol = 1, rel_heights = c(.72, 1.35, 1.1, 1.15))
+fig1 <- cowplot::plot_grid(fig1body, metric_legend, ncol = 1, rel_heights = c(1, .045))
+ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.pdf"), 15.8, 11.8)
+ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.png"), 15.8, 11.8)
 
-# Supplement: complete empirical z distributions for every oriented pair.
+# Supplement: complete metric-level atlas and empirical z distributions.
+ms_plot_save(p1b_atlas, file.path(OUT_DIR, "FigS_RQ1_pairwise_atlas.pdf"), 16, 10)
+ms_plot_save(p1b_atlas, file.path(OUT_DIR, "FigS_RQ1_pairwise_atlas.png"), 16, 10)
+
 distribution_panel <- function(dim, letter) {
   d <- summary_plot |>
     filter(dimension == dim, is.finite(median_z)) |>
@@ -264,9 +436,10 @@ ms_plot_save(p_availability, file.path(OUT_DIR, "FigS_RQ1_availability_atlas.png
 ms_plot_write_manifest(
   file.path(OUT_DIR, "figure_artifact_manifest.csv"),
   tibble(
-    figure = c("Fig1_RQ1", "FigS_RQ1_pairwise_distributions", "FigS_RQ1_availability_atlas"),
+    figure = c("Fig1_RQ1", "FigS_RQ1_pairwise_atlas", "FigS_RQ1_pairwise_distributions", "FigS_RQ1_availability_atlas"),
     input_artifact = c(
       "rq1_pairwise_summary + rq1_metric_availability + rq1_local_transition_summary",
+      "rq1_pairwise_summary + rq1_metric_availability",
       "rq1_pairwise_summary",
       "rq1_metric_availability"
     ),
@@ -274,4 +447,4 @@ ms_plot_write_manifest(
     rq2_analysis_version = NA_character_, rq3_analysis_version = NA_character_
   )
 )
-message("Fig. 1 complete: scientific orientation, configuration-response atlas, target-aligned A/B geometry, and local G response.")
+message("Fig. 1 complete: aggregated configuration-response structure, target-aligned A/B geometry, and local G response; full metric atlas retained as supplement.")
