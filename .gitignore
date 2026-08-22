@@ -10,6 +10,10 @@ external/melidosData/*
 !external/melidosData/.gitkeep
 external/zauner_position/*
 !external/zauner_position/.gitkeep
+!external/zauner_position/data/
+external/zauner_position/data/*
+!external/zauner_position/data/prepared_metrics.RData
+!external/zauner_position/data/metric_types.xlsx
 
 # Generated outputs
 results/
