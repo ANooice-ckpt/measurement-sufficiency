@@ -22,6 +22,7 @@ export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"
 
 # Defaults tuned for the 48-physical-core / 192-GiB ECS node.
 export CORE_WORKERS="${CORE_WORKERS:-48}"
+export CORE_DURATION_WORKERS="${CORE_DURATION_WORKERS:-16}"
 export CORE_FORCE="${CORE_FORCE:-0}"
 export RQ1_BOOT="${RQ1_BOOT:-1000}"
 export RQ1_PART_WORKERS="${RQ1_PART_WORKERS:-44}"
@@ -38,7 +39,7 @@ export RQ3_WORKERS="${RQ3_WORKERS:-32}"
   echo "Repository: ${ROOT}"
   echo "Host: $(hostname)"
   echo "Commit: $(git rev-parse HEAD)"
-  echo "Workers: core=${CORE_WORKERS}; rq1_parts=${RQ1_PART_WORKERS}; rq1_boot=${RQ1_BOOT_WORKERS}; rq1_fragments=${RQ1_FRAGMENT_WORKERS}; rq2=${RQ2_WORKERS}; rq3=${RQ3_WORKERS}"
+  echo "Workers: core=${CORE_WORKERS}; core_duration=${CORE_DURATION_WORKERS}; rq1_parts=${RQ1_PART_WORKERS}; rq1_boot=${RQ1_BOOT_WORKERS}; rq1_fragments=${RQ1_FRAGMENT_WORKERS}; rq2=${RQ2_WORKERS}; rq3=${RQ3_WORKERS}"
   echo
 
   echo "===== PREFLIGHT ====="
@@ -61,7 +62,7 @@ export RQ3_WORKERS="${RQ3_WORKERS:-32}"
 
   echo "Generate runtime-only scheduling patches"
   python3 scripts/utils/build_runtime_optimized.py
-  Rscript --vanilla -e 'invisible(lapply(c("results/runtime/09_build_core_artifacts.optimized.R", "results/runtime/10_rq1_analysis.optimized.R"), parse)); cat("Optimized R entry points parse successfully\n")'
+  Rscript --vanilla -e 'invisible(lapply(c("results/runtime/duration_artifacts.optimized.R", "results/runtime/09_build_core_artifacts.optimized.R", "results/runtime/10_rq1_analysis.optimized.R"), parse)); cat("Optimized R entry points parse successfully\n")'
   echo
 
   echo "===== CORE PIPELINE ====="
@@ -86,8 +87,8 @@ export RQ3_WORKERS="${RQ3_WORKERS:-32}"
   echo "[7/8] Preserve raw spans and protocol trial metadata"
   Rscript scripts/04c_prepare_raw_eye_spans.R
 
-  echo "[8/8] Build versioned core artifacts with ${CORE_WORKERS} workers (LPT scheduled)"
-  CORE_WORKERS="${CORE_WORKERS}" CORE_FORCE="${CORE_FORCE}" Rscript results/runtime/09_build_core_artifacts.optimized.R
+  echo "[8/8] Build versioned core artifacts with ${CORE_WORKERS} workers (LPT scheduled); duration workers=${CORE_DURATION_WORKERS}"
+  CORE_WORKERS="${CORE_WORKERS}" CORE_DURATION_WORKERS="${CORE_DURATION_WORKERS}" CORE_FORCE="${CORE_FORCE}" Rscript results/runtime/09_build_core_artifacts.optimized.R
 
   echo
   echo "===== RQ1 ====="
