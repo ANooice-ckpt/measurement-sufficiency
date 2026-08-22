@@ -167,8 +167,8 @@ core_path = ROOT / "scripts" / "09_build_core_artifacts.R"
 core = core_path.read_text(encoding="utf-8")
 core = replace_once(
     core,
-    'source("scripts/utils/duration_artifacts.R")',
-    'source("results/runtime/duration_artifacts.optimized.R")',
+    'source("scripts/utils/duration_artifacts.R")\nsource("scripts/utils/weather_era5.R")\nsuppressPackageStartupMessages({',
+    'source("results/runtime/duration_artifacts.optimized.R")\nsource("scripts/utils/weather_era5.R")\nsuppressPackageStartupMessages({',
     "core optimized duration source patch",
 )
 
