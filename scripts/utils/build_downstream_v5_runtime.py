@@ -43,6 +43,34 @@ def patch_rq3(text: str) -> str:
     new = 'inner_join(a, b, by = c("support_id", "site", "Id"), relationship = "many-to-many") |>'
     text = replace_once(text, old, new, "RQ3 Cartesian join patch")
 
+    # The joint scale anchor must remain the frozen high-information state,
+    # eye / MEDI / 10 s / 6 d. Pooling chest/wrist or LIGHT into the denominator
+    # would make the standardized joint distortion depend on the alternatives.
+    old_anchor = 'filter(resolution_s == 10L, n_days == 6L, available, is.finite(value)) |>'
+    new_anchor = 'filter(placement == "eye", optical == "MEDI", resolution_s == 10L, n_days == 6L, available, is.finite(value)) |>'
+    text = replace_once(text, old_anchor, new_anchor, "RQ3 joint anchor patch")
+
+    # Unavailable state representations are not observed joint states.
+    old_states = '''state_parts[[i]] <- z |>
+    distinct(support_id, placement, optical, resolution_s, n_days, metric, metric_class, metric_geometry)'''
+    new_states = '''state_parts[[i]] <- z |>
+    filter(available, is.finite(value)) |>
+    distinct(support_id, placement, optical, resolution_s, n_days, metric, metric_class, metric_geometry)'''
+    text = replace_once(text, old_states, new_states, "RQ3 available joint-state catalogue patch")
+
+    # A state is analysable only when its support/metric anchor dispersion is
+    # defined. Otherwise it is unavailable, not a false upper boundary.
+    old_catalog = '''joint_state_catalog <- bind_rows(state_parts) |>
+  distinct() |>
+  mutate(config_id = paste0("r", resolution_s, "__d", n_days))'''
+    new_catalog = '''joint_state_catalog <- bind_rows(state_parts) |>
+  distinct() |>
+  left_join(joint_anchor, by = c("support_id", "metric", "metric_geometry")) |>
+  filter(is.finite(standardizer), standardizer > 0) |>
+  select(-standardizer) |>
+  mutate(config_id = paste0("r", resolution_s, "__d", n_days))'''
+    text = replace_once(text, old_catalog, new_catalog, "RQ3 analysable joint-state catalogue patch")
+
     # Fig. 4d is a pair-level fraction across metrics. Grouping by metric_class
     # creates duplicate epsilon rows that the plot then incorrectly connects as
     # one line, so metric class must not define the coverage estimand.
