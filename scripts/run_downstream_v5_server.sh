@@ -39,6 +39,27 @@ LOG="results/logs/downstream_v5.log"
     cat("All downstream v5 runtime scripts parse successfully\n")
   '
 
+  echo "===== STRUCTURAL PREFLIGHT ====="
+  Rscript -e '
+    suppressPackageStartupMessages(library(tidyverse))
+    manifest <- readRDS("results/rq1/rq1_pairwise_change_long.rds")
+    if (!is.list(manifest) || !identical(manifest$artifact_type, "partitioned_rq1_pairwise_change")) {
+      stop("RQ1 pairwise artifact is not the required partitioned manifest")
+    }
+    if (length(manifest$parts) != 67L) stop("Expected 67 canonical RQ1 parts; found ", length(manifest$parts))
+    paths <- file.path(manifest$part_dir, manifest$parts)
+    if (any(!file.exists(paths))) stop("One or more canonical RQ1 parts are missing")
+    s <- readr::read_csv("results/rq1/rq1_pairwise_summary.csv", show_col_types = FALSE, progress = FALSE)
+    d <- s |> filter(dimension == "duration")
+    if (!nrow(d)) stop("RQ1 duration summary missing")
+    if (any(grepl("__to__", d$comparison_pair_id, fixed = TRUE))) stop("Concrete duration window ids remain in RQ1 summary")
+    if (dplyr::n_distinct(d$comparison_pair_id) != 15L) stop("Expected 15 duration comparison types")
+    da <- d |> filter(adjacent_transition)
+    if (dplyr::n_distinct(da$comparison_pair_id) != 5L) stop("Expected five adjacent duration comparison types")
+    if (any(s$A_mean_absolute + 1e-12 < abs(s$B_mean_signed), na.rm = TRUE)) stop("RQ1 A >= |B| invariant failed")
+    cat("Structural preflight passed: 67 canonical parts; 15 duration types; 5 adjacent duration types\n")
+  '
+
   # Remove only stale final products. Versioned v5 checkpoints/shards are kept
   # so an interrupted RQ2 run remains resumable.
   rm -f \
