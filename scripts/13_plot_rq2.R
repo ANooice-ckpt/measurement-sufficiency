@@ -73,6 +73,10 @@ metric_order <- ms_metric_order(rq1_summary)
 conditional <- conditional |>
   mutate(
     metric_class = factor(metric_class, levels = METRIC_CLASSES),
+    transition_family = factor(
+      if_else(dimension %in% c("placement", "optical"), "Target alignment", "Measurement requirement"),
+      levels = c("Target alignment", "Measurement requirement")
+    ),
     dimension = factor(dimension, levels = c("placement", "optical", "temporal", "duration")),
     pair_label = paste(config_a_label, "→", config_b_label),
     state_bin_label = factor(state_bin_label, levels = c("Low", "Middle", "High")),
@@ -81,51 +85,74 @@ conditional <- conditional |>
   mutate(dimension = as.character(dimension)) |>
   ms_add_metric_order(metric_order)
 
-# Fig. 2: exposure-process conditioning changes the observed pairwise geometry.
-# The x axis is a transition-local state bin; bins are frozen upstream and are
-# not recomputed or ranked by metric in this plot.
+# Fig. 2: the same oriented configuration transition can have different effects
+# across exposure-process states. Target-alignment and measurement-requirement
+# transitions are shown as separate column families.
 p2 <- ggplot(conditional, aes(interaction(pair_label, state_bin_label, sep = "\n"), metric)) +
-  geom_point(aes(size = A_conditional, fill = direction_ratio), shape = 21, color = "#3B3B3B", stroke = .14, alpha = .92) +
-  facet_grid(metric_class ~ dimension, scales = "free", space = "free", switch = "y") +
+  geom_point(aes(size = A_conditional, fill = direction_ratio), shape = 21,
+             color = "#3B3B3B", stroke = .14, alpha = .92) +
+  facet_grid(rows = vars(metric_class), cols = vars(transition_family, dimension),
+             scales = "free", space = "free", switch = "y") +
   ms_direction_scale(name = "B / A") +
   ms_magnitude_size_scale(name = "A = conditional mean |z|", range = c(.25, 3.0)) +
-  labs(title = "Fig. 2  Conditional RQ2 geometry", x = "oriented pair × transition-local exposure state", y = NULL) +
+  labs(title = "Fig. 2  Conditional variation in oriented configuration effects",
+       x = "oriented transition × transition-local exposure state", y = NULL) +
   ms_atlas_theme(base_size = 6.0, x_angle = 52) +
   theme(axis.text.x = element_text(size = 4.5))
 ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.pdf"), 16, 11.5)
 ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.png"), 16, 11.5)
 
 conditional_export <- conditional |>
-  mutate(metric = as.character(metric), metric_class = as.character(metric_class), dimension = as.character(dimension))
+  mutate(metric = as.character(metric), metric_class = as.character(metric_class),
+         dimension = as.character(dimension), transition_family = as.character(transition_family))
 readr::write_csv(conditional_export, file.path("results", "rq2", "fig2_conditional_geometry_atlas.csv"), na = "")
 
-# Fig. 3: interaction gamma is shown as signed R and absolute Q. R and Q are
-# the frozen gamma summaries; no cross-dimensional model is fitted here.
+format_gamma_transition <- function(x) {
+  x |>
+    str_replace_all("_LIGHT_to_MEDI", " · LIGHT → MEDI") |>
+    str_replace_all("([0-9]+)to([0-9]+)", "\\1 → \\2") |>
+    str_replace_all("_", " · ")
+}
+
+# Fig. 3: gamma is the oriented second-order change. R gives its net direction
+# and Q its overall magnitude; together they show cross-dimensional dependence
+# of configuration effects.
 gamma_plot <- gamma_summary |>
   mutate(
-    dimension_pair = paste(dimension_a, "×", dimension_b),
+    dimension_pair = case_when(
+      dimension_a == "placement" & dimension_b == "optical" ~ "Placement × optical",
+      dimension_a == "placement" & dimension_b == "temporal" ~ "Placement × temporal",
+      dimension_a == "optical" & dimension_b == "temporal" ~ "Optical × temporal",
+      TRUE ~ paste(dimension_a, "×", dimension_b)
+    ),
     metric_class = factor(metric_class, levels = METRIC_CLASSES),
     dimension = dimension_a,
-    transition = factor(transition, levels = unique(transition)),
+    transition_display = format_gamma_transition(transition),
+    transition_display = factor(transition_display, levels = unique(transition_display)),
     Q = abs(Q)
   ) |>
   mutate(dimension = as.character(dimension)) |>
   ms_add_metric_order(metric_order)
 gamma_limit <- max(abs(c(gamma_plot$R, gamma_plot$Q)), na.rm = TRUE)
 if (!is.finite(gamma_limit) || gamma_limit <= 0) gamma_limit <- 1
-p3 <- ggplot(gamma_plot, aes(transition, R, color = metric_class)) +
+p3 <- ggplot(gamma_plot, aes(transition_display, R, color = metric_class)) +
   geom_hline(yintercept = 0, linewidth = .28, color = "#8A8A8A") +
-  geom_segment(aes(x = transition, xend = transition, y = 0, yend = R), alpha = .34, linewidth = .40) +
+  geom_segment(aes(x = transition_display, xend = transition_display, y = 0, yend = R),
+               alpha = .34, linewidth = .40) +
   geom_point(aes(size = Q), alpha = .90) +
   facet_grid(metric_class ~ dimension_pair, scales = "free_x", space = "free", switch = "y") +
   scale_color_ms_metric() +
   scale_size_continuous(range = c(.35, 2.8), name = "Q = mean |gamma|") +
-  scale_y_continuous(limits = c(-gamma_limit * 1.05, gamma_limit * 1.05), breaks = scales::breaks_extended(n = 5)) +
-  labs(title = "Fig. 3  Cross-dimension interaction geometry", x = "local interaction transition", y = "R = mean gamma") +
+  scale_y_continuous(limits = c(-gamma_limit * 1.05, gamma_limit * 1.05),
+                     breaks = scales::breaks_extended(n = 5)) +
+  labs(title = "Fig. 3  Cross-dimensional dependence of configuration effects",
+       x = "oriented local transition", y = "R = mean γ") +
   ms_atlas_theme(base_size = 6.2, x_angle = 48)
 ms_plot_save(p3, file.path(OUT_DIR, "Fig3_RQ2.pdf"), 14.5, 10.5)
 ms_plot_save(p3, file.path(OUT_DIR, "Fig3_RQ2.png"), 14.5, 10.5)
-readr::write_csv(gamma_plot |> mutate(metric = as.character(metric), metric_class = as.character(metric_class)),
+readr::write_csv(gamma_plot |>
+                   mutate(metric = as.character(metric), metric_class = as.character(metric_class),
+                          transition_display = as.character(transition_display)),
                  file.path("results", "rq2", "fig3_gamma_atlas.csv"), na = "")
 
 # Supplementary model-performance view. A structural smoke run may produce an
@@ -135,7 +162,8 @@ if (nrow(performance)) {
   perf_plot <- performance |>
     filter(is.finite(rmse) | is.finite(mae) | is.finite(r2)) |>
     group_by(dimension, model_family, outcome, validation_scheme) |>
-    summarise(rmse = median(rmse, na.rm = TRUE), mae = median(mae, na.rm = TRUE), r2 = median(r2, na.rm = TRUE), .groups = "drop") |>
+    summarise(rmse = median(rmse, na.rm = TRUE), mae = median(mae, na.rm = TRUE),
+              r2 = median(r2, na.rm = TRUE), .groups = "drop") |>
     pivot_longer(c(rmse, mae, r2), names_to = "measure", values_to = "value") |>
     mutate(dimension = factor(dimension, levels = c("placement", "optical", "temporal", "duration")))
   p_perf <- ggplot(perf_plot, aes(interaction(model_family, validation_scheme, sep = "\n"), outcome, fill = value)) +
@@ -145,7 +173,8 @@ if (nrow(performance)) {
     labs(title = "RQ2 model validation diagnostics", x = "model family × validation scheme", y = NULL) +
     ms_atlas_theme(base_size = 6.1, x_angle = 48)
 } else {
-  p_perf <- ggplot() + theme_void() + annotate("text", x = 0, y = 0, label = "No model-performance rows; RQ2_RUN_MODELS=0 or no eligible tasks.")
+  p_perf <- ggplot() + theme_void() +
+    annotate("text", x = 0, y = 0, label = "No model-performance rows; RQ2_RUN_MODELS=0 or no eligible tasks.")
 }
 ms_plot_save(p_perf, file.path(OUT_DIR, "FigS_RQ2_model_performance.pdf"), 13, 8.5)
 ms_plot_save(p_perf, file.path(OUT_DIR, "FigS_RQ2_model_performance.png"), 13, 8.5)
@@ -159,4 +188,4 @@ ms_plot_write_manifest(
     rq2_analysis_version = RQ2_VERSION, rq3_analysis_version = NA_character_
   )
 )
-message("RQ2 figures complete: conditional geometry, interaction gamma, and model diagnostics.")
+message("RQ2 figures complete: conditional oriented effects, cross-dimensional dependence, and model diagnostics.")
