@@ -7,9 +7,9 @@ source("scripts/utils/figure_atlas.R")
 source("scripts/utils/rq1_pairwise_artifacts.R")
 source("scripts/utils/plot_contracts.R")
 
-# Fig. 1 follows the RQ1 logic: prespecified scientific orientation ->
-# representation response -> local change along ordered measurement axes.
-# Complete metric-level pairwise detail remains available in supplementary figures.
+# Fig. 1 follows one visual grammar throughout: metric-level detail is retained
+# as a low-contrast background, while metric-class summaries carry the main
+# visual message. Complete metric-level pairwise detail remains supplementary.
 RQ1_LONG <- file.path("results", "rq1", "rq1_pairwise_change_long.rds")
 SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
 AVAILABILITY_CSV <- file.path("results", "rq1", "rq1_metric_availability.csv")
@@ -56,6 +56,10 @@ if (any(!is.na(summary$rq1_analysis_version) & summary$rq1_analysis_version != R
   stop("rq1_pairwise_summary contains a different rq1_analysis_version", call. = FALSE)
 }
 
+pretty_transition <- function(x) {
+  stringr::str_replace_all(as.character(x), "\\s+to\\s+", " \u2192 ")
+}
+
 summary <- summary |>
   mutate(
     metric_class = factor(metric_class, levels = METRIC_CLASSES),
@@ -79,12 +83,10 @@ readr::write_csv(metric_order, file.path("results", "rq1", "figure_metric_order.
 summary_plot <- summary |> mutate(dimension = as.character(dimension)) |> ms_add_metric_order(metric_order)
 availability_plot <- availability |> mutate(dimension = as.character(dimension)) |> ms_add_metric_order(metric_order)
 
-# a. Aggregated configuration-response structure. The main panel should expose
-# topology rather than ask the reader to decode all 54 metrics simultaneously.
-# A is first collapsed to one display value per metric x oriented pair, then
-# divided by that metric's maximum A across the complete RQ1 configuration
-# space. Thus relative A retains within-metric effect structure while preventing
-# naturally large-scale metrics from dominating class-level summaries.
+# a. Configuration-response structure. A is first collapsed to one display value
+# per metric x oriented pair, then divided by that metric's maximum A over the
+# complete RQ1 configuration space. The normalization preserves within-metric
+# response topology without letting naturally large-scale metrics dominate.
 pair_display <- summary |>
   filter(is.finite(A_mean_absolute)) |>
   mutate(dimension = as.character(dimension)) |>
@@ -108,30 +110,37 @@ alignment_summary <- pair_display |>
     .groups = "drop"
   ) |>
   mutate(
+    pair_label_display = pretty_transition(pair_label),
     metric_class = factor(metric_class, levels = METRIC_CLASSES),
     dimension = factor(dimension, levels = c("placement", "optical"),
                        labels = c("Placement", "Optical representation"))
   )
 if (!nrow(alignment_summary)) stop("No target-alignment rows available for aggregated Fig. 1a")
 
-p1a_alignment <- ggplot(alignment_summary, aes(pair_label, metric_class, fill = A_relative_median)) +
-  geom_tile(color = "white", linewidth = .18) +
-  facet_grid(. ~ dimension, scales = "free_x", space = "free_x") +
-  scale_fill_ms_sequential(
-    limits = c(0, 1), oob = scales::squish,
-    labels = scales::label_number(accuracy = .1), name = "median relative A"
+# Dot + IQR replaces the former heat map. It uses the same continuous geometry
+# as the rest of Fig. 1 and keeps the six metric classes directly comparable.
+p1a_alignment <- ggplot(
+  alignment_summary,
+  aes(pair_label_display, A_relative_median, color = metric_class, group = metric_class)
+) +
+  geom_errorbar(
+    aes(ymin = A_relative_q25, ymax = A_relative_q75),
+    position = position_dodge(width = .52), width = .11,
+    linewidth = .34, alpha = .42
   ) +
-  labs(title = "a  Target-aligned response", x = "oriented comparison", y = NULL) +
-  theme_ms(base_size = 6.1, legend_position = "bottom") +
+  geom_point(position = position_dodge(width = .52), size = 1.20, alpha = .94) +
+  facet_grid(. ~ dimension, scales = "free_x", space = "free_x") +
+  scale_color_ms_metric(guide = "none") +
+  scale_y_continuous(limits = c(0, 1.03), breaks = c(0, .25, .5, .75, 1)) +
+  labs(
+    title = "a  Target-aligned response",
+    x = NULL, y = "relative A\n(within-metric max = 1)"
+  ) +
+  theme_ms(base_size = 6.15, legend_position = "none") +
   theme(
-    axis.text.x = element_text(angle = 34, hjust = 1, size = 4.7),
-    axis.ticks.y = element_blank(), panel.grid = element_blank(),
-    plot.margin = margin(2, 2, 2, 2),
-    legend.margin = margin(0, 0, 0, 0),
-    legend.box.margin = margin(0, 0, 0, 0),
-    legend.key.height = grid::unit(2.4, "mm"),
-    legend.text = element_text(size = 4.7),
-    legend.title = element_text(size = 5.0)
+    axis.text.x = element_text(angle = 24, hjust = 1, size = 5.05),
+    panel.grid.major.x = element_blank(),
+    plot.margin = margin(2, 3, 2, 2)
   )
 
 parse_temporal_seconds <- function(x) {
@@ -201,42 +210,48 @@ ordered_response_panel <- function(dim, title) {
     group_by(state_rank) |>
     summarise(state_label = first(state_label), .groups = "drop") |>
     arrange(state_rank)
+
   ggplot() +
     geom_line(
       data = dm,
       aes(state_rank, A_relative, group = metric),
-      color = "#AFAFAF", alpha = .12, linewidth = .24
+      color = "#C7CCCF", alpha = .16, linewidth = .23
     ) +
-    geom_ribbon(
+    geom_linerange(
       data = ds,
-      aes(state_rank, ymin = A_relative_q25, ymax = A_relative_q75,
-          fill = metric_class, group = metric_class),
-      alpha = .10, color = NA
+      aes(state_rank, ymin = A_relative_q25, ymax = A_relative_q75, color = metric_class),
+      linewidth = .32, alpha = .34
     ) +
     geom_line(
       data = ds,
       aes(state_rank, A_relative_median, color = metric_class, group = metric_class),
-      linewidth = .62, alpha = .92
+      linewidth = .68, alpha = .94
     ) +
     geom_point(
       data = ds,
       aes(state_rank, A_relative_median, color = metric_class),
-      size = .70, alpha = .92
+      size = .84, alpha = .96
     ) +
-    scale_color_ms_metric() +
-    scale_fill_ms_metric(guide = "none") +
-    scale_x_continuous(breaks = labels$state_rank, labels = labels$state_label) +
-    scale_y_continuous(limits = c(0, 1.02), breaks = c(0, .25, .5, .75, 1)) +
-    labs(title = title, x = "measurement state", y = "relative A\n(within-metric max = 1)") +
-    theme_ms(base_size = 6.1, legend_position = "none") +
-    theme(axis.text.x = element_text(angle = 38, hjust = 1, size = 5.0))
+    scale_color_ms_metric(guide = "none") +
+    scale_x_continuous(
+      breaks = labels$state_rank, labels = labels$state_label,
+      expand = expansion(mult = c(.025, .04))
+    ) +
+    scale_y_continuous(limits = c(0, 1.03), breaks = c(0, .25, .5, .75, 1)) +
+    labs(title = title, x = NULL, y = "relative A\n(within-metric max = 1)") +
+    theme_ms(base_size = 6.15, legend_position = "none") +
+    theme(
+      axis.text.x = element_text(angle = 30, hjust = 1, size = 5.05),
+      panel.grid.major.x = element_blank(),
+      plot.margin = margin(2, 3, 2, 3)
+    )
 }
 
 p1a_temporal <- ordered_response_panel("temporal", "Temporal resolution")
 p1a_duration <- ordered_response_panel("duration", "Monitoring duration")
 p1a <- cowplot::plot_grid(
   p1a_alignment, p1a_temporal, p1a_duration,
-  ncol = 3, rel_widths = c(.98, 1.12, 1.02), align = "hv", axis = "tblr", greedy = TRUE
+  ncol = 3, rel_widths = c(1.02, 1.12, 1.04), align = "hv", axis = "tblr", greedy = TRUE
 )
 
 panel_a_export <- bind_rows(
@@ -255,7 +270,7 @@ panel_a_export <- bind_rows(
 )
 readr::write_csv(panel_a_export, file.path("results", "rq1", "fig1_panel_a_aggregated.csv"), na = "")
 
-# The former main-panel atlas is retained verbatim as supplementary detail.
+# The complete metric-level atlas is retained as supplementary detail.
 atlas <- summary_plot |> filter(is.finite(A_mean_absolute), is.finite(B_mean_signed))
 atlas_bg <- availability_plot
 p_atlas <- ggplot(atlas, aes(pair_label, metric)) +
@@ -274,7 +289,7 @@ p_atlas <- ggplot(atlas, aes(pair_label, metric)) +
 readr::write_csv(atlas |> mutate(dimension = as.character(dimension), metric_class = as.character(metric_class)),
                  file.path("results", "rq1", "fig1_pairwise_atlas.csv"), na = "")
 
-# c-d. Target-aligned A/B geometry. These panels quantify the consequence of
+# b-c. Target-aligned A/B geometry. These panels quantify the consequence of
 # moving from an alternative state toward the target-aligned state.
 target_geometry_panel <- function(dim, letter) {
   d <- summary |>
@@ -283,45 +298,66 @@ target_geometry_panel <- function(dim, letter) {
               transition = pair_label, A_boot_q025, A_boot_q975, B_boot_q025, B_boot_q975)
   if (!nrow(d)) stop("No target-aligned A/B rows for Fig. 1 dimension: ", dim)
   d <- d |> mutate(metric_class = factor(metric_class, levels = METRIC_CLASSES))
-  lab <- d |> group_by(metric) |> slice_max(A_mean_absolute, n = 1, with_ties = FALSE) |> ungroup() |>
-    slice_max(A_mean_absolute, n = 4, with_ties = FALSE)
+  lab <- d |>
+    group_by(metric) |>
+    slice_max(A_mean_absolute, n = 1, with_ties = FALSE) |>
+    ungroup() |>
+    slice_max(A_mean_absolute, n = 3, with_ties = FALSE)
   max_display <- max(c(d$A_mean_absolute, abs(d$B_mean_signed), d$A_boot_q025, d$A_boot_q975,
                        d$B_boot_q025, d$B_boot_q975), na.rm = TRUE)
   if (!is.finite(max_display) || max_display <= 0) max_display <- 1
   ci <- d |> filter(is.finite(A_boot_q025), is.finite(A_boot_q975), is.finite(B_boot_q025), is.finite(B_boot_q975))
   transition_note <- if (dim == "placement") {
-    "shape: circle = Chest to Eye; triangle = Wrist to Eye"
+    "circle: Chest \u2192 Eye; triangle: Wrist \u2192 Eye"
   } else {
-    "LIGHT to MEDI"
+    "LIGHT \u2192 MEDI"
   }
+
   ggplot(d, aes(B_mean_signed, A_mean_absolute, color = metric_class)) +
-    geom_vline(xintercept = 0, linewidth = .26, color = "#D8D8D8") +
-    geom_abline(slope = c(-1, 1), intercept = 0, linetype = 2, linewidth = .32, color = "#8A8A8A") +
-    geom_segment(data = ci, aes(x = B_boot_q025, xend = B_boot_q975, y = A_mean_absolute, yend = A_mean_absolute),
-                 inherit.aes = FALSE, alpha = .16, linewidth = .25) +
-    geom_segment(data = ci, aes(x = B_mean_signed, xend = B_mean_signed, y = A_boot_q025, yend = A_boot_q975),
-                 inherit.aes = FALSE, alpha = .16, linewidth = .25) +
-    geom_point(aes(shape = transition), size = 1.45, alpha = .86) +
-    geom_text(data = lab, aes(x = B_mean_signed, y = A_mean_absolute, label = metric), inherit.aes = FALSE,
-              size = 1.85, color = "#252525", check_overlap = TRUE, vjust = -.65) +
-    scale_color_ms_metric() +
-    scale_x_continuous(trans = scales::transform_asinh(), limits = c(-max_display * 1.06, max_display * 1.06),
-                       breaks = scales::breaks_extended(n = 4)) +
-    scale_y_continuous(trans = scales::transform_asinh(), limits = c(0, max_display * 1.06),
-                       breaks = scales::breaks_extended(n = 4)) +
-    labs(title = paste0(letter, "  ", DIM_TITLES[[dim]], " target-aligned change"),
-         subtitle = transition_note,
-         x = "B: mean signed change", y = "A: mean absolute change") +
-    theme_ms(base_size = 6.3, legend_position = "none") +
+    geom_vline(xintercept = 0, linewidth = .24, color = "#D7DADD") +
+    geom_abline(slope = c(-1, 1), intercept = 0, linetype = 2, linewidth = .29, color = "#969A9D") +
+    geom_segment(
+      data = ci,
+      aes(x = B_boot_q025, xend = B_boot_q975, y = A_mean_absolute, yend = A_mean_absolute),
+      inherit.aes = FALSE, alpha = .12, linewidth = .23, color = "#8E9396"
+    ) +
+    geom_segment(
+      data = ci,
+      aes(x = B_mean_signed, xend = B_mean_signed, y = A_boot_q025, yend = A_boot_q975),
+      inherit.aes = FALSE, alpha = .12, linewidth = .23, color = "#8E9396"
+    ) +
+    geom_point(aes(shape = transition), size = 1.38, alpha = .88) +
+    geom_text(
+      data = lab,
+      aes(x = B_mean_signed, y = A_mean_absolute, label = metric),
+      inherit.aes = FALSE, size = 1.80, color = "#252525",
+      check_overlap = TRUE, vjust = -.65
+    ) +
+    scale_color_ms_metric(guide = "none") +
+    scale_x_continuous(
+      trans = scales::transform_asinh(), limits = c(-max_display * 1.06, max_display * 1.06),
+      breaks = scales::breaks_extended(n = 4)
+    ) +
+    scale_y_continuous(
+      trans = scales::transform_asinh(), limits = c(0, max_display * 1.06),
+      breaks = scales::breaks_extended(n = 4)
+    ) +
+    labs(
+      title = paste0(letter, "  ", DIM_TITLES[[dim]], " target-aligned change"),
+      subtitle = transition_note,
+      x = "B: mean signed change", y = "A: mean absolute change"
+    ) +
+    theme_ms(base_size = 6.25, legend_position = "none") +
     theme(
-      plot.margin = margin(2, 2, 2, 2),
-      plot.subtitle = element_text(size = 5.0, colour = "#555555", margin = margin(t = -1, b = 2))
+      panel.grid.minor = element_blank(),
+      plot.margin = margin(2, 3, 2, 2),
+      plot.subtitle = element_text(size = 4.9, colour = "#5D6164", margin = margin(t = -1, b = 2))
     )
 }
 
-# d-e. Local response along ordered axes. For duration, multiple nested windows
-# can represent the same d -> d+1 step; medians here are display summaries of
-# the already-computed pair-level G values, not new estimands from raw data.
+# d-e. Local response along ordered axes. Individual metric trajectories remain
+# visible only as a light structural background. The foreground estimand for
+# display is the class median, with IQR showing between-metric heterogeneity.
 local_display <- local |>
   mutate(
     dimension = as.character(dimension),
@@ -345,30 +381,78 @@ local_display <- local |>
   group_by(dimension, metric, metric_class, transition, step_order) |>
   summarise(G_display = median(G, na.rm = TRUE), .groups = "drop")
 
+CLASS_OFFSETS <- setNames(seq(-.13, .13, length.out = length(METRIC_CLASSES)), METRIC_CLASSES)
+local_summary <- local_display |>
+  group_by(dimension, metric_class, transition, step_order) |>
+  summarise(
+    n_metrics = n_distinct(metric),
+    G_median = median(G_display, na.rm = TRUE),
+    G_q25 = quantile(G_display, .25, na.rm = TRUE, names = FALSE),
+    G_q75 = quantile(G_display, .75, na.rm = TRUE, names = FALSE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    metric_class = factor(metric_class, levels = METRIC_CLASSES),
+    class_offset = unname(CLASS_OFFSETS[as.character(metric_class)]),
+    x_summary = step_order + class_offset
+  )
+
+readr::write_csv(
+  local_summary |>
+    mutate(metric_class = as.character(metric_class)) |>
+    select(dimension, metric_class, transition, step_order, n_metrics, G_median, G_q25, G_q75),
+  file.path("results", "rq1", "fig1_local_response_aggregated.csv"), na = ""
+)
+
 local_response_panel <- function(dim, letter) {
-  d <- local_display |>
-    filter(dimension == dim) |>
-    mutate(
-      metric_class = factor(metric_class, levels = METRIC_CLASSES),
-      transition = forcats::fct_reorder(transition, step_order)
-    )
-  if (!nrow(d)) stop("No local G rows for Fig. 1 dimension: ", dim)
-  ggplot(d, aes(transition, G_display, group = metric, color = metric_class)) +
-    geom_line(alpha = .38, linewidth = .35) +
-    geom_point(size = .62, alpha = .72) +
-    facet_wrap(~metric_class, scales = "free_y", ncol = 1) +
-    scale_color_ms_metric() +
-    scale_y_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
-    labs(title = paste0(letter, "  ", DIM_TITLES[[dim]], " local response"),
-         x = "adjacent oriented transition", y = "G = mean |z|") +
-    theme_ms(base_size = 6.1, legend_position = "none") +
+  d <- local_display |> filter(dimension == dim)
+  ds <- local_summary |> filter(dimension == dim)
+  if (!nrow(d) || !nrow(ds)) stop("No local G rows for Fig. 1 dimension: ", dim)
+
+  labels <- d |>
+    distinct(step_order, transition) |>
+    arrange(step_order)
+
+  ggplot() +
+    geom_line(
+      data = d,
+      aes(step_order, G_display, group = metric),
+      color = "#C9CED1", alpha = .15, linewidth = .23
+    ) +
+    geom_linerange(
+      data = ds,
+      aes(x_summary, ymin = G_q25, ymax = G_q75, color = metric_class),
+      linewidth = .34, alpha = .42
+    ) +
+    geom_line(
+      data = ds,
+      aes(x_summary, G_median, group = metric_class, color = metric_class),
+      linewidth = .70, alpha = .95
+    ) +
+    geom_point(
+      data = ds,
+      aes(x_summary, G_median, color = metric_class),
+      size = .88, alpha = .97
+    ) +
+    scale_color_ms_metric(guide = "none") +
+    scale_x_continuous(
+      breaks = labels$step_order,
+      labels = pretty_transition(labels$transition),
+      expand = expansion(mult = c(.035, .045))
+    ) +
+    scale_y_continuous(
+      trans = scales::transform_asinh(),
+      breaks = scales::breaks_extended(n = 4)
+    ) +
+    labs(
+      title = paste0(letter, "  ", DIM_TITLES[[dim]], " local response"),
+      x = NULL, y = "G = mean |z|"
+    ) +
+    theme_ms(base_size = 6.2, legend_position = "none") +
     theme(
-      axis.text.x = element_text(angle = 42, hjust = 1, size = 5.0),
-      strip.text = element_blank(),
-      strip.background = element_blank(),
-      strip.switch.pad.grid = grid::unit(0, "mm"),
-      panel.spacing.y = grid::unit(.45, "mm"),
-      plot.margin = margin(1.5, 2, 1.5, 2)
+      axis.text.x = element_text(angle = 30, hjust = 1, size = 5.0),
+      panel.grid.major.x = element_blank(),
+      plot.margin = margin(2, 3, 2, 2)
     )
 }
 
@@ -381,32 +465,40 @@ metric_legend_source <- ggplot(
   tibble(metric_class = factor(METRIC_CLASSES, levels = METRIC_CLASSES), x = seq_along(METRIC_CLASSES), y = 1),
   aes(x, y, color = metric_class)
 ) +
-  geom_point(size = 1.8) + scale_color_ms_metric() +
+  geom_point(size = 1.7) +
+  scale_color_ms_metric() +
   guides(color = guide_legend(
-    title = "metric class", nrow = 1, byrow = TRUE,
-    override.aes = list(size = 1.45)
+    title = NULL, nrow = 1, byrow = TRUE,
+    override.aes = list(size = 1.55)
   )) +
   theme_void(base_family = MS_FONT, base_size = 7) +
   theme(
     legend.position = "bottom", legend.direction = "horizontal",
     legend.margin = margin(0, 0, 0, 0), legend.box.margin = margin(0, 0, 0, 0),
-    legend.title = element_text(size = 5.6, face = "bold"),
-    legend.text = element_text(size = 5.2),
+    legend.text = element_text(size = 5.45),
     legend.key.width = grid::unit(3.2, "mm")
   )
 metric_legend <- cowplot::get_legend(metric_legend_source)
 
-middle <- cowplot::plot_grid(p1b, p1c, ncol = 2, rel_widths = c(1, 1),
-                             align = "hv", axis = "tblr", greedy = TRUE)
-bottom <- cowplot::plot_grid(p1d, p1e, ncol = 2, rel_widths = c(1, 1),
-                             align = "hv", axis = "tblr", greedy = TRUE)
-fig1body <- cowplot::plot_grid(p1a, middle, bottom, ncol = 1,
-                               rel_heights = c(.96, 1.10, 1.30),
-                               align = "v", axis = "l", greedy = TRUE)
-fig1 <- cowplot::plot_grid(metric_legend, fig1body, ncol = 1,
-                           rel_heights = c(.035, 1), align = "v", greedy = TRUE)
-ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.pdf"), 12.4, 9.8)
-ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.png"), 12.4, 9.8)
+middle <- cowplot::plot_grid(
+  p1b, p1c, ncol = 2, rel_widths = c(1, 1),
+  align = "hv", axis = "tblr", greedy = TRUE
+)
+bottom <- cowplot::plot_grid(
+  p1d, p1e, ncol = 2, rel_widths = c(1, 1),
+  align = "hv", axis = "tblr", greedy = TRUE
+)
+fig1body <- cowplot::plot_grid(
+  p1a, middle, bottom, ncol = 1,
+  rel_heights = c(.92, 1.04, 1.02),
+  align = "v", axis = "l", greedy = TRUE
+)
+fig1 <- cowplot::plot_grid(
+  metric_legend, fig1body, ncol = 1,
+  rel_heights = c(.038, 1), align = "v", greedy = TRUE
+)
+ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.pdf"), 12.4, 8.9)
+ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.png"), 12.4, 8.9)
 
 # Supplement: complete metric-level atlas and empirical z distributions.
 ms_plot_save(p_atlas, file.path(OUT_DIR, "FigS_RQ1_pairwise_atlas.pdf"), 16, 10)
@@ -460,4 +552,4 @@ ms_plot_write_manifest(
     rq2_analysis_version = NA_character_, rq3_analysis_version = NA_character_
   )
 )
-message("Fig. 1 complete: aggregated configuration-response structure, target-aligned A/B geometry, and local G response; full metric atlas retained as supplement.")
+message("Fig. 1 complete: layered metric-class summaries over low-contrast metric detail; full metric atlas retained as supplement.")
