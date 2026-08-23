@@ -6,14 +6,16 @@ source("scripts/utils/plot_contracts.R")
 RQ1_SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
 CONDITION_RDS <- file.path("results", "rq2", "rq2_condition_long.rds")
 COND_GEOM_CSV <- file.path("results", "rq2", "rq2_conditional_geometry.csv")
+MODEL_COEF_CSV <- file.path("results", "rq2", "rq2_model_coefficients.csv")
 MODEL_PERF_CSV <- file.path("results", "rq2", "rq2_model_performance.csv")
 MODEL_MANIFEST_CSV <- file.path("results", "rq2", "rq2_model_artifact_manifest.csv")
 GAMMA_RDS <- file.path("results", "rq2", "rq2_gamma_long.rds")
 GAMMA_SUMMARY_CSV <- file.path("results", "rq2", "rq2_gamma_summary.csv")
 SCOPE_CSV <- file.path("results", "rq2", "rq2_interaction_scope.csv")
 OUT_DIR <- file.path("results", "rq2", "figures")
-ms_plot_require_files(c(RQ1_SUMMARY_CSV, CONDITION_RDS, COND_GEOM_CSV, MODEL_PERF_CSV,
-                        MODEL_MANIFEST_CSV, GAMMA_RDS, GAMMA_SUMMARY_CSV, SCOPE_CSV),
+ms_plot_require_files(c(RQ1_SUMMARY_CSV, CONDITION_RDS, COND_GEOM_CSV, MODEL_COEF_CSV,
+                        MODEL_PERF_CSV, MODEL_MANIFEST_CSV, GAMMA_RDS,
+                        GAMMA_SUMMARY_CSV, SCOPE_CSV),
                       "RQ2 v5 plotting inputs")
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
@@ -27,6 +29,7 @@ DIM_TITLES <- c(
 rq1_summary <- readr::read_csv(RQ1_SUMMARY_CSV, show_col_types = FALSE, progress = FALSE)
 condition <- readRDS(CONDITION_RDS)
 conditional <- readr::read_csv(COND_GEOM_CSV, show_col_types = FALSE, progress = FALSE)
+coefficients <- readr::read_csv(MODEL_COEF_CSV, show_col_types = FALSE, progress = FALSE)
 performance <- readr::read_csv(MODEL_PERF_CSV, show_col_types = FALSE, progress = FALSE)
 model_manifest <- readr::read_csv(MODEL_MANIFEST_CSV, show_col_types = FALSE, progress = FALSE)
 gamma_long <- readRDS(GAMMA_RDS)
@@ -39,6 +42,9 @@ ms_plot_require_columns(conditional,
   c("core_artifact_version", "rq1_analysis_version", "rq2_analysis_version", "dimension",
     "comparison_pair_id", "config_a_label", "config_b_label", "metric", "metric_class",
     "state_bin_label", "A_conditional", "B_conditional"), "rq2_conditional_geometry.csv")
+ms_plot_require_columns(coefficients,
+  c("dimension", "comparison_pair_id", "metric", "outcome", "model_family", "term",
+    "estimate", "std_error", "p_value"), "rq2_model_coefficients.csv")
 ms_plot_require_columns(performance,
   c("dimension", "comparison_pair_id", "metric", "outcome", "model_family", "validation_scheme",
     "n_test", "rmse", "mae", "r2"), "rq2_model_performance.csv")
@@ -119,19 +125,23 @@ metric_legend <- cowplot::get_legend(metric_legend_source)
 # Fig. 2 — context dependence of distortion
 # =============================================================================
 
-# a. Exposure-state dependence of distortion magnitude.
+# a. Exposure-state dependence is shown as distributions rather than spaghetti
+# trajectories. Each dimension is allowed its own y scale so state modulation is
+# visible even when absolute conditional distortion differs strongly by dimension.
 conditional_metric_state <- conditional |>
   mutate(
     metric = as.character(metric),
     metric_class = factor(as.character(metric_class), levels = METRIC_CLASSES),
-    state_num = as.integer(state_bin_label)
+    state_num = as.integer(state_bin_label),
+    class_num = as.integer(metric_class),
+    x_pos = state_num + (class_num - (length(METRIC_CLASSES) + 1) / 2) * .055
   ) |>
   filter(is.finite(A_conditional), is.finite(state_num)) |>
-  group_by(dimension, metric, metric_class, state_bin_label, state_num) |>
+  group_by(dimension, metric, metric_class, state_bin_label, state_num, class_num, x_pos) |>
   summarise(A_state = median(A_conditional, na.rm = TRUE), .groups = "drop")
 
 conditional_profile_summary <- conditional_metric_state |>
-  group_by(dimension, metric_class, state_bin_label, state_num) |>
+  group_by(dimension, metric_class, state_bin_label, state_num, class_num, x_pos) |>
   summarise(
     n_metrics = n_distinct(metric),
     A_median = median(A_state, na.rm = TRUE),
@@ -141,38 +151,38 @@ conditional_profile_summary <- conditional_metric_state |>
   )
 
 p2a <- ggplot() +
-  geom_line(
+  geom_point(
     data = conditional_metric_state,
-    aes(state_num, A_state, group = interaction(metric, dimension), color = metric_class),
-    linewidth = .24, alpha = .065
+    aes(x_pos, A_state, color = metric_class),
+    position = position_jitter(width = .018, height = 0, seed = 41),
+    size = .48, alpha = .20
   ) +
   geom_linerange(
     data = conditional_profile_summary,
-    aes(state_num, ymin = A_q25, ymax = A_q75, color = metric_class),
-    linewidth = .42, alpha = .42
-  ) +
-  geom_line(
-    data = conditional_profile_summary,
-    aes(state_num, A_median, group = metric_class, color = metric_class),
-    linewidth = .76, alpha = .96
+    aes(x_pos, ymin = A_q25, ymax = A_q75, color = metric_class),
+    linewidth = .68, alpha = .50
   ) +
   geom_point(
     data = conditional_profile_summary,
-    aes(state_num, A_median, color = metric_class),
-    size = 1.0, alpha = .98
+    aes(x_pos, A_median, color = metric_class),
+    shape = 18, size = 1.55
   ) +
-  facet_grid(. ~ factor(dimension, levels = DIMENSIONS, labels = unname(DIM_TITLES[DIMENSIONS]))) +
+  facet_wrap(~factor(dimension, levels = DIMENSIONS, labels = unname(DIM_TITLES[DIMENSIONS])),
+             ncol = 2, scales = "free_y") +
   scale_color_ms_metric(guide = "none") +
   scale_x_continuous(breaks = 1:3, labels = c("Low", "Middle", "High"),
-                     expand = expansion(mult = c(.08, .08))) +
+                     limits = c(.72, 3.28), expand = expansion(mult = c(0, 0))) +
   scale_y_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
   labs(title = "a  Conditional distortion magnitude across exposure state",
        x = "transition-local exposure state", y = "conditional A = mean |z|") +
-  theme_rq2(base_size = 6.6) +
-  theme(panel.grid.major.x = element_blank(), strip.text.x = element_text(size = 6.2))
+  theme_rq2(base_size = 6.45) +
+  theme(
+    panel.grid.major.x = element_blank(), strip.text = element_text(size = 5.9),
+    panel.spacing = grid::unit(2.2, "mm")
+  )
 
-# Transition-resolved state geometry. The compact spread summary is retained as
-# a supplement; the direction shift remains Fig. 2c.
+# Transition-resolved state geometry. The transition-spread view remains a
+# supplement; the direction shift remains Fig. 2c.
 transition_state <- conditional |>
   mutate(
     metric = as.character(metric),
@@ -220,10 +230,104 @@ transition_spread <- transition_state |>
     transition_key = forcats::fct_reorder(transition_key, span_median)
   )
 
-# b. External context enters through the frozen predictor-family models. The
-# runtime uses one participant-grouped fold map per scientific task. R2
-# differences are retained only when the compared families have the same test
-# support, then collapsed across transitions within each metric for display.
+# b. Predictor-level decomposition from the frozen joint mixed models. Predictors
+# were z-standardized on the fitting data, so coefficients express the change in
+# standardized distortion per one-SD predictor change. Transition-specific fits
+# are collapsed within metric only for display.
+PREDICTOR_LEVELS <- c(
+  "external_radiation", "external_direct_fraction", "external_cloud",
+  "solar_noon_elevation_deg", "primary_state_raw", "duration_day_variability"
+)
+PREDICTOR_LABELS <- c(
+  external_radiation = "Solar radiation",
+  external_direct_fraction = "Direct fraction",
+  external_cloud = "Cloud cover",
+  solar_noon_elevation_deg = "Solar-noon elevation",
+  primary_state_raw = "Primary exposure state",
+  duration_day_variability = "Day-to-day variability"
+)
+
+coef_metric <- coefficients |>
+  filter(model_family == "joint", term %in% PREDICTOR_LEVELS, is.finite(estimate)) |>
+  group_by(dimension, metric, outcome, term) |>
+  summarise(estimate = median(estimate, na.rm = TRUE), .groups = "drop") |>
+  left_join(metric_class_lookup, by = "metric") |>
+  mutate(
+    dimension = factor(dimension, levels = DIMENSIONS, labels = unname(DIM_TITLES[DIMENSIONS])),
+    predictor = factor(term, levels = rev(PREDICTOR_LEVELS), labels = rev(unname(PREDICTOR_LABELS[PREDICTOR_LEVELS]))),
+    predictor_num = as.integer(predictor),
+    predictor_family = if_else(term %in% c("primary_state_raw", "duration_day_variability"),
+                               "Exposure state", "External context"),
+    outcome_label = recode(outcome, signed = "Signed", magnitude = "Absolute", .default = outcome),
+    outcome_label = factor(outcome_label, levels = c("Signed", "Absolute")),
+    y_pos = predictor_num + if_else(outcome_label == "Signed", -.11, .11)
+  ) |>
+  filter(!is.na(predictor), !is.na(dimension))
+
+coef_summary <- coef_metric |>
+  group_by(dimension, predictor, predictor_num, predictor_family, outcome_label) |>
+  summarise(
+    n_metrics = n_distinct(metric),
+    estimate_median = median(estimate, na.rm = TRUE),
+    estimate_q25 = quantile(estimate, .25, na.rm = TRUE, names = FALSE),
+    estimate_q75 = quantile(estimate, .75, na.rm = TRUE, names = FALSE),
+    .groups = "drop"
+  ) |>
+  mutate(y_pos = predictor_num + if_else(outcome_label == "Signed", -.11, .11))
+
+PREDICTOR_COLORS <- c("External context" = MS_PRIMARY, "Exposure state" = MS_SECONDARY)
+OUTCOME_SHAPES <- c("Signed" = 16, "Absolute" = 17)
+if (nrow(coef_metric)) {
+  p2b <- ggplot(coef_metric,
+                aes(estimate, y_pos, color = predictor_family, shape = outcome_label)) +
+    geom_vline(xintercept = 0, linewidth = .30, color = "#9DA2A5") +
+    geom_point(position = position_jitter(width = 0, height = .035, seed = 54),
+               size = .52, alpha = .18) +
+    geom_segment(
+      data = coef_summary,
+      aes(x = estimate_q25, xend = estimate_q75, y = y_pos, yend = y_pos,
+          color = predictor_family),
+      inherit.aes = FALSE, linewidth = .90, alpha = .58, lineend = "round"
+    ) +
+    geom_point(
+      data = coef_summary,
+      aes(estimate_median, y_pos, color = predictor_family, shape = outcome_label),
+      inherit.aes = FALSE, size = 1.45
+    ) +
+    facet_wrap(~dimension, ncol = 2, scales = "free_x") +
+    scale_color_manual(values = PREDICTOR_COLORS, drop = FALSE) +
+    scale_shape_manual(values = OUTCOME_SHAPES, drop = FALSE) +
+    scale_y_continuous(
+      breaks = seq_along(levels(coef_metric$predictor)),
+      labels = levels(coef_metric$predictor),
+      limits = c(.55, length(levels(coef_metric$predictor)) + .45)
+    ) +
+    scale_x_continuous(breaks = scales::breaks_extended(n = 4)) +
+    guides(
+      color = guide_legend(title = NULL, nrow = 1, order = 1,
+                           override.aes = list(alpha = 1, size = 1.15)),
+      shape = guide_legend(title = NULL, nrow = 1, order = 2,
+                           override.aes = list(alpha = 1, size = 1.15))
+    ) +
+    labs(title = "b  Contextual predictors of distortion",
+         x = "standardized joint-model coefficient", y = NULL) +
+    theme_rq2(base_size = 6.1, legend_position = "bottom") +
+    theme(
+      panel.grid.major.y = element_blank(), axis.line.y = element_blank(), axis.ticks.y = element_blank(),
+      axis.text.y = element_text(size = 4.5), strip.text = element_text(size = 5.35),
+      legend.text = element_text(size = 4.45), legend.key.width = grid::unit(2.8, "mm"),
+      legend.spacing.x = grid::unit(.8, "mm"), panel.spacing = grid::unit(1.8, "mm")
+    )
+} else {
+  p2b <- ggplot() + theme_void(base_family = MS_FONT) +
+    annotate("text", x = 0, y = 0,
+             label = "b  Contextual predictors of distortion\nNo joint-model coefficients",
+             size = 2.2, colour = "#55595C")
+}
+
+# Retain predictor-family grouped-CV increments as a supplementary validation of
+# independent information; this is useful diagnostically but too coarse for the
+# main contextual panel.
 context_task <- performance |>
   filter(str_detect(validation_scheme, "^participant_grouped"),
          model_family %in% c("external_context", "exposure_state", "joint")) |>
@@ -260,67 +364,21 @@ context_task <- context_task |>
   filter(is.finite(delta_r2)) |>
   group_by(dimension, metric, outcome, information) |>
   summarise(delta_r2 = median(delta_r2, na.rm = TRUE), .groups = "drop") |>
-  left_join(metric_class_lookup, by = "metric") |>
   mutate(
-    metric_class = factor(metric_class, levels = METRIC_CLASSES),
-    dimension_num = match(dimension, DIMENSIONS),
+    dimension = factor(dimension, levels = DIMENSIONS, labels = unname(DIM_TITLES[DIMENSIONS])),
     outcome_label = recode(outcome, signed = "Signed distortion", magnitude = "Absolute distortion", .default = outcome),
-    information = factor(information, levels = c("External beyond state", "State beyond external")),
-    y_pos = dimension_num + if_else(information == "External beyond state", -.11, .11)
+    information = factor(information, levels = c("External beyond state", "State beyond external"))
   )
 
 context_summary <- context_task |>
-  group_by(dimension, dimension_num, outcome, outcome_label, information) |>
+  group_by(dimension, outcome_label, information) |>
   summarise(
     n_metrics = n_distinct(metric),
     delta_median = median(delta_r2, na.rm = TRUE),
     delta_q25 = quantile(delta_r2, .25, na.rm = TRUE, names = FALSE),
     delta_q75 = quantile(delta_r2, .75, na.rm = TRUE, names = FALSE),
     .groups = "drop"
-  ) |>
-  mutate(y_pos = dimension_num + if_else(information == "External beyond state", -.11, .11))
-
-CONTEXT_COLORS <- c("External beyond state" = MS_PRIMARY, "State beyond external" = MS_SECONDARY)
-CONTEXT_SHAPES <- c("External beyond state" = 16, "State beyond external" = 17)
-if (nrow(context_task)) {
-  p2b <- ggplot(context_task, aes(delta_r2, y_pos, color = information, shape = information)) +
-    geom_vline(xintercept = 0, linewidth = .30, color = "#9DA2A5") +
-    geom_point(position = position_jitter(width = 0, height = .035, seed = 54),
-               size = .58, alpha = .18) +
-    geom_segment(
-      data = context_summary,
-      aes(x = delta_q25, xend = delta_q75, y = y_pos, yend = y_pos, color = information),
-      inherit.aes = FALSE, linewidth = 1.0, alpha = .58, lineend = "round"
-    ) +
-    geom_point(
-      data = context_summary,
-      aes(delta_median, y_pos, color = information, shape = information),
-      inherit.aes = FALSE, size = 1.55
-    ) +
-    facet_wrap(~outcome_label, nrow = 1) +
-    scale_color_manual(values = CONTEXT_COLORS, drop = FALSE) +
-    scale_shape_manual(values = CONTEXT_SHAPES, drop = FALSE) +
-    scale_x_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
-    scale_y_continuous(breaks = seq_along(DIMENSIONS), labels = unname(DIM_TITLES[DIMENSIONS]),
-                       limits = c(.55, length(DIMENSIONS) + .45)) +
-    guides(
-      color = guide_legend(title = NULL, nrow = 1, override.aes = list(alpha = 1, size = 1.2)),
-      shape = guide_legend(title = NULL, nrow = 1, override.aes = list(alpha = 1, size = 1.2))
-    ) +
-    labs(title = "b  Independent contextual information",
-         x = "incremental grouped-CV R²", y = NULL) +
-    theme_rq2(base_size = 6.35, legend_position = "bottom") +
-    theme(
-      panel.grid.major.y = element_blank(), axis.line.y = element_blank(), axis.ticks.y = element_blank(),
-      axis.text.y = element_text(size = 5.0), strip.text = element_text(size = 5.7),
-      legend.text = element_text(size = 4.7), legend.key.width = grid::unit(3.2, "mm"),
-      legend.spacing.x = grid::unit(1.2, "mm"), panel.spacing.x = grid::unit(2.2, "mm")
-    )
-} else {
-  p2b <- ggplot() + theme_void(base_family = MS_FONT) +
-    annotate("text", x = 0, y = 0, label = "b  Independent contextual information\nNo paired grouped-CV model results",
-             size = 2.2, colour = "#55595C")
-}
+  )
 
 # c. Exposure-state dependence of distortion direction.
 metric_direction_shift <- transition_state |>
@@ -364,28 +422,33 @@ p2c <- ggplot(metric_direction_shift,
                      breaks = scales::breaks_extended(n = 4)) +
   labs(title = "c  Conditional shift in distortion direction",
        x = "Δ(B/A), High − Low", y = NULL) +
-  theme_rq2(base_size = 6.4) +
+  theme_rq2(base_size = 6.3) +
   theme(
     panel.grid.major.y = element_blank(), axis.line.y = element_blank(), axis.ticks.y = element_blank(),
-    axis.text.y = element_text(size = 5.1), strip.text = element_text(size = 5.8),
-    panel.spacing = grid::unit(2.2, "mm")
+    axis.text.y = element_text(size = 5.0), strip.text = element_text(size = 5.65),
+    panel.spacing = grid::unit(2.0, "mm")
   )
 
-# Preserve the existing asymmetric Fig. 2 composition.
-p2bottom <- cowplot::plot_grid(p2b, p2c, ncol = 2, rel_widths = c(.54, .46),
+# Keep the accepted asymmetric composition: one full-width contextual-state panel
+# above two compact, orthogonal detail panels.
+p2bottom <- cowplot::plot_grid(p2b, p2c, ncol = 2, rel_widths = c(.56, .44),
                                align = "hv", axis = "tblr", greedy = TRUE)
-p2body <- cowplot::plot_grid(p2a, p2bottom, ncol = 1, rel_heights = c(.92, 1.08),
+p2body <- cowplot::plot_grid(p2a, p2bottom, ncol = 1, rel_heights = c(1.10, .90),
                              align = "v", axis = "l", greedy = TRUE)
-p2 <- cowplot::plot_grid(metric_legend, p2body, ncol = 1, rel_heights = c(.045, 1),
+p2 <- cowplot::plot_grid(metric_legend, p2body, ncol = 1, rel_heights = c(.042, 1),
                          align = "v", greedy = TRUE)
-ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.pdf"), 9.0, 6.2)
-ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.png"), 9.0, 6.2)
+ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.pdf"), 9.0, 6.6)
+ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.png"), 9.0, 6.6)
 
 readr::write_csv(conditional_profile_summary |>
   mutate(metric_class = as.character(metric_class), state_bin_label = as.character(state_bin_label)),
   file.path("results", "rq2", "fig2_conditional_profile.csv"), na = "")
+readr::write_csv(coef_summary |>
+  mutate(dimension = as.character(dimension), predictor = as.character(predictor),
+         predictor_family = as.character(predictor_family), outcome_label = as.character(outcome_label)),
+  file.path("results", "rq2", "fig2_context_predictor_summary.csv"), na = "")
 readr::write_csv(context_task |>
-  mutate(metric_class = as.character(metric_class), information = as.character(information)),
+  mutate(dimension = as.character(dimension), information = as.character(information)),
   file.path("results", "rq2", "fig2_context_increment.csv"), na = "")
 readr::write_csv(transition_spread |>
   mutate(dimension = as.character(dimension), transition_key = as.character(transition_key)),
@@ -427,6 +490,44 @@ p2_spread_s <- ggplot(transition_spread, aes(span_median, transition_key)) +
   theme(panel.grid.major.y = element_blank(), axis.line.y = element_blank(), axis.ticks.y = element_blank())
 ms_plot_save(p2_spread_s, file.path(OUT_DIR, "FigS_RQ2_state_spread.pdf"), 7.4, 4.6)
 ms_plot_save(p2_spread_s, file.path(OUT_DIR, "FigS_RQ2_state_spread.png"), 7.4, 4.6)
+
+# Family-level incremental grouped-CV information retained as a supplement.
+CONTEXT_COLORS <- c("External beyond state" = MS_PRIMARY, "State beyond external" = MS_SECONDARY)
+CONTEXT_SHAPES <- c("External beyond state" = 16, "State beyond external" = 17)
+if (nrow(context_task)) {
+  context_s_plot <- context_task |>
+    mutate(dimension_num = as.integer(dimension),
+           y_pos = dimension_num + if_else(information == "External beyond state", -.11, .11))
+  context_s_summary <- context_summary |>
+    mutate(dimension_num = as.integer(dimension),
+           y_pos = dimension_num + if_else(information == "External beyond state", -.11, .11))
+  p2_context_s <- ggplot(context_s_plot, aes(delta_r2, y_pos, color = information, shape = information)) +
+    geom_vline(xintercept = 0, linewidth = .30, color = "#9DA2A5") +
+    geom_point(position = position_jitter(width = 0, height = .035, seed = 56), size = .58, alpha = .18) +
+    geom_segment(data = context_s_summary,
+                 aes(x = delta_q25, xend = delta_q75, y = y_pos, yend = y_pos, color = information),
+                 inherit.aes = FALSE, linewidth = 1.0, alpha = .58, lineend = "round") +
+    geom_point(data = context_s_summary,
+               aes(delta_median, y_pos, color = information, shape = information),
+               inherit.aes = FALSE, size = 1.55) +
+    facet_wrap(~outcome_label, nrow = 1) +
+    scale_color_manual(values = CONTEXT_COLORS, drop = FALSE) +
+    scale_shape_manual(values = CONTEXT_SHAPES, drop = FALSE) +
+    scale_x_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
+    scale_y_continuous(breaks = seq_along(DIMENSIONS), labels = unname(DIM_TITLES[DIMENSIONS]),
+                       limits = c(.55, length(DIMENSIONS) + .45)) +
+    labs(title = "Independent contextual information",
+         x = "incremental participant-grouped CV R²", y = NULL) +
+    theme_rq2(base_size = 6.4, legend_position = "bottom") +
+    theme(panel.grid.major.y = element_blank(), axis.line.y = element_blank(), axis.ticks.y = element_blank(),
+          axis.text.y = element_text(size = 5.0), strip.text = element_text(size = 5.7),
+          legend.text = element_text(size = 4.7))
+} else {
+  p2_context_s <- ggplot() + theme_void(base_family = MS_FONT) +
+    annotate("text", x = 0, y = 0, label = "No paired grouped-CV model results", size = 2.2)
+}
+ms_plot_save(p2_context_s, file.path(OUT_DIR, "FigS_RQ2_context_increment.pdf"), 7.6, 4.8)
+ms_plot_save(p2_context_s, file.path(OUT_DIR, "FigS_RQ2_context_increment.png"), 7.6, 4.8)
 
 # =============================================================================
 # Fig. 3 — cross-dimensional dependence
@@ -639,13 +740,14 @@ ms_plot_write_manifest(
   tibble(
     figure = c(
       "Fig2_RQ2", "Fig3_RQ2", "FigS_RQ2_conditional_atlas", "FigS_RQ2_state_spread",
-      "FigS_RQ2_gamma_atlas", "FigS_RQ2_model_performance"
+      "FigS_RQ2_context_increment", "FigS_RQ2_gamma_atlas", "FigS_RQ2_model_performance"
     ),
     input_artifact = c(
-      "rq2_conditional_geometry+rq2_model_performance",
+      "rq2_conditional_geometry+rq2_model_coefficients",
       "rq2_gamma_summary",
       "rq2_conditional_geometry",
       "rq2_conditional_geometry",
+      "rq2_model_performance",
       "rq2_gamma_summary",
       "rq2_model_performance"
     ),
@@ -654,4 +756,4 @@ ms_plot_write_manifest(
     rq2_analysis_version = RQ2_VERSION,
     rq3_analysis_version = NA_character_
   ))
-message("RQ2 v5 figures complete: Fig. 2 integrates exposure-state and external-context dependence; Fig. 3 retains cross-dimensional interaction geometry.")
+message("RQ2 v5 figures complete: Fig. 2 separates exposure-state distributions, predictor-level contextual effects, and direction shifts; Fig. 3 retains cross-dimensional interaction geometry.")
