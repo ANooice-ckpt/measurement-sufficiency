@@ -41,7 +41,7 @@ ms_plot_require_columns(conditional,
     "state_bin_label", "A_conditional", "B_conditional"), "rq2_conditional_geometry.csv")
 ms_plot_require_columns(performance,
   c("dimension", "comparison_pair_id", "metric", "outcome", "model_family", "validation_scheme",
-    "rmse", "mae", "r2"), "rq2_model_performance.csv")
+    "n_test", "rmse", "mae", "r2"), "rq2_model_performance.csv")
 ms_plot_require_columns(model_manifest,
   c("core_artifact_version", "rq1_analysis_version", "rq2_analysis_version"),
   "rq2_model_artifact_manifest.csv")
@@ -65,6 +65,7 @@ ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
 ms_plot_assert_prefix(RQ2_VERSION, "rq2_v5_", "rq2_analysis_version")
 
 metric_order <- ms_metric_order(rq1_summary)
+metric_class_lookup <- rq1_summary |> distinct(metric, metric_class)
 conditional <- conditional |>
   mutate(
     metric_class = factor(metric_class, levels = METRIC_CLASSES),
@@ -81,8 +82,6 @@ conditional <- conditional |>
   mutate(dimension = as.character(dimension)) |>
   ms_add_metric_order(metric_order)
 
-# Open-axis grammar shared by the main RQ2 figures. Full atlases below retain the
-# dense audit view; main-text panels emphasize readable scientific structure.
 theme_rq2 <- function(base_size = 6.7, legend_position = "none") {
   theme_ms(base_size = base_size, legend_position = legend_position) +
     theme(
@@ -117,12 +116,10 @@ metric_legend_source <- ggplot(
 metric_legend <- cowplot::get_legend(metric_legend_source)
 
 # =============================================================================
-# Fig. 2 — conditional variation
+# Fig. 2 — context dependence of distortion
 # =============================================================================
 
-# Main overview collapses the transition lattice only for display: each point is
-# one metric's median conditional A within a measurement dimension and exposure
-# state. The full transition-resolved values remain in the supplementary atlas.
+# a. Exposure-state dependence of distortion magnitude.
 conditional_metric_state <- conditional |>
   mutate(
     metric = as.character(metric),
@@ -169,12 +166,13 @@ p2a <- ggplot() +
   scale_x_continuous(breaks = 1:3, labels = c("Low", "Middle", "High"),
                      expand = expansion(mult = c(.08, .08))) +
   scale_y_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
-  labs(title = "a  Conditional magnitude across local exposure state",
+  labs(title = "a  Conditional distortion magnitude across exposure state",
        x = "transition-local exposure state", y = "conditional A = mean |z|") +
   theme_rq2(base_size = 6.6) +
   theme(panel.grid.major.x = element_blank(), strip.text.x = element_text(size = 6.2))
 
-# Transition-resolved state geometry used for the two compact detail panels.
+# Transition-resolved state geometry. The compact spread summary is retained as
+# a supplement; the direction shift remains Fig. 2c.
 transition_state <- conditional |>
   mutate(
     metric = as.character(metric),
@@ -197,9 +195,7 @@ transition_state <- conditional |>
   rowwise() |>
   mutate(
     n_A_states = sum(is.finite(c_across(starts_with("A_state_")))),
-    A_span = if (n_A_states >= 2L) {
-      diff(range(c_across(starts_with("A_state_")), na.rm = TRUE))
-    } else NA_real_,
+    A_span = if (n_A_states >= 2L) diff(range(c_across(starts_with("A_state_")), na.rm = TRUE)) else NA_real_,
     delta_A_HL = A_state_High - A_state_Low,
     delta_direction_HL = direction_state_High - direction_state_Low
   ) |>
@@ -224,22 +220,109 @@ transition_spread <- transition_state |>
     transition_key = forcats::fct_reorder(transition_key, span_median)
   )
 
-p2b <- ggplot(transition_spread, aes(span_median, transition_key)) +
-  geom_segment(aes(x = span_q25, xend = span_q75, yend = transition_key),
-               linewidth = 1.0, color = "#9FB7C6", alpha = .58, lineend = "round") +
-  geom_point(shape = 18, size = 2.0, color = MS_PRIMARY) +
-  facet_wrap(~dimension, ncol = 2, scales = "free_y") +
-  scale_y_discrete(labels = function(x) sub("^.*\\|\\|\\|", "", x)) +
-  scale_x_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
-  labs(title = "b  Transitions with the largest state-dependent spread",
-       x = "median state span in A", y = NULL) +
-  theme_rq2(base_size = 6.4) +
-  theme(
-    panel.grid.major.y = element_blank(), axis.line.y = element_blank(), axis.ticks.y = element_blank(),
-    axis.text.y = element_text(size = 5.2), strip.text = element_text(size = 5.8),
-    panel.spacing = grid::unit(2.2, "mm")
+# b. External context enters through the frozen predictor-family models. The
+# runtime uses one participant-grouped fold map per scientific task. R2
+# differences are retained only when the compared families have the same test
+# support, then collapsed across transitions within each metric for display.
+context_task <- performance |>
+  filter(str_detect(validation_scheme, "^participant_grouped"),
+         model_family %in% c("external_context", "exposure_state", "joint")) |>
+  group_by(dimension, comparison_pair_id, metric, outcome, model_family) |>
+  summarise(r2 = median(r2, na.rm = TRUE), n_test = max(n_test, na.rm = TRUE), .groups = "drop") |>
+  pivot_wider(names_from = model_family, values_from = c(r2, n_test), names_sep = "__")
+for (nm in c("r2__external_context", "r2__exposure_state", "r2__joint",
+             "n_test__external_context", "n_test__exposure_state", "n_test__joint")) {
+  if (!nm %in% names(context_task)) context_task[[nm]] <- NA_real_
+}
+context_task <- context_task |>
+  mutate(
+    external_beyond_state = if_else(
+      is.finite(r2__joint) & is.finite(r2__exposure_state) &
+        n_test__joint == n_test__exposure_state,
+      r2__joint - r2__exposure_state, NA_real_
+    ),
+    state_beyond_external = if_else(
+      is.finite(r2__joint) & is.finite(r2__external_context) &
+        n_test__joint == n_test__external_context,
+      r2__joint - r2__external_context, NA_real_
+    )
+  ) |>
+  select(dimension, comparison_pair_id, metric, outcome,
+         external_beyond_state, state_beyond_external) |>
+  pivot_longer(c(external_beyond_state, state_beyond_external),
+               names_to = "information", values_to = "delta_r2") |>
+  mutate(
+    information = recode(information,
+      external_beyond_state = "External beyond state",
+      state_beyond_external = "State beyond external"
+    )
+  ) |>
+  filter(is.finite(delta_r2)) |>
+  group_by(dimension, metric, outcome, information) |>
+  summarise(delta_r2 = median(delta_r2, na.rm = TRUE), .groups = "drop") |>
+  left_join(metric_class_lookup, by = "metric") |>
+  mutate(
+    metric_class = factor(metric_class, levels = METRIC_CLASSES),
+    dimension_num = match(dimension, DIMENSIONS),
+    outcome_label = recode(outcome, signed = "Signed distortion", magnitude = "Absolute distortion", .default = outcome),
+    information = factor(information, levels = c("External beyond state", "State beyond external")),
+    y_pos = dimension_num + if_else(information == "External beyond state", -.11, .11)
   )
 
+context_summary <- context_task |>
+  group_by(dimension, dimension_num, outcome, outcome_label, information) |>
+  summarise(
+    n_metrics = n_distinct(metric),
+    delta_median = median(delta_r2, na.rm = TRUE),
+    delta_q25 = quantile(delta_r2, .25, na.rm = TRUE, names = FALSE),
+    delta_q75 = quantile(delta_r2, .75, na.rm = TRUE, names = FALSE),
+    .groups = "drop"
+  ) |>
+  mutate(y_pos = dimension_num + if_else(information == "External beyond state", -.11, .11))
+
+CONTEXT_COLORS <- c("External beyond state" = MS_PRIMARY, "State beyond external" = MS_SECONDARY)
+CONTEXT_SHAPES <- c("External beyond state" = 16, "State beyond external" = 17)
+if (nrow(context_task)) {
+  p2b <- ggplot(context_task, aes(delta_r2, y_pos, color = information, shape = information)) +
+    geom_vline(xintercept = 0, linewidth = .30, color = "#9DA2A5") +
+    geom_point(position = position_jitter(width = 0, height = .035, seed = 54),
+               size = .58, alpha = .18) +
+    geom_segment(
+      data = context_summary,
+      aes(x = delta_q25, xend = delta_q75, y = y_pos, yend = y_pos, color = information),
+      inherit.aes = FALSE, linewidth = 1.0, alpha = .58, lineend = "round"
+    ) +
+    geom_point(
+      data = context_summary,
+      aes(delta_median, y_pos, color = information, shape = information),
+      inherit.aes = FALSE, size = 1.55
+    ) +
+    facet_wrap(~outcome_label, nrow = 1) +
+    scale_color_manual(values = CONTEXT_COLORS, drop = FALSE) +
+    scale_shape_manual(values = CONTEXT_SHAPES, drop = FALSE) +
+    scale_x_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
+    scale_y_continuous(breaks = seq_along(DIMENSIONS), labels = unname(DIM_TITLES[DIMENSIONS]),
+                       limits = c(.55, length(DIMENSIONS) + .45)) +
+    guides(
+      color = guide_legend(title = NULL, nrow = 1, override.aes = list(alpha = 1, size = 1.2)),
+      shape = guide_legend(title = NULL, nrow = 1, override.aes = list(alpha = 1, size = 1.2))
+    ) +
+    labs(title = "b  Independent contextual information",
+         x = "incremental grouped-CV R²", y = NULL) +
+    theme_rq2(base_size = 6.35, legend_position = "bottom") +
+    theme(
+      panel.grid.major.y = element_blank(), axis.line.y = element_blank(), axis.ticks.y = element_blank(),
+      axis.text.y = element_text(size = 5.0), strip.text = element_text(size = 5.7),
+      legend.text = element_text(size = 4.7), legend.key.width = grid::unit(3.2, "mm"),
+      legend.spacing.x = grid::unit(1.2, "mm"), panel.spacing.x = grid::unit(2.2, "mm")
+    )
+} else {
+  p2b <- ggplot() + theme_void(base_family = MS_FONT) +
+    annotate("text", x = 0, y = 0, label = "b  Independent contextual information\nNo paired grouped-CV model results",
+             size = 2.2, colour = "#55595C")
+}
+
+# c. Exposure-state dependence of distortion direction.
 metric_direction_shift <- transition_state |>
   filter(is.finite(delta_direction_HL)) |>
   group_by(dimension, metric, metric_class) |>
@@ -275,12 +358,11 @@ p2c <- ggplot(metric_direction_shift,
     aes(shift_median, metric_class, color = metric_class),
     inherit.aes = FALSE, shape = 18, size = 1.85
   ) +
-  facet_wrap(~factor(dimension, levels = DIMENSIONS, labels = unname(DIM_TITLES[DIMENSIONS])),
-             ncol = 2) +
+  facet_wrap(~factor(dimension, levels = DIMENSIONS, labels = unname(DIM_TITLES[DIMENSIONS])), ncol = 2) +
   scale_color_ms_metric(guide = "none") +
   scale_x_continuous(limits = c(-dir_limit * 1.03, dir_limit * 1.03),
                      breaks = scales::breaks_extended(n = 4)) +
-  labs(title = "c  Change in effect direction from low to high state",
+  labs(title = "c  Conditional shift in distortion direction",
        x = "Δ(B/A), High − Low", y = NULL) +
   theme_rq2(base_size = 6.4) +
   theme(
@@ -289,6 +371,7 @@ p2c <- ggplot(metric_direction_shift,
     panel.spacing = grid::unit(2.2, "mm")
   )
 
+# Preserve the existing asymmetric Fig. 2 composition.
 p2bottom <- cowplot::plot_grid(p2b, p2c, ncol = 2, rel_widths = c(.54, .46),
                                align = "hv", axis = "tblr", greedy = TRUE)
 p2body <- cowplot::plot_grid(p2a, p2bottom, ncol = 1, rel_heights = c(.92, 1.08),
@@ -301,6 +384,9 @@ ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.png"), 9.0, 6.2)
 readr::write_csv(conditional_profile_summary |>
   mutate(metric_class = as.character(metric_class), state_bin_label = as.character(state_bin_label)),
   file.path("results", "rq2", "fig2_conditional_profile.csv"), na = "")
+readr::write_csv(context_task |>
+  mutate(metric_class = as.character(metric_class), information = as.character(information)),
+  file.path("results", "rq2", "fig2_context_increment.csv"), na = "")
 readr::write_csv(transition_spread |>
   mutate(dimension = as.character(dimension), transition_key = as.character(transition_key)),
   file.path("results", "rq2", "fig2_transition_spread.csv"), na = "")
@@ -326,6 +412,21 @@ readr::write_csv(conditional |>
   mutate(metric = as.character(metric), metric_class = as.character(metric_class),
          dimension = as.character(dimension), transition_family = as.character(transition_family)),
   file.path("results", "rq2", "fig2_conditional_geometry_atlas.csv"), na = "")
+
+# Former main-text transition-spread panel retained as a compact supplement.
+p2_spread_s <- ggplot(transition_spread, aes(span_median, transition_key)) +
+  geom_segment(aes(x = span_q25, xend = span_q75, yend = transition_key),
+               linewidth = 1.0, color = "#9FB7C6", alpha = .58, lineend = "round") +
+  geom_point(shape = 18, size = 2.0, color = MS_PRIMARY) +
+  facet_wrap(~dimension, ncol = 2, scales = "free_y") +
+  scale_y_discrete(labels = function(x) sub("^.*\\|\\|\\|", "", x)) +
+  scale_x_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
+  labs(title = "Transitions with the largest state-dependent spread",
+       x = "median state span in A", y = NULL) +
+  theme_rq2(base_size = 6.5) +
+  theme(panel.grid.major.y = element_blank(), axis.line.y = element_blank(), axis.ticks.y = element_blank())
+ms_plot_save(p2_spread_s, file.path(OUT_DIR, "FigS_RQ2_state_spread.pdf"), 7.4, 4.6)
+ms_plot_save(p2_spread_s, file.path(OUT_DIR, "FigS_RQ2_state_spread.png"), 7.4, 4.6)
 
 # =============================================================================
 # Fig. 3 — cross-dimensional dependence
@@ -359,11 +460,7 @@ gamma_plot <- gamma_plot |>
 gamma_metric <- gamma_plot |>
   filter(is.finite(R), is.finite(Q)) |>
   group_by(dimension_pair, metric, metric_class) |>
-  summarise(
-    R_metric = median(R, na.rm = TRUE),
-    Q_metric = median(Q, na.rm = TRUE),
-    .groups = "drop"
-  )
+  summarise(R_metric = median(R, na.rm = TRUE), Q_metric = median(Q, na.rm = TRUE), .groups = "drop")
 
 gamma_r_summary <- gamma_metric |>
   group_by(dimension_pair, metric_class) |>
@@ -392,58 +489,43 @@ if (!is.finite(q_limit) || q_limit <= 0) q_limit <- 1
 
 p3a <- ggplot(gamma_metric, aes(R_metric, metric_class, color = metric_class)) +
   geom_vline(xintercept = 0, linewidth = .30, color = "#969B9E") +
-  geom_point(position = position_jitter(width = 0, height = .09, seed = 71),
-             size = .70, alpha = .28) +
+  geom_point(position = position_jitter(width = 0, height = .09, seed = 71), size = .70, alpha = .28) +
   geom_segment(
     data = gamma_r_summary,
     aes(x = R_q25, xend = R_q75, y = metric_class, yend = metric_class, color = metric_class),
     inherit.aes = FALSE, linewidth = 1.05, alpha = .46, lineend = "round"
   ) +
-  geom_point(
-    data = gamma_r_summary,
-    aes(R_median, metric_class, color = metric_class),
-    inherit.aes = FALSE, shape = 18, size = 1.9
-  ) +
+  geom_point(data = gamma_r_summary, aes(R_median, metric_class, color = metric_class),
+             inherit.aes = FALSE, shape = 18, size = 1.9) +
   facet_grid(. ~ dimension_pair) +
   scale_color_ms_metric(guide = "none") +
-  scale_x_continuous(limits = c(-r_limit * 1.04, r_limit * 1.04),
-                     breaks = scales::breaks_extended(n = 5)) +
+  scale_x_continuous(limits = c(-r_limit * 1.04, r_limit * 1.04), breaks = scales::breaks_extended(n = 5)) +
   labs(title = "a  Signed cross-dimensional interaction",
        x = "R = median signed γ across local transitions", y = NULL) +
   theme_rq2(base_size = 6.5) +
-  theme(
-    panel.grid.major.y = element_blank(), axis.line.y = element_blank(), axis.ticks.y = element_blank(),
-    axis.text.y = element_text(size = 5.4), strip.text = element_text(size = 6.0),
-    panel.spacing.x = grid::unit(2.3, "mm")
-  )
+  theme(panel.grid.major.y = element_blank(), axis.line.y = element_blank(), axis.ticks.y = element_blank(),
+        axis.text.y = element_text(size = 5.4), strip.text = element_text(size = 6.0),
+        panel.spacing.x = grid::unit(2.3, "mm"))
 
 p3b <- ggplot(gamma_metric, aes(Q_metric, metric_class, color = metric_class)) +
-  geom_point(position = position_jitter(width = 0, height = .09, seed = 73),
-             size = .70, alpha = .28) +
+  geom_point(position = position_jitter(width = 0, height = .09, seed = 73), size = .70, alpha = .28) +
   geom_segment(
     data = gamma_q_summary,
     aes(x = Q_q25, xend = Q_q75, y = metric_class, yend = metric_class, color = metric_class),
     inherit.aes = FALSE, linewidth = 1.05, alpha = .46, lineend = "round"
   ) +
-  geom_point(
-    data = gamma_q_summary,
-    aes(Q_median, metric_class, color = metric_class),
-    inherit.aes = FALSE, shape = 18, size = 1.9
-  ) +
+  geom_point(data = gamma_q_summary, aes(Q_median, metric_class, color = metric_class),
+             inherit.aes = FALSE, shape = 18, size = 1.9) +
   facet_grid(. ~ dimension_pair) +
   scale_color_ms_metric(guide = "none") +
   scale_x_continuous(limits = c(0, q_limit * 1.04), breaks = scales::breaks_extended(n = 5)) +
   labs(title = "b  Magnitude of cross-dimensional interaction",
        x = "Q = median |γ| across local transitions", y = NULL) +
   theme_rq2(base_size = 6.5) +
-  theme(
-    panel.grid.major.y = element_blank(), axis.line.y = element_blank(), axis.ticks.y = element_blank(),
-    axis.text.y = element_text(size = 5.4), strip.text = element_text(size = 6.0),
-    panel.spacing.x = grid::unit(2.3, "mm")
-  )
+  theme(panel.grid.major.y = element_blank(), axis.line.y = element_blank(), axis.ticks.y = element_blank(),
+        axis.text.y = element_text(size = 5.4), strip.text = element_text(size = 6.0),
+        panel.spacing.x = grid::unit(2.3, "mm"))
 
-# Transition-level detail: retain only the strongest few transitions per
-# dimension pair in the main figure; the complete atlas remains supplementary.
 gamma_transition <- gamma_plot |>
   filter(is.finite(R), is.finite(Q)) |>
   group_by(dimension_pair, transition_display) |>
@@ -469,21 +551,18 @@ if (!is.finite(fill_limit) || fill_limit <= 0) fill_limit <- 1e-6
 p3c <- ggplot(gamma_transition, aes(Q_median, transition_key)) +
   geom_segment(aes(x = Q_q25, xend = Q_q75, yend = transition_key),
                color = "#A8ADB0", linewidth = .90, alpha = .62, lineend = "round") +
-  geom_point(aes(fill = R_median), shape = 21, size = 2.15,
-             color = "#3E4245", stroke = .22) +
+  geom_point(aes(fill = R_median), shape = 21, size = 2.15, color = "#3E4245", stroke = .22) +
   facet_grid(. ~ dimension_pair, scales = "free_y", space = "free_x") +
   scale_y_discrete(labels = function(x) stringr::str_wrap(sub("^.*\\|\\|\\|", "", x), width = 24)) +
   scale_x_continuous(breaks = scales::breaks_extended(n = 4)) +
   scale_fill_ms_diverging(fill_limit, name = "median R") +
-  labs(title = "c  Local transitions with the strongest interaction magnitude",
+  labs(title = "c  Localization of the strongest cross-dimensional interactions",
        x = "median Q across metrics", y = NULL) +
   theme_rq2(base_size = 6.3, legend_position = "bottom") +
-  theme(
-    panel.grid.major.y = element_blank(), axis.line.y = element_blank(), axis.ticks.y = element_blank(),
-    axis.text.y = element_text(size = 4.9), strip.text = element_text(size = 5.8),
-    legend.title = element_text(size = 5.3), legend.text = element_text(size = 5.0),
-    panel.spacing.x = grid::unit(2.4, "mm")
-  )
+  theme(panel.grid.major.y = element_blank(), axis.line.y = element_blank(), axis.ticks.y = element_blank(),
+        axis.text.y = element_text(size = 4.9), strip.text = element_text(size = 5.8),
+        legend.title = element_text(size = 5.3), legend.text = element_text(size = 5.0),
+        panel.spacing.x = grid::unit(2.4, "mm"))
 
 p3body <- cowplot::plot_grid(p3a, p3b, p3c, ncol = 1, rel_heights = c(.82, .82, 1.0),
                              align = "v", axis = "l", greedy = TRUE)
@@ -559,12 +638,13 @@ ms_plot_write_manifest(
   file.path(OUT_DIR, "figure_artifact_manifest.csv"),
   tibble(
     figure = c(
-      "Fig2_RQ2", "Fig3_RQ2", "FigS_RQ2_conditional_atlas",
+      "Fig2_RQ2", "Fig3_RQ2", "FigS_RQ2_conditional_atlas", "FigS_RQ2_state_spread",
       "FigS_RQ2_gamma_atlas", "FigS_RQ2_model_performance"
     ),
     input_artifact = c(
-      "rq2_conditional_geometry",
+      "rq2_conditional_geometry+rq2_model_performance",
       "rq2_gamma_summary",
+      "rq2_conditional_geometry",
       "rq2_conditional_geometry",
       "rq2_gamma_summary",
       "rq2_model_performance"
@@ -573,6 +653,5 @@ ms_plot_write_manifest(
     rq1_analysis_version = RQ1_VERSION,
     rq2_analysis_version = RQ2_VERSION,
     rq3_analysis_version = NA_character_
-  )
-)
-message("RQ2 v5 figures complete: compact main-text conditional and interaction summaries; full atlases retained as supplements.")
+  ))
+message("RQ2 v5 figures complete: Fig. 2 integrates exposure-state and external-context dependence; Fig. 3 retains cross-dimensional interaction geometry.")
