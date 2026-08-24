@@ -24,7 +24,8 @@ Rscript --vanilla -e 'files <- c(
   "scripts/utils/core_artifacts.R", "scripts/utils/core_temporal_sampling.R", "scripts/utils/core_context.R",
   "scripts/utils/figure_style.R", "scripts/utils/rq1_pairwise_artifacts.R",
   "scripts/01_download_melidos.R", "scripts/04c_prepare_raw_eye_spans.R",
-  "scripts/09_build_core_artifacts.R", "scripts/10_rq1_analysis.R", "scripts/11_plot_fig1.R",
+  "scripts/09_build_core_artifacts.R", "scripts/09b_validate_core_design.R",
+  "scripts/10_rq1_analysis.R", "scripts/11_plot_fig1.R",
   "scripts/12_rq2_analysis.R", "scripts/12_rq2_analysis_v5.R",
   "scripts/13_plot_rq2.R", "scripts/13_plot_rq2_v5.R",
   "scripts/14_rq3_analysis.R", "scripts/14_rq3_analysis_v5.R",
@@ -57,9 +58,12 @@ Rscript scripts/04c_prepare_raw_eye_spans.R
 echo "[8/8] Build versioned core artifacts with ${CORE_WORKERS} workers"
 CORE_WORKERS="${CORE_WORKERS}" CORE_FORCE="${CORE_FORCE}" Rscript scripts/09_build_core_artifacts.R
 
+echo "[audit] Validate core against the frozen measurement design"
+Rscript scripts/09b_validate_core_design.R
+
 echo "Artifact build complete:"
 echo "  results/core/metric_cube.csv.gz"
 echo "  results/core/unit_context.csv.gz"
 echo "  results/core/weather_1min.csv.gz"
 echo "  results/core/duration_metric_cube.rds"
-echo "Diagnostics: results/diagnostics/core_artifact_summary.csv; results/diagnostics/duration_cohort_audit.csv"
+echo "Diagnostics: results/diagnostics/core_artifact_summary.csv; results/diagnostics/core_design_audit.csv; results/diagnostics/duration_cohort_audit.csv"
