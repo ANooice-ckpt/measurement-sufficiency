@@ -1,6 +1,12 @@
 # Helpers for building the configuration-level metric cube.
 
-core_artifact_version <- function() "v3_sparse_sampling_complete_days"
+if (!exists("ms_primary_temporal_s", mode = "function")) {
+  source("scripts/utils/analysis_design.R")
+}
+
+core_artifact_version <- function() {
+  paste0("v4_sparse_sampling_complete_days__", ms_core_design_id())
+}
 
 core_site_metadata <- function() {
   tibble::tribble(
@@ -18,11 +24,12 @@ core_site_metadata <- function() {
 }
 
 # Every configured cadence must be exactly representable as a systematic subset
-# of the harmonized 10-s source grid. 15 s is intentionally absent because it
-# cannot be obtained by equal-spacing subsampling of that grid.
-core_primary_resolutions <- function() c(10L, 20L, 30L, 60L, 300L, 900L, 1800L)
-core_reserve_resolutions <- function() c(120L, 600L, 3600L)
-core_all_resolutions <- function() sort(unique(c(core_primary_resolutions(), core_reserve_resolutions())))
+# of the harmonized 10-s source grid. Primary states are restricted to the
+# practical 10-s-to-2-min logging domain; 5 min is retained only as a coarse
+# sensitivity state. Cadences coarser than 5 min are not materialised.
+core_primary_resolutions <- function() ms_primary_temporal_s()
+core_reserve_resolutions <- function() ms_reserve_temporal_s()
+core_all_resolutions <- function() ms_all_temporal_s()
 
 core_build_state_intervals <- function(sleep, wear) {
   sleep_adj <- sleep |>
