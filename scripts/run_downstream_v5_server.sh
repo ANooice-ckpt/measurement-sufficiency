@@ -32,8 +32,10 @@ LOG="results/logs/downstream_v5.log"
     fs <- c(
       "results/runtime/12_rq2_analysis_v5.runtime.R",
       "scripts/13_plot_rq2_v5.R",
+      "scripts/13_plot_rq2.R",
       "results/runtime/14_rq3_analysis_v5.runtime.R",
-      "scripts/15_plot_rq3_v5.R"
+      "scripts/15_plot_rq3_v5.R",
+      "scripts/15_plot_rq3.R"
     )
     invisible(lapply(fs, parse))
     cat("All downstream analysis runtimes and plot sources parse successfully\n")
