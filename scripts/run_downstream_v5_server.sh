@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
-mkdir -p results/logs results/runtime results/rq2 results/rq3
+mkdir -p results/logs results/runtime results/rq2 results/rq3 results/figures
 
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
@@ -64,6 +64,11 @@ LOG="results/logs/downstream_v5.log"
   # be large. Remove them now; v5 uses a separate checkpoints_v5 directory.
   rm -rf results/rq2/checkpoints
 
+  # All figures are regenerated as PNG into one shared directory. Remove both
+  # the centralized outputs and any legacy per-RQ figure directories first.
+  rm -rf results/figures results/rq1/figures results/rq2/figures results/rq3/figures
+  mkdir -p results/figures
+
   # Remove only stale final products. Versioned v5 checkpoints/shards are kept
   # so an interrupted RQ2 run remains resumable.
   rm -f \
@@ -77,7 +82,6 @@ LOG="results/logs/downstream_v5.log"
     results/rq2/rq2_conditional_geometry_gamma.csv \
     results/rq2/rq2_interaction_scope.csv \
     results/rq2/RQ2_RUN_REPORT.md
-  rm -rf results/rq2/figures
 
   rm -f \
     results/rq3/rq3_observed_stability.csv \
@@ -95,7 +99,6 @@ LOG="results/logs/downstream_v5.log"
     results/rq3/rq3_pareto_ever.csv \
     results/rq3/rq3_pareto_frequency.csv \
     results/rq3/RQ3_RUN_REPORT.md
-  rm -rf results/rq3/figures
 
   echo "===== FIGURE 1 (FROZEN RQ1) ====="
   Rscript scripts/11_plot_fig1.R
