@@ -30,6 +30,7 @@ LOG="results/logs/downstream_v5.log"
   python3 scripts/utils/build_downstream_v5_runtime.py
   Rscript --vanilla -e '
     fs <- c(
+      "scripts/utils/analysis_design.R",
       "results/runtime/12_rq2_analysis_v5.runtime.R",
       "scripts/13_plot_rq2_v5.R",
       "scripts/13_plot_rq2.R",
@@ -44,22 +45,48 @@ LOG="results/logs/downstream_v5.log"
   echo "===== STRUCTURAL PREFLIGHT ====="
   Rscript -e '
     suppressPackageStartupMessages(library(tidyverse))
+    source("scripts/utils/analysis_design.R")
     manifest <- readRDS("results/rq1/rq1_pairwise_change_long.rds")
     if (!is.list(manifest) || !identical(manifest$artifact_type, "partitioned_rq1_pairwise_change")) {
       stop("RQ1 pairwise artifact is not the required partitioned manifest")
     }
-    if (length(manifest$parts) != 67L) stop("Expected 67 canonical RQ1 parts; found ", length(manifest$parts))
+    if (is.null(manifest$analysis_design_id) ||
+        !identical(as.character(manifest$analysis_design_id[[1]]), ms_analysis_design_id())) {
+      stop("RQ1 pairwise artifact does not match the frozen analysis design")
+    }
     paths <- file.path(manifest$part_dir, manifest$parts)
-    if (any(!file.exists(paths))) stop("One or more canonical RQ1 parts are missing")
+    if (!length(paths) || any(!file.exists(paths))) stop("One or more canonical RQ1 parts are missing")
     s <- readr::read_csv("results/rq1/rq1_pairwise_summary.csv", show_col_types = FALSE, progress = FALSE)
     d <- s |> filter(dimension == "duration")
     if (!nrow(d)) stop("RQ1 duration summary missing")
     if (any(grepl("__to__", d$comparison_pair_id, fixed = TRUE))) stop("Concrete duration window ids remain in RQ1 summary")
-    if (dplyr::n_distinct(d$comparison_pair_id) != 15L) stop("Expected 15 duration comparison types")
+    duration_days <- ms_primary_duration_days()
+    expected_duration_types <- choose(length(duration_days), 2L)
+    expected_adjacent_duration <- length(duration_days) - 1L
+    if (dplyr::n_distinct(d$comparison_pair_id) != expected_duration_types) {
+      stop("Expected ", expected_duration_types, " duration comparison types")
+    }
     da <- d |> filter(adjacent_transition)
-    if (dplyr::n_distinct(da$comparison_pair_id) != 5L) stop("Expected five adjacent duration comparison types")
+    if (dplyr::n_distinct(da$comparison_pair_id) != expected_adjacent_duration) {
+      stop("Expected ", expected_adjacent_duration, " adjacent duration comparison types")
+    }
+    t <- s |> filter(dimension == "temporal")
+    expected_temporal_types <- choose(length(ms_primary_temporal_s()), 2L)
+    expected_adjacent_temporal <- length(ms_primary_temporal_s()) - 1L
+    if (dplyr::n_distinct(t$comparison_pair_id) != expected_temporal_types) {
+      stop("Expected ", expected_temporal_types, " temporal comparison types")
+    }
+    ta <- t |> filter(adjacent_transition)
+    if (dplyr::n_distinct(ta$comparison_pair_id) != expected_adjacent_temporal) {
+      stop("Expected ", expected_adjacent_temporal, " adjacent temporal comparison types")
+    }
     if (any(s$A_mean_absolute + 1e-12 < abs(s$B_mean_signed), na.rm = TRUE)) stop("RQ1 A >= |B| invariant failed")
-    cat("Structural preflight passed: 67 canonical parts; 15 duration types; 5 adjacent duration types\n")
+    cat(
+      "Structural preflight passed: design=", ms_analysis_design_id(),
+      "; parts=", length(paths),
+      "; temporal types=", expected_temporal_types,
+      "; duration types=", expected_duration_types, "\n", sep = ""
+    )
   '
 
   # Retired v4 checkpoint files are scientifically incompatible with v5 and can
