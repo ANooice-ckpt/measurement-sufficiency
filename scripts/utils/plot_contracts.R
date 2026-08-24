@@ -57,11 +57,15 @@ ms_plot_write_manifest <- function(path, figure_rows) {
   invisible(path)
 }
 
-ms_plot_save <- function(plot, path, width, height, dpi = 240) {
+ms_plot_save <- function(plot, path, width, height,
+                         dpi = if (exists("MS_RASTER_DPI", inherits = TRUE)) MS_RASTER_DPI else 600) {
   dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
   if (grepl("\\.pdf$", path, ignore.case = TRUE)) {
     ggplot2::ggsave(path, plot, width = width, height = height, units = "in",
                     device = grDevices::cairo_pdf, bg = "white")
+  } else if (grepl("\\.png$", path, ignore.case = TRUE) && requireNamespace("ragg", quietly = TRUE)) {
+    ggplot2::ggsave(path, plot, width = width, height = height, units = "in",
+                    dpi = dpi, device = ragg::agg_png, bg = "white")
   } else {
     ggplot2::ggsave(path, plot, width = width, height = height, units = "in",
                     dpi = dpi, bg = "white")
