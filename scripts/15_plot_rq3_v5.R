@@ -252,12 +252,14 @@ pair_ecdf <- unordered |>
                             labels = c("Placement", "Optical representation")))
 
 pair_levels <- unique(pair_ecdf$pair)
-if (length(pair_levels) > length(MS_THREE_COLORS)) {
-  stop("Fig. 4c has more comparison pairs than the fixed distinguishable pair palette", call. = FALSE)
+pair_palette <- if (length(pair_levels) <= length(MS_THREE_COLORS)) {
+  setNames(MS_THREE_COLORS[seq_along(pair_levels)], pair_levels)
+} else {
+  setNames(grDevices::hcl.colors(length(pair_levels), palette = "Dark 3"), pair_levels)
 }
-pair_palette <- setNames(MS_THREE_COLORS[seq_along(pair_levels)], pair_levels)
 p4c <- ggplot(pair_ecdf,
-              aes(epsilon, fraction_metrics_substitutable, color = pair, group = pair)) +
+              aes(epsilon, fraction_metrics_substitutable,
+                  color = pair, group = interaction(dimension, comparison_pair_id, drop = TRUE))) +
   geom_step(linewidth = .76, alpha = .94) +
   facet_wrap(~dimension, nrow = 1) +
   scale_color_manual(values = pair_palette, breaks = pair_levels, name = NULL) +
