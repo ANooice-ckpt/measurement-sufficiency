@@ -53,22 +53,52 @@ ms_plot_pair_label <- function(data) {
 ms_plot_write_manifest <- function(path, figure_rows) {
   figure_rows <- tibble::as_tibble(figure_rows)
   figure_rows$generated_at_utc <- format(Sys.time(), tz = "UTC", usetz = TRUE)
-  readr::write_csv(figure_rows, path, na = "")
-  invisible(path)
+
+  # Plot scripts historically place the manifest inside results/rq*/figures.
+  # Figures now live centrally, while each RQ keeps its manifest at the RQ root.
+  legacy_dir <- dirname(path)
+  rq_dir <- dirname(legacy_dir)
+  manifest_path <- if (
+    identical(basename(legacy_dir), "figures") && grepl("^rq[0-9]+$", basename(rq_dir))
+  ) {
+    file.path(rq_dir, basename(path))
+  } else {
+    path
+  }
+
+  dir.create(dirname(manifest_path), recursive = TRUE, showWarnings = FALSE)
+  readr::write_csv(figure_rows, manifest_path, na = "")
+
+  # Remove the legacy per-RQ figure directory if the plotting script created it
+  # but no files remain there after centralized output redirection.
+  if (!identical(legacy_dir, dirname(manifest_path)) && dir.exists(legacy_dir)) {
+    remaining <- list.files(legacy_dir, all.files = TRUE, no.. = TRUE)
+    if (!length(remaining)) unlink(legacy_dir, recursive = FALSE)
+  }
+  invisible(manifest_path)
 }
 
 ms_plot_save <- function(plot, path, width, height,
                          dpi = if (exists("MS_RASTER_DPI", inherits = TRUE)) MS_RASTER_DPI else 600) {
-  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
-  if (grepl("\\.pdf$", path, ignore.case = TRUE)) {
-    ggplot2::ggsave(path, plot, width = width, height = height, units = "in",
-                    device = grDevices::cairo_pdf, bg = "white")
-  } else if (grepl("\\.png$", path, ignore.case = TRUE) && requireNamespace("ragg", quietly = TRUE)) {
-    ggplot2::ggsave(path, plot, width = width, height = height, units = "in",
+  ext <- tolower(tools::file_ext(path))
+
+  # PDF export is intentionally disabled. Existing plot scripts may retain paired
+  # PDF/PNG calls; only the PNG call produces an artifact.
+  if (identical(ext, "pdf")) return(invisible(NULL))
+  if (!identical(ext, "png")) {
+    stop("Figure outputs must be PNG; unsupported path: ", path, call. = FALSE)
+  }
+
+  figure_dir <- file.path("results", "figures")
+  output_path <- file.path(figure_dir, basename(path))
+  dir.create(figure_dir, recursive = TRUE, showWarnings = FALSE)
+
+  if (requireNamespace("ragg", quietly = TRUE)) {
+    ggplot2::ggsave(output_path, plot, width = width, height = height, units = "in",
                     dpi = dpi, device = ragg::agg_png, bg = "white")
   } else {
-    ggplot2::ggsave(path, plot, width = width, height = height, units = "in",
+    ggplot2::ggsave(output_path, plot, width = width, height = height, units = "in",
                     dpi = dpi, bg = "white")
   }
-  invisible(path)
+  invisible(output_path)
 }
