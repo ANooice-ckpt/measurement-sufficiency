@@ -12,17 +12,32 @@ ms_all_temporal_s <- function() sort(unique(c(ms_primary_temporal_s(), ms_reserv
 
 ms_primary_duration_days <- function() 1:6
 
+# Artifact/cache identifiers need to change whenever the ordered state vectors
+# change, but embedding the full vectors repeatedly in nested RQ version strings
+# creates unnecessarily long paths (especially for Windows model shards). This
+# deterministic weighted signature is compact while remaining transparent and
+# collision-resistant enough for the small frozen integer lattices used here.
+ms_weighted_signature <- function(x) {
+  x <- as.integer(x)
+  if (!length(x)) return(0L)
+  as.integer(sum(x * seq_along(x)))
+}
+
 ms_analysis_design_id <- function() {
+  temporal <- ms_primary_temporal_s()
+  duration <- ms_primary_duration_days()
   paste0(
-    "t", paste(ms_primary_temporal_s(), collapse = "-"),
-    "__d", min(ms_primary_duration_days()), "-", max(ms_primary_duration_days())
+    "t", length(temporal), "s", ms_weighted_signature(temporal),
+    "__d", length(duration), "s", ms_weighted_signature(duration)
   )
 }
 
 ms_core_design_id <- function() {
   reserve <- ms_reserve_temporal_s()
-  reserve_id <- if (length(reserve)) paste(reserve, collapse = "-") else "none"
-  paste0(ms_analysis_design_id(), "__reserve", reserve_id)
+  paste0(
+    ms_analysis_design_id(),
+    "__r", length(reserve), "s", ms_weighted_signature(reserve)
+  )
 }
 
 ms_temporal_label <- function(x) {
