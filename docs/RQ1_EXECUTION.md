@@ -5,7 +5,7 @@ RQ1 has exactly two entry points:
     scripts/10_rq1_analysis.R
     scripts/11_plot_fig1.R
 
-10 reads results/core/metric_cube.csv.gz, results/core/unit_context.csv.gz only for the core contract, and results/core/duration_metric_cube.rds. 11 reads only frozen RQ1 outputs and writes figures below results/rq1/figures/.
+10 reads the durable core metric and duration artifacts. 11 reads only frozen RQ1 outputs; main PNG figures are redirected by the shared plot contract to `results/figures/`, while the RQ1 figure manifest remains under `results/rq1/`.
 
 ## Canonical pairwise object
 
@@ -17,8 +17,8 @@ This file is a versioned manifest for immutable canonical parts under
 `results/rq1/pairwise_parts/<rq1_analysis_version>/`; it is not required to
 contain the full pairwise table in memory. Each part has an atomic `.ok`
 marker, so interrupted runs reuse completed parts and rebuild only missing
-parts. The current implementation writes one non-duration part and one part
-per core duration support/site block.
+parts. The analysis-design identifier is embedded in the RQ1 version, so parts
+from an older temporal lattice cannot be reused after a design change.
 
 Each row is a smallest-unit pairwise comparison and uses:
 
@@ -28,14 +28,14 @@ Each row is a smallest-unit pairwise comparison and uses:
 - support, participant, unit and window identifiers;
 - metric geometry, standardizer, robust standardizer and availability.
 
-For ordered dimensions, state_a is the less demanding state and state_b the more demanding state. delta = value_a - value_b. Placement/optical facets have a documented empirical orientation but no burden order. Candidate/reference terminology is retained only in historical compatibility outputs.
+For ordered dimensions, state_a is the less demanding state and state_b the more demanding state. **delta = value_b - value_a**. Placement/optical facets have a documented empirical orientation but no burden order. Candidate/reference terminology is retained only in historical compatibility outputs.
 
 ## Pair map
 
 - Placement: eye–chest and eye–wrist on separate maximal supports.
 - Optical: LIGHT–MEDI on the eye full support.
-- Temporal: all choose(7,2)=21 pairs among 10, 20, 30, 60, 300, 900 and 1800 s; adjacent transitions are flagged separately; 10-s anchor projections are a slice, not the canonical ontology.
-- Duration: every nested pair of complete-day windows in the core manifest, with adjacent d -> d+1 pairs flagged.
+- Temporal: all `choose(6,2)=15` pairs among the frozen primary states **10, 20, 30, 40, 60 and 120 s**; adjacent transitions are flagged separately; 10-s anchor projections are a slice, not the canonical ontology. Five minutes is a core sensitivity state only and does not enter the primary RQ1 pair map.
+- Duration: every nested pair of 1–6 complete-day windows in the core manifest, with adjacent d -> d+1 pairs flagged.
 
 All pairs within a lattice join one standardizer. Primary scaling is SD; IQR/1.349 is sensitivity. The empirical distribution comes before A=mean(abs(z)) and B=mean(z); A >= |B| is checked.
 
@@ -52,7 +52,11 @@ All pairs within a lattice join one standardizer. Primary scaling is SD; IQR/1.3
       rq1_pair_type_counts.csv
       rq1_robust_scale_sensitivity.csv
       rq1_participant_balanced_sensitivity.csv
-      figures/
+      figure_artifact_manifest.csv
+
+    results/figures/
+      Fig1_RQ1.png
+      FigS_RQ1_*.png
 
 Duration cohort/run/window audit is written under results/diagnostics/. RQ2
 loads only selected primary pairwise columns/rows through the manifest loader;
