@@ -21,82 +21,76 @@ The high-information states are empirical scale anchors. They are not treated
 as biological truth, and no universal sufficiency threshold or placement/optical
 burden order is implied.
 
+The active ordered design is read from `scripts/utils/analysis_design.R`:
+primary temporal states are 10, 20, 30, 40, 60 and 120 s; monitoring duration
+is 1–6 complete analysis days. Five minutes is a core sensitivity state only and
+does not enter the primary figures.
+
 ## Frozen inputs and output locations
 
-The current plot scripts read only these RQ outputs:
+The current plot scripts read only frozen RQ outputs. Main figures are written as
+PNG files to the centralized `results/figures` directory. RQ-specific artifact
+manifests remain under `results/rq1`, `results/rq2`, and `results/rq3`.
 
-```text
-scripts/10_rq1_analysis.R → results/rq1/rq1_pairwise_summary.csv
-                          → results/rq1/rq1_metric_availability.csv
-                          → results/rq1/rq1_local_transition_summary.csv
+Every RQ artifact version incorporates the current analysis-design identifier.
+Canonical plotting wrappers check or reconstruct ordered-axis levels from the
+same frozen design so a historical hard-coded temporal lattice cannot silently
+survive a design change.
 
-scripts/12_rq2_analysis.R → results/rq2/rq2_conditional_geometry.csv
-                          → results/rq2/rq2_gamma_summary.csv
-                          → results/rq2/rq2_model_performance.csv
-
-scripts/14_rq3_analysis.R → results/rq3/rq3_sufficiency_long.csv
-                          → results/rq3/rq3_convergence_profile.csv
-                          → results/rq3/rq3_unordered_coverage_curves.csv
-                          → results/rq3/rq3_pareto_frontiers.csv
-                          → results/rq3/rq3_pareto_frequency.csv
-```
-
-Figures are written to `results/rq1/figures`, `results/rq2/figures`, and
-`results/rq3/figures`. Each directory contains a
-`figure_artifact_manifest.csv` with the core, upstream RQ, and figure input
-versions.
-
-Every plot script checks the current core version
-`v3_sparse_sampling_complete_days` and the expected RQ analysis version before
-plotting. The old `data/derived/rq*` paths are not valid plot inputs.
-
-## Figure 1 — RQ1 pairwise representation atlas
+## Figure 1 — RQ1 configuration response
 
 `11_plot_fig1.R` presents:
 
-- a–d: empirical quantile intervals of pairwise standardized distortion for
-  placement, optical, temporal, and duration comparisons;
-- e: the complete metric-by-pair atlas, with bubble area for `A = mean |z|`,
-  fill for `B / A`, and explicit unavailable cells;
-- f–g: placement and optical A/B geometry as unordered pairwise facets;
-- h–i: A/B geometry for the explicitly flagged local temporal and duration
-  transitions. All temporal pairwise comparisons are not forced into one path,
-  and nested duration windows are not treated as a single artificial sequence.
+- Fig. 1a: normalized metric-level sensitivity across placement, optical,
+  temporal resolution, and monitoring duration;
+- Fig. 1b: target-aligned signed-versus-absolute distortion geometry for
+  placement and optical representation on a shared linear A/B scale;
+- Fig. 1c: the distribution of each metric's adjacent local-response share over
+  the frozen temporal transitions and 1–6 d duration transitions.
 
-Availability is exported separately as
-`FigS_RQ1_availability_atlas`.
+The complete metric-by-pair atlas, pairwise distributions and availability atlas
+are supplementary. Temporal transition ordering is generated from the frozen
+analysis design rather than written manually into the plot source.
 
-## Figures 2–3 — RQ2 conditional and interaction geometry
+## Figures 2–3 — RQ2 conditionality and interactions
 
-`13_plot_rq2.R` uses transition-local exposure-state bins frozen by RQ2. Fig. 2
-shows conditional `A` and `B` across the observed pair and state-bin lattice.
-Fig. 3 shows interaction gamma as signed `R` and absolute `Q` for the defined
-placement/optical and adjacent temporal interaction lattices. Duration enters
-RQ2 only through the current local transition features; no seven-day departure
-predictor or retired context hypercube is plotted.
+`13_plot_rq2.R` uses transition-local exposure-state bins frozen by RQ2.
 
-Model cross-validation output is supplementary and is shown only when the
-current RQ2 model artifact contains rows.
+- Fig. 2a shows conditional distortion magnitude across exposure state with
+  linear within-dimension y scales;
+- Fig. 2b shows standardized contextual coefficients on one shared linear axis;
+  only the central 99% of raw |beta| points are displayed, while class summaries
+  use all coefficients;
+- Fig. 2c shows the High-minus-Low change in distortion direction;
+- Fig. 3 reports signed `R`, magnitude `Q`, and localized strongest
+  cross-dimensional interactions.
 
-## Figures 4–5 — RQ3 tolerance and Pareto projections
+The primary temporal interaction lattice is the same 10–120 s design used by
+RQ1. Duration enters multidimensional stability directly in RQ3.
+
+## Figures 4–5 — RQ3 sufficiency and joint minimum-burden projections
 
 `15_plot_rq3.R` presents:
 
-- Fig. 4a: metric-level tolerance projection of observed sufficient states;
-- Fig. 4b: local adjacent-transition stability `G` and boundary proximity;
-- Fig. 4c: unordered placement/optical substitutability coverage by pair;
-- Fig. 5a: facet-specific Pareto occupancy over temporal resolution and
-  monitoring duration;
-- Fig. 5b: fraction of metrics ever Pareto across the same ordered dimensions.
+- Fig. 4a: tolerance-dependent minimum sufficient requirement rank for the two
+  ordered dimensions;
+- Fig. 4b: residual observed instability `R_obs` by requirement rank;
+- Fig. 4c: target-aligned placement/optical substitutability as tolerance relaxes;
+- Fig. 5a: overall Pareto occupancy across the temporal-resolution × duration
+  grid inside the observed sufficient region;
+- Fig. 5b: representation-class deviation from the overall Pareto occupancy.
 
-The duration domain is the actual 1–6 complete-analysis-day domain. There is no
-protocol seven-day reference configuration in the current figure logic.
-Pareto dominance is applied only to temporal resolution and duration, inside
-fixed placement × optical facets.
+Fig. 4a/c use one shared `log1p(epsilon)` display scale with explicit original-
+epsilon tick labels. Fig. 4b remains linear. Fig. 5 uses tiles rather than the
+previous saturated bubble encoding.
+
+The conceptual object in Fig. 5 is a minimum-sufficient burden frontier within
+the frozen candidate domain. It is not an unconstrained accuracy-versus-burden
+optimum. The duration domain is 1–6 complete analysis days and the temporal main
+domain is 10–120 s.
 
 ## Legacy artifacts
 
 Files under `results/legacy/pre_refactor` are retained for audit only and are
-not valid inputs to current plotting scripts. The compatibility entrypoints
-`10b`, `10c`, and `12b` are inert migration notices; they must not be used to
-recreate the retired context-specific artifact graph.
+not valid inputs to current plotting scripts. Compatibility entrypoints from the
+retired context-specific graph are audit/migration aids only.
