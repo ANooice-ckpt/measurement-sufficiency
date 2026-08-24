@@ -1,4 +1,5 @@
 suppressPackageStartupMessages(library(tidyverse))
+source("scripts/utils/analysis_design.R")
 source("scripts/utils/paths.R")
 source("scripts/utils/duration_artifacts.R")
 source("scripts/utils/rq1_pairwise_artifacts.R")
@@ -15,6 +16,11 @@ for (p in c(RQ1_LONG, RQ1_SUMMARY, DURATION_CUBE, JOINT_CACHE, SINGLE_CSV)) {
   if (!file.exists(p)) stop("Missing RQ3 recovery input: ", p)
 }
 
+PRIMARY_TEMPORAL_S <- ms_primary_temporal_s()
+PRIMARY_DURATION_DAYS <- ms_primary_duration_days()
+MAX_DURATION_DAYS <- max(PRIMARY_DURATION_DAYS)
+ANALYSIS_DESIGN_ID <- ms_analysis_design_id()
+
 pairwise_artifact <- readRDS(RQ1_LONG)
 pair_summary <- readr::read_csv(RQ1_SUMMARY, show_col_types = FALSE, progress = FALSE)
 duration_artifact <- readRDS(DURATION_CUBE)
@@ -23,13 +29,16 @@ duration_part_paths <- file.path(duration_artifact$part_dir, duration_artifact$p
 if (any(!file.exists(duration_part_paths))) stop("Missing duration metric cube part")
 
 RQ1_VERSION <- rq1_pairwise_version(pairwise_artifact)
+if (!is.null(pairwise_artifact$analysis_design_id) &&
+    !identical(as.character(pairwise_artifact$analysis_design_id[[1]]), ANALYSIS_DESIGN_ID)) {
+  stop("RQ3 recovery RQ1 artifact does not match the frozen analysis design")
+}
 CORE_VERSION <- unique(na.omit(c(pairwise_artifact$core_artifact_version, pair_summary$core_artifact_version)))
 if (length(CORE_VERSION) != 1L) stop("Core version mismatch")
 CORE_VERSION <- CORE_VERSION[[1]]
-RQ3_VERSION <- paste0("rq3_v5_type_level_nested_pareto_fixed__", RQ1_VERSION)
+RQ3_VERSION <- paste0("rq3_v5_type_level_nested_pareto_fixed__", RQ1_VERSION, "__", ANALYSIS_DESIGN_ID)
 NUMERIC_TOL <- 1e-12
 DUAL <- c("MDER", "nvRD")
-PRIMARY_TEMPORAL_S <- c(10L, 20L, 30L, 60L, 300L, 900L, 1800L)
 
 circular_delta <- function(a, b, period = 86400) ((a - b + period / 2) %% period) - period / 2
 circular_mean <- function(x, period = 86400) {
@@ -43,18 +52,14 @@ aggregate_scale <- function(x, geometry) {
   if (length(x) < 2L) return(NA_real_)
   if (identical(geometry, "circular_time")) sd(circular_delta(x, circular_mean(x))) else sd(x)
 }
-temporal_label <- function(x) case_when(
-  x < 60L ~ paste0(x, " s"),
-  x %% 60L == 0L ~ paste0(x %/% 60L, " min"),
-  TRUE ~ paste0(x, " s")
-)
+temporal_label <- ms_temporal_label
 metric_support_filter <- function(df) {
   df |> filter((metric %in% DUAL & str_detect(support_id, "_full$")) |
                 (!metric %in% DUAL & !str_detect(support_id, "_full$")))
 }
 read_duration_primary <- function(path) {
   readRDS(path) |>
-    filter(resolution_s %in% PRIMARY_TEMPORAL_S) |>
+    filter(resolution_s %in% PRIMARY_TEMPORAL_S, n_days %in% PRIMARY_DURATION_DAYS) |>
     metric_support_filter() |>
     select(support_id, site, Id, placement, optical, resolution_s, window_id, n_days,
            window_start, window_end, metric, metric_class, metric_geometry, value, available)
@@ -69,6 +74,12 @@ required_joint <- c(
 )
 missing_joint <- setdiff(required_joint, names(joint_pair_summary))
 if (length(missing_joint)) stop("Cached joint summary has incompatible schema: ", paste(missing_joint, collapse = ", "))
+if (any(!joint_pair_summary$resolution_a %in% PRIMARY_TEMPORAL_S) ||
+    any(!joint_pair_summary$resolution_b %in% PRIMARY_TEMPORAL_S) ||
+    any(!joint_pair_summary$n_days_a %in% PRIMARY_DURATION_DAYS) ||
+    any(!joint_pair_summary$n_days_b %in% PRIMARY_DURATION_DAYS)) {
+  stop("Cached RQ3 joint summary belongs to a different measurement design; recovery is unsafe")
+}
 if (nrow(joint_pair_summary) && any(joint_pair_summary$A + NUMERIC_TOL < abs(joint_pair_summary$B))) {
   stop("Cached RQ3 joint A >= |B| invariant failed")
 }
@@ -79,7 +90,7 @@ state_parts <- vector("list", length(duration_part_paths))
 for (i in seq_along(duration_part_paths)) {
   z <- read_duration_primary(duration_part_paths[[i]])
   anchor_parts[[i]] <- z |>
-    filter(placement == "eye", optical == "MEDI", resolution_s == 10L, n_days == 6L,
+    filter(placement == "eye", optical == "MEDI", resolution_s == 10L, n_days == MAX_DURATION_DAYS,
            available, is.finite(value)) |>
     select(support_id, metric, metric_geometry, value)
   state_parts[[i]] <- z |>
@@ -208,12 +219,13 @@ writeLines(c(
   "# RQ3 run report", "",
   paste0("RQ1 upstream: ", RQ1_VERSION),
   paste0("RQ3 analysis version: ", RQ3_VERSION),
+  paste0("Analysis design: ", ANALYSIS_DESIGN_ID),
   "Recovered after the cached nested joint-pair summary; the expensive Cartesian nested-pair stage was not recomputed.",
   "Joint temporal-duration pairs are actual nested-window comparisons.",
   "Joint A/B and R_obs are aggregated by generic (resolution, duration) configuration type within fixed support x placement x optical facets.",
-  "Pareto dominance treats coarser temporal resolution and shorter monitoring duration as lower burden."
+  "Pareto dominance treats coarser temporal resolution and shorter monitoring duration as lower burden inside the sufficient region."
 ), file.path(OUT, "RQ3_RUN_REPORT.md"))
 
-message("RQ3 recovery: build figures")
-source("scripts/15_plot_rq3_v5.R", local = .GlobalEnv)
+message("RQ3 recovery: build canonical figures")
+source("scripts/15_plot_rq3.R", local = .GlobalEnv)
 message("RQ3 recovery complete: ", RQ3_VERSION)
