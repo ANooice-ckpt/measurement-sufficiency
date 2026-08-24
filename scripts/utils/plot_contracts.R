@@ -69,11 +69,10 @@ ms_plot_write_manifest <- function(path, figure_rows) {
   dir.create(dirname(manifest_path), recursive = TRUE, showWarnings = FALSE)
   readr::write_csv(figure_rows, manifest_path, na = "")
 
-  # Remove the legacy per-RQ figure directory if the plotting script created it
-  # but no files remain there after centralized output redirection.
+  # Once the manifest has been moved out, the legacy per-RQ figure directory is
+  # obsolete. Remove it together with any stale PNG/PDF files from older runs.
   if (!identical(legacy_dir, dirname(manifest_path)) && dir.exists(legacy_dir)) {
-    remaining <- list.files(legacy_dir, all.files = TRUE, no.. = TRUE)
-    if (!length(remaining)) unlink(legacy_dir, recursive = FALSE)
+    unlink(legacy_dir, recursive = TRUE, force = TRUE)
   }
   invisible(manifest_path)
 }
