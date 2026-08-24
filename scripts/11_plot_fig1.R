@@ -21,6 +21,7 @@ suppressPackageStartupMessages({
   library(tidyverse)
   library(cowplot)
 })
+source("scripts/utils/analysis_design.R")
 source("scripts/utils/figure_style.R")
 source("scripts/utils/figure_atlas.R")
 source("scripts/utils/rq1_pairwise_artifacts.R")
@@ -46,6 +47,7 @@ DIM_TITLES <- c(
 METRIC_CLASSES <- MS_METRIC_CLASSES
 FIG1_PANEL_TITLE_SIZE <- 7.6
 FIG1_SUBPANEL_TITLE_SIZE <- 6.5
+TEMPORAL_TRANSITION_ORDER <- ms_temporal_transition_labels()
 
 pairwise_artifact <- readRDS(RQ1_LONG)
 summary <- readr::read_csv(SUMMARY_CSV, show_col_types = FALSE, progress = FALSE)
@@ -74,6 +76,10 @@ ms_plot_require_columns(
 RQ1_VERSION <- rq1_pairwise_version(pairwise_artifact)
 CORE_VERSION <- ms_plot_assert_core(c(pairwise_artifact$core_artifact_version, summary$core_artifact_version))
 ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
+if (!is.null(pairwise_artifact$analysis_design_id) &&
+    !identical(as.character(pairwise_artifact$analysis_design_id[[1]]), ms_analysis_design_id())) {
+  stop("Fig. 1 artifact design does not match current frozen analysis design", call. = FALSE)
+}
 if (any(!is.na(summary$rq1_analysis_version) & summary$rq1_analysis_version != RQ1_VERSION)) {
   stop("rq1_pairwise_summary contains a different rq1_analysis_version", call. = FALSE)
 }
@@ -247,8 +253,8 @@ readr::write_csv(
 # -----------------------------------------------------------------------------
 # b. Target-aligned signed-vs-absolute distortion geometry
 # -----------------------------------------------------------------------------
-# Placement and optical geometry share one scale because A and B have the same
-# standardized units and obey the common feasible geometry |B| <= A.
+# Placement and optical geometry share one linear scale because A and B have the
+# same standardized units and obey the common feasible geometry |B| <= A.
 target_geometry <- summary |>
   filter(
     dimension %in% c("placement", "optical"),
@@ -324,13 +330,11 @@ p1b <- ggplot(target_geometry, aes(B_mean_signed, A_mean_absolute, color = metri
   facet_wrap(~facet_label, nrow = 1) +
   scale_color_ms_metric(guide = "none") +
   scale_x_continuous(
-    trans = scales::transform_asinh(),
     limits = c(-target_limit, target_limit),
     breaks = scales::breaks_extended(n = 6),
     expand = expansion(mult = c(.02, .02))
   ) +
   scale_y_continuous(
-    trans = scales::transform_asinh(),
     limits = c(0, target_limit),
     breaks = scales::breaks_extended(n = 6),
     expand = expansion(mult = c(0, .02))
@@ -374,13 +378,7 @@ local_display <- local |>
     ),
     step_order = case_when(
       dimension == "duration" ~ as.numeric(from_days),
-      dimension == "temporal" ~ match(
-        transition,
-        c(
-          "30 min to 15 min", "15 min to 5 min", "5 min to 1 min",
-          "1 min to 30 s", "30 s to 20 s", "20 s to 10 s"
-        )
-      ),
+      dimension == "temporal" ~ match(transition, TEMPORAL_TRANSITION_ORDER),
       TRUE ~ NA_real_
     )
   ) |>
