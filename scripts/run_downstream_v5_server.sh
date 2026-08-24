@@ -26,17 +26,17 @@ LOG="results/logs/downstream_v5.log"
   echo "Commit: $(git rev-parse HEAD)"
   echo "Workers: rq2=${RQ2_WORKERS}; rq2_cv=${RQ2_CV_FOLDS}; rq3=${RQ3_WORKERS}; rq3_parts=${RQ3_PART_WORKERS}"
 
-  echo "===== BUILD/PARSE CORRECTED RUNTIMES ====="
+  echo "===== BUILD/PARSE CORRECTED ANALYSIS RUNTIMES + PLOT SOURCES ====="
   python3 scripts/utils/build_downstream_v5_runtime.py
   Rscript --vanilla -e '
     fs <- c(
       "results/runtime/12_rq2_analysis_v5.runtime.R",
-      "results/runtime/13_plot_rq2_v5.runtime.R",
+      "scripts/13_plot_rq2_v5.R",
       "results/runtime/14_rq3_analysis_v5.runtime.R",
-      "results/runtime/15_plot_rq3_v5.runtime.R"
+      "scripts/15_plot_rq3_v5.R"
     )
     invisible(lapply(fs, parse))
-    cat("All downstream v5 runtime scripts parse successfully\n")
+    cat("All downstream analysis runtimes and plot sources parse successfully\n")
   '
 
   echo "===== STRUCTURAL PREFLIGHT ====="
@@ -104,13 +104,13 @@ LOG="results/logs/downstream_v5.log"
   Rscript results/runtime/12_rq2_analysis_v5.runtime.R
 
   echo "===== RQ2 V5 FIGURES ====="
-  Rscript results/runtime/13_plot_rq2_v5.runtime.R
+  Rscript scripts/13_plot_rq2.R
 
   echo "===== RQ3 V5 ====="
   Rscript results/runtime/14_rq3_analysis_v5.runtime.R
 
   echo "===== RQ3 V5 FIGURES ====="
-  Rscript results/runtime/15_plot_rq3_v5.runtime.R
+  Rscript scripts/15_plot_rq3.R
 
   echo "===== PROVENANCE ====="
   git rev-parse HEAD > results/logs/git_commit.txt
