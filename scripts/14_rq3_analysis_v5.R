@@ -1,4 +1,5 @@
 suppressPackageStartupMessages(library(tidyverse))
+source("scripts/utils/analysis_design.R")
 source("scripts/utils/paths.R")
 source("scripts/utils/parallel_runtime.R")
 source("scripts/utils/duration_artifacts.R")
@@ -25,6 +26,10 @@ RQ3_PART_WORKERS <- ms_resolve_workers("RQ3_PART_WORKERS", default = min(8L, RQ3
 ensure_result_dirs(OUT, DIAG)
 for (p in c(RQ1_LONG, RQ1_SUMMARY, LOCAL, DURATION_CUBE)) if (!file.exists(p)) stop("Missing RQ3 input: ", p)
 
+PRIMARY_TEMPORAL_S <- ms_primary_temporal_s()
+PRIMARY_DURATION_DAYS <- ms_primary_duration_days()
+ANALYSIS_DESIGN_ID <- ms_analysis_design_id()
+
 pairwise_artifact <- readRDS(RQ1_LONG)
 pair_summary <- readr::read_csv(RQ1_SUMMARY, show_col_types = FALSE, progress = FALSE)
 local <- readr::read_csv(LOCAL, show_col_types = FALSE, progress = FALSE)
@@ -34,13 +39,15 @@ duration_part_paths <- file.path(duration_artifact$part_dir, duration_artifact$p
 if (any(!file.exists(duration_part_paths))) stop("Missing duration metric cube part")
 
 RQ1_VERSION <- rq1_pairwise_version(pairwise_artifact)
+if (!is.null(pairwise_artifact$analysis_design_id) && !identical(as.character(pairwise_artifact$analysis_design_id[[1]]), ANALYSIS_DESIGN_ID)) {
+  stop("RQ1 artifact analysis design does not match current frozen design")
+}
 CORE_VERSION <- unique(na.omit(c(pairwise_artifact$core_artifact_version, pair_summary$core_artifact_version)))
 if (length(CORE_VERSION) != 1L) stop("Core version mismatch")
 CORE_VERSION <- CORE_VERSION[[1]]
-RQ3_VERSION <- paste0("rq3_v5_type_level_nested_pareto_fixed__", RQ1_VERSION)
+RQ3_VERSION <- paste0("rq3_v5_type_level_nested_pareto_fixed__", RQ1_VERSION, "__", ANALYSIS_DESIGN_ID)
 NUMERIC_TOL <- 1e-12
 DUAL <- c("MDER", "nvRD")
-PRIMARY_TEMPORAL_S <- c(10L, 20L, 30L, 60L, 300L, 900L, 1800L)
 
 safe_q <- function(x, p) { x <- x[is.finite(x)]; if (length(x)) unname(quantile(x, p, names = FALSE)) else NA_real_ }
 circular_delta <- function(a, b, period = 86400) ((a - b + period / 2) %% period) - period / 2
@@ -53,11 +60,7 @@ aggregate_scale <- function(x, geometry) {
   x <- x[is.finite(x)]; if (length(x) < 2L) return(NA_real_)
   if (identical(geometry, "circular_time")) sd(circular_delta(x, circular_mean(x))) else sd(x)
 }
-temporal_label <- function(x) case_when(
-  x < 60L ~ paste0(x, " s"),
-  x %% 60L == 0L ~ paste0(x %/% 60L, " min"),
-  TRUE ~ paste0(x, " s")
-)
+temporal_label <- ms_temporal_label
 metric_support_filter <- function(df) {
   df |> filter((metric %in% DUAL & str_detect(support_id, "_full$")) |
                 (!metric %in% DUAL & !str_detect(support_id, "_full$")))
@@ -186,7 +189,7 @@ convergence <- local |>
       TRUE ~ NA_integer_
     ),
     boundary_proximity = case_when(
-      dimension == "duration" ~ requirement_position / 6,
+      dimension == "duration" ~ requirement_position / max(PRIMARY_DURATION_DAYS),
       dimension == "temporal" ~ requirement_position / length(PRIMARY_TEMPORAL_S),
       TRUE ~ NA_real_
     ),
@@ -391,12 +394,14 @@ if (any(!joint_boundary_audit$pass)) stop("RQ3 joint boundary/status invariant f
 writeLines(c(
   "# RQ3 run report", "",
   paste0("RQ1 upstream: ", RQ1_VERSION), paste0("RQ3 analysis version: ", RQ3_VERSION),
+  paste0("Analysis design: ", ANALYSIS_DESIGN_ID),
+  paste0("Primary temporal states: ", paste(PRIMARY_TEMPORAL_S, collapse = ", "), " s."),
   "Single-dimension R_obs is computed on temporal/duration configuration TYPES from RQ1 pair summaries.",
   "Threshold-like sufficient-set checks exclude unresolved boundaries and require false->true monotone ordering with increasing burden.",
   "Least-demanding sufficient state is the minimum-burden sufficient state when and only when the resolved sufficient set is threshold-like.",
   "Joint temporal-duration pairs are actual nested-window comparisons; equal duration implies the same observed dates.",
   "Joint A/B and R_obs are aggregated by generic (resolution, duration) configuration type within fixed support x placement x optical facets.",
-  "Pareto dominance treats coarser temporal resolution and shorter monitoring duration as lower burden.",
+  "Pareto dominance treats coarser temporal resolution and shorter monitoring duration as lower burden inside the sufficient region.",
   paste0("Joint duration-part workers: ", RQ3_PART_WORKERS)
 ), file.path(OUT, "RQ3_RUN_REPORT.md"))
 message("RQ3 complete: ", RQ3_VERSION)
