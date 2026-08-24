@@ -95,37 +95,10 @@ safe_mean <- function(x) {
 }
 
 theme_rq3 <- function(base_size = 6.7, legend_position = "none") {
-  theme_ms(base_size = base_size, legend_position = legend_position) +
-    theme(
-      panel.border = element_blank(),
-      axis.line.x = element_line(colour = "#505457", linewidth = .34),
-      axis.line.y = element_line(colour = "#505457", linewidth = .34),
-      panel.grid.major = element_line(colour = "#ECEFF0", linewidth = .22),
-      panel.grid.minor = element_blank(),
-      axis.ticks = element_line(colour = "#505457", linewidth = .28),
-      strip.background = element_blank(),
-      strip.text = element_text(face = "bold", colour = "#25282A", margin = margin(1, 2, 2, 2)),
-      plot.title = element_text(size = base_size + .8, face = "bold", margin = margin(b = 3)),
-      plot.margin = margin(3, 4, 3, 4)
-    )
+  theme_ms_axes(base_size = base_size, legend_position = legend_position)
 }
 
-metric_legend_source <- ggplot(
-  tibble(metric_class = factor(METRIC_CLASSES, levels = METRIC_CLASSES),
-         x = seq_along(METRIC_CLASSES), y = 1),
-  aes(x, y, color = metric_class)
-) +
-  geom_point(size = 1.7) +
-  scale_color_ms_metric() +
-  guides(color = guide_legend(title = NULL, nrow = 1, byrow = TRUE,
-                              override.aes = list(size = 1.5))) +
-  theme_void(base_family = MS_FONT, base_size = 7) +
-  theme(
-    legend.position = "bottom", legend.direction = "horizontal",
-    legend.margin = margin(0, 0, 0, 0), legend.box.margin = margin(0, 0, 0, 0),
-    legend.text = element_text(size = 5.35), legend.key.width = grid::unit(3.5, "mm")
-  )
-metric_legend <- cowplot::get_legend(metric_legend_source)
+metric_legend <- ms_metric_legend(text_size = 5.35, point_size = 1.5, key_width_mm = 3.5)
 
 # =============================================================================
 # Fig. 4 — tolerance determines the minimum sufficient burden
@@ -135,7 +108,9 @@ observed_display <- observed |>
   filter(dimension %in% ORDERED_DIMS, status == "resolved", is.finite(R_obs), is.finite(requirement_rank)) |>
   mutate(
     metric_class = factor(metric_class, levels = METRIC_CLASSES),
-    dimension = factor(dimension, levels = ORDERED_DIMS, labels = unname(ORDERED_TITLES[ORDERED_DIMS]))
+    dimension = factor(dimension, levels = ORDERED_DIMS, labels = unname(ORDERED_TITLES[ORDERED_DIMS])),
+    class_offset = ms_class_offset(metric_class, span = .50, classes = METRIC_CLASSES),
+    x_pos = requirement_rank + class_offset
   )
 
 # a. Re-evaluate each metric on the pooled observed epsilon breakpoints within
@@ -177,13 +152,21 @@ requirement_summary <- requirement_grid |>
                        labels = unname(ORDERED_TITLES[ORDERED_DIMS]))
   )
 
+epsilon_values <- c(requirement_summary$epsilon, unordered$epsilon_entry)
+epsilon_values <- epsilon_values[is.finite(epsilon_values) & epsilon_values >= 0]
+epsilon_limit <- if (length(epsilon_values)) max(epsilon_values) * 1.02 else 1
+if (!is.finite(epsilon_limit) || epsilon_limit <= 0) epsilon_limit <- 1
+
 p4a <- ggplot(requirement_summary, aes(epsilon, rank_median, color = metric_class)) +
   geom_step(aes(y = rank_q25, group = metric_class), linewidth = .34, alpha = .24) +
   geom_step(aes(y = rank_q75, group = metric_class), linewidth = .34, alpha = .24) +
   geom_step(aes(group = metric_class), linewidth = .82, alpha = .96) +
-  facet_wrap(~dimension, nrow = 1, scales = "free_x") +
+  facet_wrap(~dimension, nrow = 1) +
   scale_color_ms_metric(guide = "none") +
-  scale_x_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
+  scale_x_continuous(
+    trans = scales::transform_asinh(), limits = c(0, epsilon_limit),
+    breaks = scales::breaks_extended(n = 4), expand = expansion(mult = c(0, .01))
+  ) +
   scale_y_continuous(breaks = 1:7, limits = c(.8, 7.2)) +
   labs(
     title = "a  Tolerance sets the minimum sufficient measurement burden",
@@ -205,27 +188,37 @@ observed_summary <- observed_display |>
     R_q25 = quantile(R_obs, .25, na.rm = TRUE, names = FALSE),
     R_q75 = quantile(R_obs, .75, na.rm = TRUE, names = FALSE),
     .groups = "drop"
+  ) |>
+  mutate(
+    metric_class = factor(metric_class, levels = METRIC_CLASSES),
+    class_offset = ms_class_offset(metric_class, span = .50, classes = METRIC_CLASSES),
+    x_pos = requirement_rank + class_offset
   )
 
 p4b <- ggplot() +
   geom_point(
     data = observed_display,
-    aes(requirement_rank, R_obs, color = metric_class),
-    position = position_jitter(width = .10, height = 0, seed = 91),
+    aes(x_pos, R_obs, color = metric_class),
+    position = position_jitter(width = .018, height = 0, seed = 91),
     size = .52, alpha = .16
   ) +
   geom_linerange(
     data = observed_summary,
-    aes(requirement_rank, ymin = R_q25, ymax = R_q75, color = metric_class),
-    position = position_dodge(width = .58), linewidth = .42, alpha = .46
+    aes(x_pos, ymin = R_q25, ymax = R_q75, color = metric_class),
+    linewidth = .42, alpha = .46
   ) +
   geom_point(
     data = observed_summary,
-    aes(requirement_rank, R_median, color = metric_class),
-    position = position_dodge(width = .58), shape = 18, size = 1.6
+    aes(x_pos, R_median, color = metric_class),
+    shape = 18, size = 1.6
   ) +
-  facet_wrap(~dimension, nrow = 1, scales = "free_x") +
+  facet_wrap(~dimension, nrow = 1) +
   scale_color_ms_metric(guide = "none") +
+  scale_x_continuous(
+    breaks = 1:7,
+    limits = c(.65, 7.35),
+    labels = as.character(1:7)
+  ) +
   scale_y_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
   labs(
     title = "b  Residual instability contracts as measurement burden increases",
@@ -259,13 +252,19 @@ pair_ecdf <- unordered |>
                             labels = c("Placement", "Optical representation")))
 
 pair_levels <- unique(pair_ecdf$pair)
-pair_palette <- setNames(rep(MS_THREE_COLORS, length.out = length(pair_levels)), pair_levels)
+if (length(pair_levels) > length(MS_THREE_COLORS)) {
+  stop("Fig. 4c has more comparison pairs than the fixed distinguishable pair palette", call. = FALSE)
+}
+pair_palette <- setNames(MS_THREE_COLORS[seq_along(pair_levels)], pair_levels)
 p4c <- ggplot(pair_ecdf,
               aes(epsilon, fraction_metrics_substitutable, color = pair, group = pair)) +
   geom_step(linewidth = .76, alpha = .94) +
-  facet_wrap(~dimension, nrow = 1, scales = "free_x") +
+  facet_wrap(~dimension, nrow = 1) +
   scale_color_manual(values = pair_palette, breaks = pair_levels, name = NULL) +
-  scale_x_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
+  scale_x_continuous(
+    trans = scales::transform_asinh(), limits = c(0, epsilon_limit),
+    breaks = scales::breaks_extended(n = 4), expand = expansion(mult = c(0, .01))
+  ) +
   scale_y_continuous(limits = c(0, 1), labels = scales::label_percent(accuracy = 25)) +
   labs(
     title = "c  Target-aligned alternatives become substitutable as tolerance relaxes",
@@ -450,15 +449,21 @@ p5b <- ggplot() +
   theme_rq3(base_size = 5.8) +
   theme(
     panel.grid = element_blank(),
-    axis.text.x = element_text(angle = 36, hjust = 1, size = 3.7),
-    axis.text.y = element_text(size = 4.0),
+    axis.text.x = element_text(angle = 36, hjust = 1, size = 4.5),
+    axis.text.y = element_text(size = 4.6),
     strip.text = element_text(size = 5.0),
     panel.spacing = grid::unit(1.8, "mm")
   )
 
-fig5 <- cowplot::plot_grid(
+pareto_legend <- cowplot::get_legend(p5a)
+p5a <- p5a + theme(legend.position = "none")
+fig5_body <- cowplot::plot_grid(
   p5a, p5b, ncol = 2, rel_widths = c(.43, .57),
   align = "hv", axis = "tblr", greedy = TRUE
+)
+fig5 <- cowplot::plot_grid(
+  fig5_body, pareto_legend, ncol = 1, rel_heights = c(1, .11),
+  align = "v", greedy = TRUE
 )
 ms_plot_save(fig5, file.path(OUT_DIR, "Fig5_RQ3.pdf"), 9.0, 5.6)
 ms_plot_save(fig5, file.path(OUT_DIR, "Fig5_RQ3.png"), 9.0, 5.6)
