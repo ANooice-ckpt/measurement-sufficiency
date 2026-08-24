@@ -1,4 +1,5 @@
 suppressPackageStartupMessages({library(tidyverse); library(nlme)})
+source("scripts/utils/analysis_design.R")
 source("scripts/utils/paths.R")
 source("scripts/utils/parallel_runtime.R")
 source("scripts/utils/duration_artifacts.R")
@@ -7,8 +8,7 @@ source("scripts/utils/rq1_pairwise_artifacts.R")
 # Corrected RQ2 implementation.
 # Scientific invariants:
 # - canonical RQ1 rows remain concrete observed pairs;
-# - duration is projected to the adjacent duration TYPE (1d->2d, ..., 5d->6d)
-#   before conditioning/model grouping;
+# - duration is projected to adjacent duration TYPES before conditioning/model grouping;
 # - exposure-state bins are transition/support properties and are keyed by BOTH
 #   sides of the concrete observation pair, never by metric;
 # - large canonical parts are streamed; model workers receive file paths only;
@@ -29,7 +29,10 @@ RQ2_CV_FOLDS <- suppressWarnings(as.integer(Sys.getenv("RQ2_CV_FOLDS", unset = "
 if (!is.finite(RQ2_CV_FOLDS) || RQ2_CV_FOLDS < 2L) RQ2_CV_FOLDS <- 5L
 RQ2_WORKERS <- ms_resolve_workers("RQ2_WORKERS", default = 1L, cap = 48L)
 MODEL_SEED <- 20260821L
-TEMPORAL_GAMMA_S <- c(10L, 20L, 30L, 60L, 300L, 900L, 1800L)
+PRIMARY_TEMPORAL_S <- ms_primary_temporal_s()
+PRIMARY_DURATION_DAYS <- ms_primary_duration_days()
+TEMPORAL_GAMMA_S <- PRIMARY_TEMPORAL_S
+ANALYSIS_DESIGN_ID <- ms_analysis_design_id()
 EXTERNAL <- c("external_radiation", "external_direct_fraction", "external_cloud", "solar_noon_elevation_deg")
 OUTCOMES <- c(signed = "z", magnitude = "abs_z")
 ensure_result_dirs(OUT, DIAG, CHECKPOINTS, SHARD_ROOT)
@@ -56,11 +59,14 @@ if (!rq1_pairwise_is_partitioned(rq1_artifact)) stop("RQ2 v5 requires partitione
 part_paths <- rq1_pairwise_part_paths(rq1_artifact)
 if (any(!file.exists(part_paths))) stop("Missing RQ1 canonical part")
 RQ1_VERSION <- rq1_pairwise_version(rq1_artifact)
+if (!is.null(rq1_artifact$analysis_design_id) && !identical(as.character(rq1_artifact$analysis_design_id[[1]]), ANALYSIS_DESIGN_ID)) {
+  stop("RQ1 artifact analysis design does not match current frozen design")
+}
 pair_summary <- readr::read_csv(RQ1_SUMMARY, show_col_types = FALSE, progress = FALSE)
 CORE_VERSION <- unique(na.omit(c(rq1_artifact$core_artifact_version, pair_summary$core_artifact_version)))
 if (length(CORE_VERSION) != 1L) stop("Core version mismatch")
 CORE_VERSION <- CORE_VERSION[[1]]
-RQ2_VERSION <- paste0("rq2_v5_duration_type_streamed_cv_fixed__", RQ1_VERSION)
+RQ2_VERSION <- paste0("rq2_v5_duration_type_streamed_cv_fixed__", RQ1_VERSION, "__", ANALYSIS_DESIGN_ID)
 SHARD_DIR <- file.path(SHARD_ROOT, RQ2_VERSION)
 dir.create(SHARD_DIR, recursive = TRUE, showWarnings = FALSE)
 
@@ -68,7 +74,7 @@ cube <- readr::read_csv(CORE_METRICS, show_col_types = FALSE, progress = FALSE) 
   mutate(Date = as.Date(Date))
 context <- readr::read_csv(CORE_CONTEXT, show_col_types = FALSE, progress = FALSE) |>
   mutate(Date = as.Date(Date))
-if (any(cube$resolution_s == 15L)) stop("15-s core state detected")
+if (!all(PRIMARY_TEMPORAL_S %in% unique(cube$resolution_s))) stop("Primary temporal state missing from core cube")
 
 # Daily transition-local state and measurement-independent external context.
 state_cube <- cube |>
@@ -226,8 +232,9 @@ task_catalog <- pair_summary |>
 if (any(task_catalog$dimension == "duration" & grepl("__to__", task_catalog$comparison_pair_id, fixed = TRUE))) {
   stop("RQ1 duration summary is not projected to duration comparison types")
 }
-if (n_distinct(task_catalog$comparison_pair_id[task_catalog$dimension == "duration"]) > 5L) {
-  stop("RQ2 duration local-transition catalogue exceeds the five adjacent duration types")
+expected_duration_transitions <- length(PRIMARY_DURATION_DAYS) - 1L
+if (n_distinct(task_catalog$comparison_pair_id[task_catalog$dimension == "duration"]) > expected_duration_transitions) {
+  stop("RQ2 duration local-transition catalogue exceeds the frozen adjacent duration types")
 }
 readr::write_csv(task_catalog, file.path(DIAG, "rq2_model_task_catalog.csv"), na = "")
 
@@ -311,6 +318,7 @@ condition_manifest <- list(
   core_artifact_version = CORE_VERSION,
   rq1_analysis_version = RQ1_VERSION,
   rq2_analysis_version = RQ2_VERSION,
+  analysis_design_id = ANALYSIS_DESIGN_ID,
   canonical_part_count = length(part_paths),
   task_count = nrow(task_catalog),
   shard_dir = normalizePath(SHARD_DIR, winslash = "/", mustWork = TRUE)
@@ -658,7 +666,9 @@ readr::write_csv(tibble(
 writeLines(c(
   "# RQ2 run report", "",
   paste0("RQ1 upstream: ", RQ1_VERSION), paste0("RQ2 analysis version: ", RQ2_VERSION),
-  "Duration canonical rows are grouped by adjacent duration TYPE (1d->2d through 5d->6d), not concrete window identity.",
+  paste0("Analysis design: ", ANALYSIS_DESIGN_ID),
+  paste0("Duration canonical rows are grouped by adjacent duration TYPES across ", min(PRIMARY_DURATION_DAYS), "-", max(PRIMARY_DURATION_DAYS), " d, not concrete window identity."),
+  paste0("Temporal gamma uses adjacent primary cadences: ", paste(PRIMARY_TEMPORAL_S, collapse = ", "), " s."),
   "State-bin keys include both analysis-unit sides, preventing ambiguous nested-window assignments.",
   "Duration exposure state uses log absolute longer-window mean MEDI; shorter-window day variability is an additional state predictor when estimable.",
   "Duration external context uses measurement-independent daily context averaged over the longer observed window.",
