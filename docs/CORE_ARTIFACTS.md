@@ -1,10 +1,14 @@
-# Core artifact contract — v3 sparse sampling / complete analysis days
+# Core artifact contract — v4 sparse sampling / complete analysis days
 
 ## Purpose
 
 The core layer materializes expensive configuration-level target values once. RQ1–RQ3 consume those durable values and do not return to raw 10-s series for ordinary downstream changes.
 
-Current version: v3_sparse_sampling_complete_days.
+The current core version is generated from the frozen measurement design and has the form:
+
+    v4_sparse_sampling_complete_days__<core_design_id>
+
+The design identifier is part of the cache key, so a temporal-lattice change cannot silently reuse an incompatible core cache.
 
     results/core/
       cache/<core_artifact_version>/
@@ -36,9 +40,11 @@ Reserve all-position supports remain available only for analyses that genuinely 
 
 The harmonized 10-s schedule is the source grid.
 
-Primary states: 10, 20, 30, 60, 300, 900 and 1800 s. Reserve states: 120, 600 and 3600 s. 15 s is excluded.
+Primary states: **10, 20, 30, 40, 60 and 120 s**. The only active reserve state is **300 s (5 min)**, retained as an intentionally coarse sensitivity condition. Cadences above 5 min are no longer materialized. Fifteen seconds remains excluded because it cannot be obtained by equal-spacing subsampling of the 10-s grid.
 
-core_make_series() performs deterministic participant/source-grid-phase-anchored systematic sparse subsampling. A retained row must have the exact source timestamp and MEDI/LIGHT value. No bin average, interpolation or hidden reconstruction is permitted.
+`core_make_series()` performs deterministic participant/source-grid-phase-anchored systematic sparse subsampling. A retained row must have the exact source timestamp and MEDI/LIGHT value. No bin average, interpolation or hidden reconstruction is permitted. The resulting temporal state is therefore a literal sparse-sampling interval.
+
+All primary states are below the pulse-operator availability boundary and preserve the full primary target-representation set, subject to the normal optical/support restrictions. Pulse-derived metrics are unavailable at the 5-min reserve state.
 
 ## Duration artifact
 
@@ -61,10 +67,12 @@ Daily-defined metrics are aggregated from durable participant-day values using t
 linear/circular semantics. IS/IV are rebuilt on exact selected dates from the stored hourly basis.
 
 duration_metric_cube_parts.csv records the block-to-support/site mapping. A block is installed
-atomically and receives a .ok marker only after the RDS is closed; CORE_DURATION_ONLY=1 can
+atomically and receives a .ok marker only after the RDS has been closed; CORE_DURATION_ONLY=1 can
 therefore resume an interrupted duration build from completed blocks. The manifest is written
 only after all expected blocks are available.
 
 ## Version and compatibility
 
-Every main artifact carries core_artifact_version. A change to duration semantics, schema or output paths requires a normal core-version bump. No artifact hash or second contract system is used.
+The single source of truth for the active temporal and duration domains is `scripts/utils/analysis_design.R`. `core_artifact_version()` includes the corresponding core-design identifier. RQ1, RQ2 and RQ3 also carry the analysis-design identifier in their artifact versions, preventing stale pairwise, model or sufficiency caches from being reused after a design change.
+
+Every main artifact carries `core_artifact_version`. A change to measurement-state semantics, duration semantics, schema or output paths requires a normal core-version change. No parallel hash/contract system is used.
