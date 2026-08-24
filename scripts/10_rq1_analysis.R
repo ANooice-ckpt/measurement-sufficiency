@@ -1,4 +1,5 @@
 suppressPackageStartupMessages(library(tidyverse))
+source("scripts/utils/analysis_design.R")
 source("scripts/utils/protocol_windows.R")
 source("scripts/utils/paths.R")
 source("scripts/utils/duration_artifacts.R")
@@ -29,7 +30,10 @@ rq1_default_part_workers <- function() {
 }
 PART_WORKERS <- ms_resolve_workers("RQ1_PART_WORKERS", default = rq1_default_part_workers(), cap = 48L)
 BOOT_SEED <- 20260820L
-PRIMARY_TEMPORAL_S <- c(10L, 20L, 30L, 60L, 300L, 900L, 1800L)
+PRIMARY_TEMPORAL_S <- ms_primary_temporal_s()
+PRIMARY_DURATION_DAYS <- ms_primary_duration_days()
+MAX_DURATION_DAYS <- max(PRIMARY_DURATION_DAYS)
+ANALYSIS_DESIGN_ID <- ms_analysis_design_id()
 DUAL_CHANNEL_METRICS <- c("MDER", "nvRD")
 ISIV_METRICS <- c("interdaily_stability", "intradaily_variability")
 NUMERIC_TOL <- 1e-12
@@ -50,15 +54,17 @@ duration_manifest <- readRDS(DURATION_MANIFEST) |>
 core_versions <- unique(na.omit(c(cube$core_artifact_version, duration_artifact$core_artifact_version)))
 if (length(core_versions) != 1L) stop("Core artifact version mismatch")
 CORE_VERSION <- core_versions[[1]]
-if (any(cube$resolution_s == 15L)) stop("15-s state detected")
 if (!all(PRIMARY_TEMPORAL_S %in% unique(cube$resolution_s))) stop("Primary temporal state missing")
+if (any(!duration_manifest$n_days %in% PRIMARY_DURATION_DAYS)) {
+  stop("Duration manifest contains states outside the frozen primary duration domain")
+}
 metric_meta <- cube |> distinct(metric, metric_class, metric_scope, metric_geometry)
 if (n_distinct(metric_meta$metric) != 54L) stop("Expected 54 target metrics")
-RQ1_ANALYSIS_VERSION <- paste0("rq1_v5_oriented_pairwise_config_keyed__", CORE_VERSION)
-
-temporal_label <- function(x) case_when(
-  x < 60L ~ paste0(x, " s"), x %% 60L == 0L ~ paste0(x %/% 60L, " min"), TRUE ~ paste0(x, " s")
+RQ1_ANALYSIS_VERSION <- paste0(
+  "rq1_v5_oriented_pairwise_config_keyed__", CORE_VERSION, "__", ANALYSIS_DESIGN_ID
 )
+
+temporal_label <- ms_temporal_label
 circular_delta <- function(a, b, period = 86400) ((a - b + period / 2) %% period) - period / 2
 circular_mean <- function(x, period = 86400) {
   x <- x[is.finite(x)]; if (!length(x)) return(NA_real_)
@@ -243,7 +249,7 @@ build_duration_pair_chunk <- function(duration_values, window_pairs) {
       config_a_id = paste0(config_id, "__", window_a), config_b_id = paste0(config_id, "__", window_b),
       config_a_label = paste0(n_days_a, " d (", as.character(start_a), "–", as.character(end_a), ")"),
       config_b_label = paste0(n_days_b, " d (", as.character(start_b), "–", as.character(end_b), ")"),
-      ordered_dimension = TRUE, adjacent_transition, anchor_projection = n_days_b == 6L,
+      ordered_dimension = TRUE, adjacent_transition, anchor_projection = n_days_b == MAX_DURATION_DAYS,
       requirement_relation = "a_shorter_than_b",
       orientation_type = "measurement_accumulation",
       orientation_basis = "longer monitoring duration",
@@ -271,12 +277,12 @@ duration_columns <- c("support_id", "site", "Id", "window_id", "config_id", "met
 duration_anchor_values <- if (length(duration_part_paths)) {
   map_dfr(duration_part_paths, function(part_path) {
     readRDS(part_path) |>
-      filter(n_days == 6L) |>
+      filter(n_days == MAX_DURATION_DAYS) |>
       select(metric, metric_geometry, value)
   })
 } else {
   duration_artifact |>
-    filter(n_days == 6L) |>
+    filter(n_days == MAX_DURATION_DAYS) |>
     select(metric, metric_geometry, value)
 }
 
@@ -415,7 +421,7 @@ if (length(pending_duration)) {
     exports = c("duration_columns", "duration_window_pairs", "standardizers", "CORE_VERSION",
                 "RQ1_ANALYSIS_VERSION", "build_duration_pair_chunk", "canonicalize_pairs",
                 "rq1_write_part_atomic", "rq1_marker_rows", "rq1_process_duration_part",
-                "circular_delta")
+                "circular_delta", "MAX_DURATION_DAYS")
   )
 } else rq1_part_results <- list()
 
@@ -439,6 +445,7 @@ pairwise_manifest <- list(
   artifact_version = RQ1_ANALYSIS_VERSION,
   core_artifact_version = CORE_VERSION,
   rq1_analysis_version = RQ1_ANALYSIS_VERSION,
+  analysis_design_id = ANALYSIS_DESIGN_ID,
   part_dir = normalizePath(pairwise_part_dir, winslash = "/", mustWork = TRUE),
   parts = all_part_records$part,
   part_manifest = all_part_records,
@@ -564,8 +571,10 @@ geom_audit <- summary |> transmute(dimension, comparison_pair_id, metric, A = A_
                                    gap = A - abs(B), pass = A + NUMERIC_TOL >= abs(B))
 readr::write_csv(geom_audit, file.path(DIAG, "rq1_geometry_invariant.csv"), na = "")
 
+temporal_pair_count <- choose(length(PRIMARY_TEMPORAL_S), 2L)
 writeLines(c(
   "# RQ1 run report", "", paste0("Core artifact version: ", CORE_VERSION), paste0("RQ1 analysis version: ", RQ1_ANALYSIS_VERSION),
+  paste0("Analysis design: ", ANALYSIS_DESIGN_ID),
   paste0("Pairwise change rows: ", sum(all_part_records$rows)), paste0("Finite/available rows: ", sum(summary$n_units)),
   paste0("Canonical storage: ", normalizePath(file.path(OUT, "rq1_pairwise_change_long.rds"), winslash = "/", mustWork = FALSE)),
   paste0("Pairwise part count: ", nrow(all_part_records), "; duration part workers: ", PART_WORKERS, "; bootstrap workers: ", BOOT_WORKERS),
@@ -573,8 +582,8 @@ writeLines(c(
   "Temporal orientation: coarser -> finer sampling. Duration orientation: shorter -> longer monitoring.",
   "Placement orientation: chest/wrist -> eye, based on near-eye target alignment for ocular exposure.",
   "Optical orientation: LIGHT -> MEDI, based on melanopic/non-visual target alignment.",
-  "Temporal map: all 21 pair types among 10, 20, 30, 60, 300, 900, 1800 s; adjacent transitions are separately flagged.",
-  "Duration map: all nested windows within consecutive complete-analysis-day runs, limited to 1-6 d; no protocol seven-day reference.",
+  paste0("Temporal map: all ", temporal_pair_count, " pair types among ", paste(PRIMARY_TEMPORAL_S, collapse = ", "), " s; adjacent transitions are separately flagged."),
+  paste0("Duration map: all nested windows within consecutive complete-analysis-day runs, limited to ", min(PRIMARY_DURATION_DAYS), "-", max(PRIMARY_DURATION_DAYS), " d; no protocol seven-day reference."),
   "The 10-s temporal and longest observed duration states are scale anchors only; they are not treated as empirical truth states.",
   "Placement and optical have target-aligned orientations but no complete measurement-burden order."
 ), file.path(OUT, "RQ1_RUN_REPORT.md"))
