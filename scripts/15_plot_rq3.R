@@ -13,6 +13,69 @@ rm(.ms_file)
 if (exists(".ms_script")) rm(.ms_script)
 if (exists(".ms_root")) rm(.ms_root)
 source(file.path("scripts", "15_plot_rq3_v5.R"), local = .GlobalEnv)
+source(file.path("scripts", "utils", "analysis_design.R"), local = .GlobalEnv)
+
+# Rebind every display-level ordered axis to the single frozen design definition.
+# The legacy v5 source is retained for reproducibility, but canonical figures must
+# never depend on its historical hard-coded 7-state temporal lattice.
+RES_LEVELS <- rev(ms_primary_temporal_s())
+RES_LABELS <- ms_temporal_label(RES_LEVELS)
+DURATION_LEVELS <- ms_primary_duration_days()
+ORDERED_MAX_RANK <- max(length(RES_LEVELS), length(DURATION_LEVELS))
+
+if (!all(sort(unique(joint$resolution_s)) %in% sort(ms_primary_temporal_s()))) {
+  stop("RQ3 joint artifact contains temporal states outside the frozen primary design", call. = FALSE)
+}
+if (!all(sort(unique(joint$n_days)) %in% DURATION_LEVELS)) {
+  stop("RQ3 joint artifact contains duration states outside the frozen primary design", call. = FALSE)
+}
+if (!grepl(ms_analysis_design_id(), RQ3_VERSION, fixed = TRUE)) {
+  stop("RQ3 plotting inputs do not match the current frozen analysis design", call. = FALSE)
+}
+
+# Recompute Pareto display summaries from the frozen RQ3 artifact using the
+# current primary lattice. This prevents old plotting constants from silently
+# dropping newly introduced states such as 40 s or 120 s.
+pareto_base <- pareto |>
+  filter(
+    resolution_s %in% RES_LEVELS,
+    n_days %in% DURATION_LEVELS,
+    is.finite(resolution_s), is.finite(n_days)
+  ) |>
+  mutate(
+    ever_pareto = as.logical(ever_pareto),
+    pareto_persistence = pmax(0, pmin(1, pareto_persistence)),
+    metric_class = factor(metric_class, levels = METRIC_CLASSES),
+    resolution_rank = match(resolution_s, RES_LEVELS)
+  ) |>
+  filter(is.finite(resolution_rank))
+
+pareto_global <- pareto_base |>
+  group_by(resolution_s, resolution_rank, n_days) |>
+  summarise(
+    n_records = n(),
+    fraction_ever_pareto = mean(ever_pareto, na.rm = TRUE),
+    persistence_when_pareto = if (any(ever_pareto %in% TRUE, na.rm = TRUE)) {
+      safe_mean(pareto_persistence[ever_pareto %in% TRUE])
+    } else 0,
+    .groups = "drop"
+  )
+
+pareto_class <- pareto_base |>
+  group_by(metric_class, resolution_s, resolution_rank, n_days) |>
+  summarise(
+    n_records = n(),
+    fraction_ever_pareto = mean(ever_pareto, na.rm = TRUE),
+    persistence_when_pareto = if (any(ever_pareto %in% TRUE, na.rm = TRUE)) {
+      safe_mean(pareto_persistence[ever_pareto %in% TRUE])
+    } else 0,
+    .groups = "drop"
+  )
+
+landscape_bg <- tidyr::expand_grid(
+  resolution_rank = seq_along(RES_LEVELS),
+  n_days = DURATION_LEVELS
+)
 
 # -----------------------------------------------------------------------------
 # Main-text display refinement for Fig. 4.
@@ -46,7 +109,10 @@ p4a <- ggplot(requirement_summary, aes(epsilon, rank_median, color = metric_clas
     labels = epsilon_labels,
     expand = expansion(mult = c(0, .01))
   ) +
-  scale_y_continuous(breaks = 1:7, limits = c(.8, 7.2)) +
+  scale_y_continuous(
+    breaks = seq_len(ORDERED_MAX_RANK),
+    limits = c(.8, ORDERED_MAX_RANK + .2)
+  ) +
   labs(
     title = "a  Tolerance sets the minimum sufficient measurement burden",
     subtitle = "thick line = class median; thin lines = interquartile range",
@@ -57,6 +123,45 @@ p4a <- ggplot(requirement_summary, aes(epsilon, rank_median, color = metric_clas
     panel.grid.major.x = element_line(colour = "#ECEFF0", linewidth = .20),
     strip.text = element_text(size = 6.2),
     plot.subtitle = element_text(size = 5.0, colour = "#666A6D", margin = margin(t = -1, b = 2))
+  )
+
+# R_obs stays on its original linear scale; only the background raw points carry
+# the long tail. Rank limits are derived from the frozen design rather than a
+# historical seven-state temporal lattice.
+p4b <- ggplot() +
+  geom_point(
+    data = observed_display,
+    aes(x_pos, R_obs, color = metric_class),
+    position = position_jitter(width = .018, height = 0, seed = 91),
+    size = .52, alpha = .16
+  ) +
+  geom_linerange(
+    data = observed_summary,
+    aes(x_pos, ymin = R_q25, ymax = R_q75, color = metric_class),
+    linewidth = .42, alpha = .46
+  ) +
+  geom_point(
+    data = observed_summary,
+    aes(x_pos, R_median, color = metric_class),
+    shape = 18, size = 1.6
+  ) +
+  facet_wrap(~dimension, nrow = 1) +
+  scale_color_ms_metric(guide = "none") +
+  scale_x_continuous(
+    breaks = seq_len(ORDERED_MAX_RANK),
+    limits = c(.65, ORDERED_MAX_RANK + .35),
+    labels = as.character(seq_len(ORDERED_MAX_RANK))
+  ) +
+  scale_y_continuous(breaks = scales::breaks_extended(n = 5)) +
+  labs(
+    title = "b  Residual instability contracts as measurement burden increases",
+    subtitle = "highest observed boundary is unresolved and omitted",
+    x = "requirement rank (low → high burden)", y = "R_obs = max A to higher observed states"
+  ) +
+  theme_rq3(base_size = 6.35) +
+  theme(
+    panel.grid.major.x = element_blank(), strip.text = element_text(size = 5.9),
+    plot.subtitle = element_text(size = 4.8, colour = "#666A6D", margin = margin(t = -1, b = 2))
   )
 
 p4c <- ggplot(
@@ -158,11 +263,11 @@ p5a <- ggplot(
 ) +
   geom_tile(width = .92, height = .92, color = "white", linewidth = .34) +
   scale_x_continuous(
-    breaks = 1:7, labels = RES_LABELS,
+    breaks = seq_along(RES_LEVELS), labels = RES_LABELS,
     expand = expansion(add = .35)
   ) +
   scale_y_continuous(
-    breaks = 1:6, labels = paste0(1:6, " d"),
+    breaks = DURATION_LEVELS, labels = paste0(DURATION_LEVELS, " d"),
     expand = expansion(add = .35)
   ) +
   scale_fill_ms_sequential(
@@ -174,7 +279,7 @@ p5a <- ggplot(
   coord_fixed(ratio = .88, clip = "off") +
   labs(
     title = "a  Persistent Pareto occupancy across joint measurement burden",
-    subtitle = "ever-Pareto frequency × persistence when Pareto",
+    subtitle = "darker cells remain Pareto-efficient across a larger share of evaluated conditions",
     x = "temporal resolution  (low → high burden)",
     y = "monitoring duration"
   ) +
@@ -195,11 +300,11 @@ p5b <- ggplot(
   geom_tile(width = .92, height = .92, color = "white", linewidth = .24) +
   facet_wrap(~metric_class, ncol = 3) +
   scale_x_continuous(
-    breaks = 1:7, labels = RES_LABELS,
+    breaks = seq_along(RES_LEVELS), labels = RES_LABELS,
     expand = expansion(add = .28)
   ) +
   scale_y_continuous(
-    breaks = 1:6, labels = paste0(1:6, " d"),
+    breaks = DURATION_LEVELS, labels = paste0(DURATION_LEVELS, " d"),
     expand = expansion(add = .28)
   ) +
   scale_fill_ms_diverging(
@@ -211,7 +316,7 @@ p5b <- ggplot(
   coord_fixed(ratio = .88, clip = "off") +
   labs(
     title = "b  Representation classes deviate from the common Pareto landscape",
-    subtitle = "positive values indicate greater Pareto occupancy than the overall landscape",
+    subtitle = "orange = above overall occupancy; blue = below overall occupancy",
     x = "temporal burden", y = "duration"
   ) +
   theme_rq3(base_size = 5.8, legend_position = "bottom") +
@@ -252,6 +357,6 @@ readr::write_csv(
 )
 
 message(
-  "Fig. 4 display refinement: shared log1p tolerance axis with explicit dense breaks. ",
-  "Fig. 5 redesign: occupancy heatmap plus class-minus-overall contrast heatmaps."
+  "Fig. 4 display refinement: shared log1p tolerance axis with explicit dense breaks and linear R_obs. ",
+  "Fig. 5 redesign: dynamic frozen-lattice occupancy heatmap plus class-minus-overall contrasts."
 )
