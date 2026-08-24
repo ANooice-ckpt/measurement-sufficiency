@@ -16,9 +16,11 @@ Use the published Zauner/LightLogR system of 54 metrics unchanged: 52 participan
 
 ## 3. Temporal states and supports
 
-The harmonized MeLiDos 10-s grid is the source schedule. Primary temporal states are 10, 20, 30, 60, 300, 900 and 1800 s. Reserve states are 120, 600 and 3600 s. 15 s is prohibited.
+The harmonized MeLiDos 10-s grid is the source schedule. The frozen primary temporal states are **10, 20, 30, 40, 60 and 120 s**. They span the practical high-frequency wearable-logging domain while resolving the operationally important sub-minute to minute-scale region. **300 s (5 min)** is retained only as an intentionally coarse sensitivity state and does not enter the primary RQ1-RQ3 burden lattice. Cadences coarser than 5 min are not materialized in the active core. Fifteen seconds is excluded because it cannot be represented as an equal-spacing subset of the 10-s source grid.
 
-For every r > 10 s, construct a deterministic participant/source-grid-phase-anchored systematic sparse subsample. Retained timestamps and MEDI/LIGHT values must be exact source rows. No averaging, interpolation or hidden reconstruction.
+For every r > 10 s, construct a deterministic participant/source-grid-phase-anchored systematic sparse subsample. Retained timestamps and MEDI/LIGHT values must be exact source rows. No averaging, interpolation or hidden reconstruction. Temporal resolution therefore denotes a literal logger sampling interval in this study.
+
+All primary temporal states retain the full target-representation system subject only to the ordinary optical/support availability rules. Pulse-derived representations are unavailable at the 5-min sensitivity state; this is one reason 5 min is excluded from the primary lattice.
 
 Support is part of the estimand. Eye–chest and eye–wrist analyses retain their comparison-specific maximal supports. Unavailable representations are unavailable, not high distortion or insufficiency.
 
@@ -82,10 +84,12 @@ Multidimensional states are actual rows from duration_metric_cube. Within fixed 
 
 Joint R_obs is the maximum A over dominant higher observed joint configurations. Joint upper boundaries are boundary_unresolved with R_obs = NA.
 
-Pareto dominance is calculated only inside the observed sufficient region. Finer temporal resolution is higher burden; longer monitoring is higher burden. In addition to ever_pareto and fraction_metrics_ever_pareto, report deterministic Pareto persistence/occupancy as tolerance-domain width or proportion over the pre-defined epsilon breakpoint domain. No subjective probability weighting is used.
+Pareto dominance is calculated only inside the observed sufficient region. Finer temporal resolution is higher burden; longer monitoring is higher burden. In addition to ever_pareto and fraction_metrics_ever_pareto, report deterministic Pareto persistence/occupancy as tolerance-domain width or proportion over the pre-defined epsilon breakpoint domain. Pareto results are interpreted as a **minimum-sufficient burden frontier within the frozen candidate domain**, not as an unconstrained accuracy-versus-burden optimum. No subjective probability weighting is used.
 
 ## 9. Figures and implementation invariants
 
 Plot scripts read frozen results artifacts only. They do not read raw series, call LightLogR operators, construct duration windows, bootstrap, refit models, calculate gamma or calculate sufficiency.
 
-Core invariants include exact sparse source subsets, no 15-s state, unique duration window membership, unique scientific keys, unavailable/high-distortion separation, A >= |B|, Q >= |R| and explicit unresolved boundaries.
+The primary temporal lattice, primary duration domain, labels and analysis-design identifier are defined once in `scripts/utils/analysis_design.R` and consumed by core, RQ1-RQ3 and canonical plot wrappers. A lattice change therefore changes artifact identities and cannot silently reuse stale downstream caches.
+
+Core invariants include exact sparse source subsets, primary states restricted to 10–120 s, 5 min reserved for coarse sensitivity, no 15-s state, unique duration window membership, unique scientific keys, unavailable/high-distortion separation, A >= |B|, Q >= |R| and explicit unresolved boundaries.
