@@ -4,12 +4,12 @@ Analysis repository for **How Much Measurement Is Enough? Measurement Sufficienc
 
 The scientific object is:
 
-\`\`\`text
+```text
 configuration state -> observed exposure process -> target representation
                     -> pairwise representation change
                     -> conditional / cross-dimensional structure
                     -> observed stability and measurement sufficiency
-\`\`\`
+```
 
 The published 54 Zauner/LightLogR target metrics and their definitions remain unchanged. Metric classes are descriptive groupings, not inferential replicates. Unavailable representations stay unavailable.
 
@@ -17,37 +17,39 @@ The published 54 Zauner/LightLogR target metrics and their definitions remain un
 
 Run from the repository root under R 4.5.0 with LightLogR 0.10.3 and melidosData 1.0.6.
 
-\`\`\`bash
+```bash
 Rscript scripts/00_setup.R
-\`\`\`
+```
 
-\`data/\` is reserved for raw MeLiDos and ERA5 inputs. All generated artifacts, caches, diagnostics, checkpoints, tables and figures are written below \`results/\`.
+`data/` is reserved for raw MeLiDos and ERA5 inputs. All generated artifacts, caches, diagnostics, checkpoints, tables and figures are written below `results/`.
 
 ## Core
 
-The current core artifact version is \`v3_sparse_sampling_complete_days\`.
+The current core is **v4 sparse sampling / complete analysis days**, with the frozen measurement-design identifier embedded in the artifact version and cache path.
 
 Primary temporal states are:
 
-\`\`\`text
-10 s, 20 s, 30 s, 60 s, 300 s, 900 s, 1800 s
-\`\`\`
+```text
+10 s, 20 s, 30 s, 40 s, 60 s, 120 s
+```
 
-Reserve extraction states are 120 s, 600 s and 3600 s. 15 s is prohibited. Every coarse state is a participant/source-grid-phase-anchored systematic sparse subsample of the harmonized 10-s grid; retained timestamps and values are exact source values.
+The only active reserve state is **300 s (5 min)**, retained as an intentionally coarse sensitivity condition. Cadences above 5 min are no longer materialized. Fifteen seconds is excluded because it is not an equal-spacing subset of the harmonized 10-s source grid. Every coarse state is a participant/source-grid-phase-anchored systematic sparse subsample; retained timestamps and values are exact source values, with no averaging or interpolation.
 
-Monitoring duration is the accumulation dimension. Core preprocessing identifies consecutive complete analysis-day runs and materializes every contiguous 1–6 day window within each run. Protocol \`trial_times\` metadata remains in \`unit_context\` for audit and sensitivity, but no seven-day protocol reference defines the primary duration domain.
+The active temporal and duration domains are defined once in `scripts/utils/analysis_design.R`. RQ1-RQ3 artifact versions inherit the same design identifier so stale downstream caches cannot be silently reused after a lattice change.
+
+Monitoring duration is the accumulation dimension. Core preprocessing identifies consecutive complete analysis-day runs and materializes every contiguous 1–6 day window within each run. Protocol `trial_times` metadata remains in `unit_context` for audit and sensitivity, but no seven-day protocol reference defines the primary duration domain.
 
 Build the expensive core layer with:
 
-\`\`\`bash
+```bash
 CORE_WORKERS=48 CORE_FORCE=0 bash scripts/run_core_artifacts.sh
-\`\`\`
+```
 
 Durable core outputs:
 
-\`\`\`text
+```text
 results/core/
-  cache/<core_version>/{supports,metrics,context,weather}/
+  cache/<core_version>/{supports,metrics,context,weather,duration_parts}/
   metric_cube.csv.gz
   unit_context.csv.gz
   weather_1min.csv.gz
@@ -55,13 +57,13 @@ results/core/
   duration_metric_cube.rds
   duration_metric_cube_parts.csv
   core_manifest.csv
-\`\`\`
+```
 
-\`duration_metric_cube\` is the shared representation artifact for RQ1, RQ2 and RQ3. Daily targets are aggregated from the participant-day metric cube. IS/IV are rebuilt on exact selected window dates from the stored hourly basis.
+`duration_metric_cube` is the shared representation artifact for RQ1, RQ2 and RQ3. Daily targets are aggregated from the participant-day metric cube. IS/IV are rebuilt on exact selected window dates from the stored hourly basis.
 
 ## Downstream execution
 
-\`\`\`bash
+```bash
 # RQ1: general pairwise representation-change map
 RQ1_BOOT=1000 RQ1_PART_WORKERS=24 RQ1_BOOT_WORKERS=8 RQ1_PART_COMPRESSION=gzip Rscript scripts/10_rq1_analysis.R
 Rscript scripts/11_plot_fig1.R
@@ -73,24 +75,21 @@ Rscript scripts/13_plot_rq2.R
 # RQ3: observed residual instability, sufficiency and Pareto occupancy
 Rscript scripts/14_rq3_analysis.R
 Rscript scripts/15_plot_rq3.R
-\`\`\`
+```
 
 On the Linux server, the resumable downstream chain can be launched with
 `scripts/run_downstream_server.sh`. Its defaults are 16 RQ1 part workers,
 8 bootstrap workers and 12 RQ2 model workers; override these environment
 variables when storage bandwidth or memory requires a lower setting.
 
-The analysis stages emit versioned model/checkpoint and figure provenance tables alongside
-their primary outputs: `results/rq2/rq2_model_artifact_manifest.csv` and
-`results/rqX/figures/figure_artifact_manifest.csv`. These are presentation metadata, not a
-second schema or hash contract.
+The analysis stages emit versioned model/checkpoint and figure provenance tables alongside their primary outputs. Main PNG figures are centralized under `results/figures`; RQ-specific figure manifests remain at the corresponding `results/rqX/` roots.
 
-RQ1's primary upstream artifact is \`results/rq1/rq1_pairwise_change_long.rds\`, a manifest for versioned canonical parts. RQ2 uses the manifest loader and selects only primary pairwise rows/columns. RQ3 reads the RQ1 pairwise summaries and actual \`results/core/duration_metric_cube.rds\`. Plot scripts read frozen RQ outputs only; they do not load raw MeLiDos series, call LightLogR metric operators, refit models, bootstrap, construct duration windows or calculate gamma/sufficiency.
+RQ1's primary upstream artifact is `results/rq1/rq1_pairwise_change_long.rds`, a manifest for versioned canonical parts. RQ2 uses the manifest loader and selects only primary pairwise rows/columns. RQ3 reads the RQ1 pairwise summaries and actual `results/core/duration_metric_cube.rds`. Plot scripts read frozen RQ outputs only; they do not load raw MeLiDos series, call LightLogR metric operators, refit models, bootstrap, construct duration windows or calculate gamma/sufficiency.
 
-Context analyses previously split across \`10b\`, \`10c\` and \`12b\` are no longer separate RQ1 entry points. Their reusable context operators belong in \`scripts/utils/\` or in the RQ2 checkpointed stages.
+Context analyses previously split across `10b`, `10c` and `12b` are no longer separate RQ1 entry points. Their reusable context operators belong in `scripts/utils/` or in the RQ2 checkpointed stages.
 
 ## Results hand-off
 
-After a server run, copy the complete \`results/\` directory back. It contains core durable artifacts, analysis outputs, checkpoints, diagnostics, tables and figures. \`external/\` remains upstream reproduction material and is not generated output.
+After a server run, copy the complete `results/` directory back. It contains core durable artifacts, analysis outputs, checkpoints, diagnostics, tables and figures. `external/` remains upstream reproduction material and is not generated output.
 
-See \`docs/STUDY_SPEC.md\`, \`docs/CORE_ARTIFACTS.md\`, \`docs/RQ1_EXECUTION.md\`, and \`docs/FIGURE_ARCHITECTURE.md\`.
+See `docs/STUDY_SPEC.md`, `docs/CORE_ARTIFACTS.md`, `docs/RQ1_EXECUTION.md`, and `docs/FIGURE_ARCHITECTURE.md`.
