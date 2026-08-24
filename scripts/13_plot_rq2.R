@@ -13,6 +13,53 @@ rm(.ms_file)
 if (exists(".ms_script")) rm(.ms_script)
 if (exists(".ms_root")) rm(.ms_root)
 source(file.path("scripts", "13_plot_rq2_v5.R"), local = .GlobalEnv)
+source(file.path("scripts", "utils", "analysis_design.R"), local = .GlobalEnv)
+
+# Guard against plotting stale RQ2 artifacts after a measurement-lattice change.
+if (is.list(condition) && !is.null(condition$analysis_design_id) &&
+    !identical(as.character(condition$analysis_design_id[[1]]), ms_analysis_design_id())) {
+  stop("RQ2 plotting inputs do not match the current frozen analysis design", call. = FALSE)
+}
+
+# Main Fig. 2a deliberately keeps a linear y scale. Facets retain their own
+# ranges because the scientific comparison is exposure-state modulation within
+# each measurement dimension, not transformed cross-dimension magnitude.
+p2a <- ggplot() +
+  geom_point(
+    data = conditional_metric_state,
+    aes(x_pos, A_state, color = metric_class),
+    position = position_jitter(width = .018, height = 0, seed = 41),
+    size = .48, alpha = .20
+  ) +
+  geom_linerange(
+    data = conditional_profile_summary,
+    aes(x_pos, ymin = A_q25, ymax = A_q75, color = metric_class),
+    linewidth = .68, alpha = .50
+  ) +
+  geom_point(
+    data = conditional_profile_summary,
+    aes(x_pos, A_median, color = metric_class),
+    shape = 18, size = 1.55
+  ) +
+  facet_wrap(
+    ~factor(dimension, levels = DIMENSIONS, labels = unname(DIM_TITLES[DIMENSIONS])),
+    ncol = 2, scales = "free_y"
+  ) +
+  scale_color_ms_metric(guide = "none") +
+  scale_x_continuous(
+    breaks = 1:3, labels = c("Low", "Middle", "High"),
+    limits = c(.72, 3.28), expand = expansion(mult = c(0, 0))
+  ) +
+  scale_y_continuous(breaks = scales::breaks_extended(n = 4)) +
+  labs(
+    title = "a  Conditional distortion magnitude across exposure state",
+    x = "transition-local exposure state", y = "conditional A = mean |z|"
+  ) +
+  theme_rq2(base_size = 6.45) +
+  theme(
+    panel.grid.major.x = element_blank(), strip.text = element_text(size = 5.9),
+    panel.spacing = grid::unit(2.2, "mm")
+  )
 
 # -----------------------------------------------------------------------------
 # Main-text display refinement for Fig. 2b.
