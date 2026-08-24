@@ -64,19 +64,12 @@ pretty_transition <- function(x) {
 }
 
 theme_fig1 <- function(base_size = 6.8, legend_position = "none") {
-  theme_ms(base_size = base_size, legend_position = legend_position) +
-    theme(
-      panel.border = element_blank(),
-      axis.line.x = element_line(colour = "#4F5356", linewidth = .34),
-      axis.line.y = element_line(colour = "#4F5356", linewidth = .34),
-      panel.grid.major = element_line(colour = "#ECEFF0", linewidth = .22),
-      panel.grid.minor = element_blank(),
-      axis.ticks = element_line(colour = "#4F5356", linewidth = .28),
-      strip.background = element_blank(),
-      strip.text = element_text(face = "bold", colour = "#25282A", margin = margin(1, 2, 2, 2)),
-      plot.title = element_text(size = FIG1_PANEL_TITLE_SIZE, face = "bold", margin = margin(b = 3)),
-      plot.margin = margin(2, 3, 2, 3)
-    )
+  theme_ms_axes(
+    base_size = base_size,
+    legend_position = legend_position,
+    plot_title_size = FIG1_PANEL_TITLE_SIZE,
+    plot_margin = margin(2, 3, 2, 3)
+  )
 }
 
 summary <- summary |>
@@ -235,8 +228,8 @@ readr::write_csv(
 # -----------------------------------------------------------------------------
 # b. Target-aligned signed-vs-absolute distortion geometry
 # -----------------------------------------------------------------------------
-# Placement and optical geometry use the same grammar and therefore share one
-# panel. Free facet scales retain each dimension's usable dynamic range.
+# Placement and optical geometry share one scale because A and B have the same
+# standardized units and obey the common feasible geometry |B| <= A.
 target_geometry <- summary |>
   filter(
     dimension %in% c("placement", "optical"),
@@ -273,6 +266,12 @@ target_labels <- target_geometry |>
   group_by(facet_label) |>
   slice_max(A_mean_absolute, n = 2, with_ties = FALSE) |>
   ungroup()
+target_limit <- ms_symmetric_limit(
+  target_geometry$A_mean_absolute, target_geometry$B_mean_signed,
+  target_ci$A_boot_q025, target_ci$A_boot_q975,
+  target_ci$B_boot_q025, target_ci$B_boot_q975,
+  pad = 1.04
+)
 
 p1b <- ggplot(target_geometry, aes(B_mean_signed, A_mean_absolute, color = metric_class)) +
   geom_vline(xintercept = 0, linewidth = .24, color = "#D7DADD") +
@@ -303,19 +302,21 @@ p1b <- ggplot(target_geometry, aes(B_mean_signed, A_mean_absolute, color = metri
     inherit.aes = FALSE, size = 1.70, color = "#303030",
     check_overlap = TRUE, vjust = -.60
   ) +
-  facet_wrap(~facet_label, nrow = 1, scales = "free") +
+  facet_wrap(~facet_label, nrow = 1) +
   scale_color_ms_metric(guide = "none") +
   scale_x_continuous(
     trans = scales::transform_asinh(),
+    limits = c(-target_limit, target_limit),
     breaks = scales::breaks_extended(n = 6),
-    expand = expansion(mult = c(.05, .06))
+    expand = expansion(mult = c(.02, .02))
   ) +
   scale_y_continuous(
     trans = scales::transform_asinh(),
-    limits = c(0, NA),
+    limits = c(0, target_limit),
     breaks = scales::breaks_extended(n = 6),
-    expand = expansion(mult = c(0, .06))
+    expand = expansion(mult = c(0, .02))
   ) +
+  coord_fixed(ratio = 1, clip = "off") +
   labs(
     title = "b  Directionality and magnitude of target-aligned distortion",
     x = "B: mean signed change", y = "A: mean absolute change"
@@ -376,9 +377,13 @@ local_display <- local |>
     G_share = if_else(is.finite(G_total) & G_total > 0, G_display / G_total, NA_real_)
   ) |>
   ungroup() |>
-  filter(is.finite(G_share))
+  filter(is.finite(G_share)) |>
+  mutate(
+    metric_class = factor(metric_class, levels = METRIC_CLASSES),
+    row_offset = ms_class_offset(metric_class, span = .44, classes = METRIC_CLASSES),
+    y_point = step_order + row_offset
+  )
 
-CLASS_ROW_OFFSETS <- setNames(seq(-.22, .22, length.out = length(METRIC_CLASSES)), METRIC_CLASSES)
 local_summary <- local_display |>
   group_by(dimension, metric_class, transition, step_order) |>
   summarise(
@@ -390,7 +395,7 @@ local_summary <- local_display |>
   ) |>
   mutate(
     metric_class = factor(metric_class, levels = METRIC_CLASSES),
-    row_offset = unname(CLASS_ROW_OFFSETS[as.character(metric_class)]),
+    row_offset = ms_class_offset(metric_class, span = .44, classes = METRIC_CLASSES),
     y_summary = step_order + row_offset
   )
 
@@ -416,8 +421,8 @@ local_distribution_panel <- function(dim, subpanel_title = DIM_TITLES[[dim]]) {
   ggplot() +
     geom_point(
       data = d,
-      aes(G_share, step_order, color = metric_class),
-      position = position_jitter(width = 0, height = .070, seed = 73),
+      aes(G_share, y_point, color = metric_class),
+      position = position_jitter(width = 0, height = .025, seed = 73),
       size = .48, alpha = .18
     ) +
     geom_segment(
@@ -475,28 +480,7 @@ p1d <- local_distribution_panel("duration", "Monitoring duration") +
 
 # One compact legend governs the main figure. Panel a also labels every class,
 # so the legend is a cross-panel color key rather than the only class identifier.
-metric_legend_source <- ggplot(
-  tibble(
-    metric_class = factor(METRIC_CLASSES, levels = METRIC_CLASSES),
-    x = seq_along(METRIC_CLASSES), y = 1
-  ),
-  aes(x, y, color = metric_class)
-) +
-  geom_point(size = 1.55) +
-  scale_color_ms_metric() +
-  guides(color = guide_legend(
-    title = NULL, nrow = 1, byrow = TRUE,
-    override.aes = list(size = 1.55)
-  )) +
-  theme_void(base_family = MS_FONT, base_size = 7) +
-  theme(
-    legend.position = "bottom", legend.direction = "horizontal",
-    legend.margin = margin(0, 0, 0, 0),
-    legend.box.margin = margin(0, 0, 0, 0),
-    legend.text = element_text(size = 5.45),
-    legend.key.width = grid::unit(3.4, "mm")
-  )
-metric_legend <- cowplot::get_legend(metric_legend_source)
+metric_legend <- ms_metric_legend(text_size = 5.45, point_size = 1.55, key_width_mm = 3.4)
 
 # Asymmetric composition: the distribution atlas is a compact header; the A/B
 # geometry occupies the main lower-left field; ordered-axis distributions form a
