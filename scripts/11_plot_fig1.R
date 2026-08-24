@@ -1,3 +1,22 @@
+.ms_file <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+if (length(.ms_file)) {
+  .ms_script <- normalizePath(sub("^--file=", "", .ms_file[[1]]), winslash = "/", mustWork = TRUE)
+  .ms_candidates <- unique(c(file.path(dirname(.ms_script), ".."), getwd()))
+  .ms_ok <- vapply(
+    .ms_candidates,
+    function(x) file.exists(file.path(x, "scripts", "utils", "figure_style.R")),
+    logical(1)
+  )
+  if (!any(.ms_ok)) {
+    stop("Could not resolve measurement-sufficiency repository root from ", .ms_script, call. = FALSE)
+  }
+  setwd(normalizePath(.ms_candidates[which(.ms_ok)[1]], winslash = "/", mustWork = TRUE))
+}
+rm(.ms_file)
+if (exists(".ms_script")) rm(.ms_script)
+if (exists(".ms_candidates")) rm(.ms_candidates)
+if (exists(".ms_ok")) rm(.ms_ok)
+
 suppressPackageStartupMessages({
   library(tidyverse)
   library(cowplot)
