@@ -89,37 +89,10 @@ conditional <- conditional |>
   ms_add_metric_order(metric_order)
 
 theme_rq2 <- function(base_size = 6.7, legend_position = "none") {
-  theme_ms(base_size = base_size, legend_position = legend_position) +
-    theme(
-      panel.border = element_blank(),
-      axis.line.x = element_line(colour = "#505457", linewidth = .34),
-      axis.line.y = element_line(colour = "#505457", linewidth = .34),
-      panel.grid.major = element_line(colour = "#ECEFF0", linewidth = .22),
-      panel.grid.minor = element_blank(),
-      axis.ticks = element_line(colour = "#505457", linewidth = .28),
-      strip.background = element_blank(),
-      strip.text = element_text(face = "bold", colour = "#25282A", margin = margin(1, 2, 2, 2)),
-      plot.title = element_text(size = base_size + .8, face = "bold", margin = margin(b = 3)),
-      plot.margin = margin(3, 4, 3, 4)
-    )
+  theme_ms_axes(base_size = base_size, legend_position = legend_position)
 }
 
-metric_legend_source <- ggplot(
-  tibble(metric_class = factor(METRIC_CLASSES, levels = METRIC_CLASSES),
-         x = seq_along(METRIC_CLASSES), y = 1),
-  aes(x, y, color = metric_class)
-) +
-  geom_point(size = 1.7) +
-  scale_color_ms_metric() +
-  guides(color = guide_legend(title = NULL, nrow = 1, byrow = TRUE,
-                              override.aes = list(size = 1.5))) +
-  theme_void(base_family = MS_FONT, base_size = 7) +
-  theme(
-    legend.position = "bottom", legend.direction = "horizontal",
-    legend.margin = margin(0, 0, 0, 0), legend.box.margin = margin(0, 0, 0, 0),
-    legend.text = element_text(size = 5.35), legend.key.width = grid::unit(3.5, "mm")
-  )
-metric_legend <- cowplot::get_legend(metric_legend_source)
+metric_legend <- ms_metric_legend(text_size = 5.35, point_size = 1.5, key_width_mm = 3.5)
 
 # =============================================================================
 # Fig. 2 — context dependence of distortion
@@ -277,6 +250,10 @@ coef_summary <- coef_metric |>
 
 PREDICTOR_COLORS <- c("External context" = MS_PRIMARY, "Exposure state" = MS_SECONDARY)
 OUTCOME_SHAPES <- c("Signed" = 16, "Absolute" = 17)
+coef_limit <- ms_symmetric_limit(
+  coef_metric$estimate, coef_summary$estimate_q25, coef_summary$estimate_q75,
+  pad = 1.04
+)
 if (nrow(coef_metric)) {
   p2b <- ggplot(coef_metric,
                 aes(estimate, y_pos, color = predictor_family, shape = outcome_label)) +
@@ -294,7 +271,7 @@ if (nrow(coef_metric)) {
       aes(estimate_median, y_pos, color = predictor_family, shape = outcome_label),
       inherit.aes = FALSE, size = 1.45
     ) +
-    facet_wrap(~dimension, ncol = 2, scales = "free_x") +
+    facet_wrap(~dimension, ncol = 2) +
     scale_color_manual(values = PREDICTOR_COLORS, drop = FALSE) +
     scale_shape_manual(values = OUTCOME_SHAPES, drop = FALSE) +
     scale_y_continuous(
@@ -302,7 +279,10 @@ if (nrow(coef_metric)) {
       labels = levels(coef_metric$predictor),
       limits = c(.55, length(levels(coef_metric$predictor)) + .45)
     ) +
-    scale_x_continuous(breaks = scales::breaks_extended(n = 4)) +
+    scale_x_continuous(
+      limits = c(-coef_limit, coef_limit),
+      breaks = scales::breaks_extended(n = 4)
+    ) +
     guides(
       color = guide_legend(title = NULL, nrow = 1, order = 1,
                            override.aes = list(alpha = 1, size = 1.15)),
@@ -689,7 +669,7 @@ gamma_atlas <- gamma_plot |>
     transition_display = factor(transition_display, levels = unique(transition_display))
   ) |>
   ms_add_metric_order(metric_order)
-gamma_limit <- max(abs(c(gamma_atlas$R, gamma_atlas$Q)), na.rm = TRUE)
+gamma_limit <- max(abs(gamma_atlas$R), na.rm = TRUE)
 if (!is.finite(gamma_limit) || gamma_limit <= 0) gamma_limit <- 1
 p3_atlas <- ggplot(gamma_atlas, aes(transition_display, R, color = metric_class)) +
   geom_hline(yintercept = 0, linewidth = .28, color = "#8A8A8A") +
