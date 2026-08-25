@@ -58,9 +58,12 @@ analysis design rather than written manually into the plot source.
 
 - Fig. 2a shows conditional distortion magnitude across exposure state with
   linear within-dimension y scales;
-- Fig. 2b shows standardized contextual coefficients on one shared linear axis;
-  only the central 99% of raw |beta| points are displayed, while class summaries
-  use all coefficients;
+- Fig. 2b shows standardized joint-model coefficients on one shared linear axis
+  for a fixed, source-defined set of representatives spanning external
+  opportunity, micro-environment, behaviour and exposure state. The selection
+  is not data-driven; the complete layered coefficient table remains in the RQ2
+  outputs. Only the central 99% of raw |beta| points are displayed, while the
+  summaries use all estimates for the displayed terms;
 - Fig. 2c shows the High-minus-Low change in distortion direction;
 - Fig. 3 reports signed `R`, magnitude `Q`, and localized strongest
   cross-dimensional interactions.
