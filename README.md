@@ -68,7 +68,7 @@ results/core/
 RQ1_BOOT=1000 RQ1_PART_WORKERS=24 RQ1_BOOT_WORKERS=8 RQ1_PART_COMPRESSION=gzip Rscript scripts/10_rq1_analysis.R
 Rscript scripts/11_plot_fig1.R
 
-# RQ2: local conditionality, CV models and circular-aware gamma
+# RQ2: exposure-state conditionality, layered context models and circular-aware gamma
 RQ2_WORKERS=12 RQ2_CV_FOLDS=5 RQ2_RUN_MODELS=1 Rscript scripts/12_rq2_analysis.R
 Rscript scripts/13_plot_rq2.R
 
@@ -77,16 +77,15 @@ Rscript scripts/14_rq3_analysis.R
 Rscript scripts/15_plot_rq3.R
 ```
 
-On the Linux server, the resumable downstream chain can be launched with
-`scripts/run_downstream_server.sh`. Its defaults are 16 RQ1 part workers,
-8 bootstrap workers and 12 RQ2 model workers; override these environment
-variables when storage bandwidth or memory requires a lower setting.
+The canonical RQ2 entrypoint first executes the corrected v5 runtime and then, in the same R process, adds the layered contextual models. Those models reuse existing ERA5 fields from `unit_context` and harmonized MeLiDos light-exposure, exercise and sleep diaries; they do not introduce an alternate core/weather preprocessing path.
+
+On the Linux server, the resumable downstream chain can be launched with `scripts/run_downstream_server.sh`. The server runners define their own high-core-count defaults and every worker count remains environment-overridable; inspect the selected runner before changing concurrency for a different instance size.
 
 The analysis stages emit versioned model/checkpoint and figure provenance tables alongside their primary outputs. Main PNG figures are centralized under `results/figures`; RQ-specific figure manifests remain at the corresponding `results/rqX/` roots.
 
 RQ1's primary upstream artifact is `results/rq1/rq1_pairwise_change_long.rds`, a manifest for versioned canonical parts. RQ2 uses the manifest loader and selects only primary pairwise rows/columns. RQ3 reads the RQ1 pairwise summaries and actual `results/core/duration_metric_cube.rds`. Plot scripts read frozen RQ outputs only; they do not load raw MeLiDos series, call LightLogR metric operators, refit models, bootstrap, construct duration windows or calculate gamma/sufficiency.
 
-Context analyses previously split across `10b`, `10c` and `12b` are no longer separate RQ1 entry points. Their reusable context operators belong in `scripts/utils/` or in the RQ2 checkpointed stages.
+Context analyses previously split across `10b`, `10c` and `12b` are no longer separate RQ1 entry points. Their reusable context operators belong in `scripts/utils/` or in the RQ2 checkpointed stages; `12c_rq2_context_models.R` is sourced internally by the canonical RQ2 entrypoint rather than run as a standalone stage.
 
 ## Results hand-off
 
