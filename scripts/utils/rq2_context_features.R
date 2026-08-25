@@ -101,15 +101,16 @@ rq2_context_daily_sleep <- function(site) {
   } else {
     as.numeric(sleep$sleep_duration)
   }
-  day_type <- tolower(as.character(sleep$daytype2))
+  day_type <- trimws(tolower(as.character(sleep$daytype2)))
+  day_type_code <- suppressWarnings(as.integer(day_type))
 
   tibble::tibble(
     site = site,
     Id = as.character(sleep$Id),
     Date = as.Date(sleep$wake),
     behaviour_workday = dplyr::case_when(
-      stringr::str_detect(day_type, "work") ~ 1,
-      stringr::str_detect(day_type, "free") ~ 0,
+      day_type_code == 2L | stringr::str_detect(day_type, "work") ~ 1,
+      day_type_code == 1L | stringr::str_detect(day_type, "free") ~ 0,
       TRUE ~ NA_real_
     ),
     behaviour_prior_sleep_h = duration_h
