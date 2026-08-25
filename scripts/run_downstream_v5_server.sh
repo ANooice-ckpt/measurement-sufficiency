@@ -89,13 +89,8 @@ LOG="results/logs/downstream_v5.log"
     )
   '
 
-  # Retired v4 checkpoint files are scientifically incompatible with v5 and can
-  # be large. Remove them now; v5 uses a separate checkpoints_v5 directory.
-  rm -rf results/rq2/checkpoints
-
-  # All figures are regenerated as PNG into one shared directory. Remove both
-  # the centralized outputs and any legacy per-RQ figure directories first.
-  rm -rf results/figures results/rq1/figures results/rq2/figures results/rq3/figures
+  # Main figures are regenerated from frozen results on each run.
+  rm -rf results/figures
   mkdir -p results/figures
 
   # Remove only stale final products. Versioned v5 checkpoints/shards are kept
