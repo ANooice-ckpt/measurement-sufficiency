@@ -60,6 +60,7 @@ rq2_context_daily_diary <- function(site) {
       activity_reported = !is.na(activity),
       behaviour_work = act_working_indoor | act_working_outdoor
     )
+  if (nrow(x) != nrow(classified)) stop(site, " light-exposure diary join changed interval count")
 
   x |>
     dplyr::group_by(site, Id, Date) |>
@@ -131,18 +132,24 @@ rq2_context_daily_exercise <- function(site) {
   missing <- setdiff(required, names(exercise))
   if (length(missing)) stop(site, " exercisediary missing columns: ", paste(missing, collapse = ", "))
 
-  intensity_code <- suppressWarnings(as.integer(exercise$intensity))
+  # MeLiDos imports the REDCap radio item as either its labelled factor or its
+  # original 1:4 code, depending on the site/export. Accept exactly those two
+  # official representations; do not infer additional exercise categories.
+  intensity_text <- trimws(tolower(as.character(exercise$intensity)))
+  intensity_code <- suppressWarnings(as.integer(intensity_text))
+  exercise_level <- dplyr::case_when(
+    intensity_code == 1L | stringr::str_detect(intensity_text, "^vigorous") ~ 3,
+    intensity_code == 2L | stringr::str_detect(intensity_text, "^moderate") ~ 2,
+    intensity_code == 3L | stringr::str_detect(intensity_text, "^light") ~ 1,
+    intensity_code == 4L | stringr::str_detect(intensity_text, "^none") ~ 0,
+    TRUE ~ NA_real_
+  )
+
   tibble::tibble(
     site = site,
     Id = as.character(exercise$Id),
     Date = as.Date(exercise$Date),
-    behaviour_exercise_level = dplyr::case_when(
-      intensity_code == 1L ~ 3,
-      intensity_code == 2L ~ 2,
-      intensity_code == 3L ~ 1,
-      intensity_code == 4L ~ 0,
-      TRUE ~ NA_real_
-    )
+    behaviour_exercise_level = exercise_level
   ) |>
     dplyr::group_by(site, Id, Date) |>
     dplyr::summarise(
