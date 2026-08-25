@@ -73,21 +73,25 @@ export RQ3_PART_WORKERS="${RQ3_PART_WORKERS:-8}"
       "results/runtime/10_rq1_analysis.optimized.R",
       "results/runtime/12_rq2_analysis_v5.runtime.R",
       "results/runtime/14_rq3_analysis_v5.runtime.R",
+      "scripts/utils/rq_context.R",
+      "scripts/utils/rq2_context_features.R",
       "scripts/09b_validate_core_design.R",
       "scripts/11_plot_fig1.R",
+      "scripts/12_rq2_analysis.R",
+      "scripts/12c_rq2_context_models.R",
       "scripts/13_plot_rq2.R",
       "scripts/13_plot_rq2_v5.R",
       "scripts/15_plot_rq3.R",
       "scripts/15_plot_rq3_v5.R"
     )
-    invisible(lapply(fs, parse)); cat("Optimized/corrected analysis and canonical plotting entry points parse successfully\n")
+    invisible(lapply(fs, parse)); cat("Optimized/corrected analysis, layered RQ2 and canonical plotting entry points parse successfully\n")
   '
   echo
 
   echo "===== CORE PIPELINE ====="
   echo "[1/8] Restore/pin R 4.5.0 environment"
   Rscript scripts/00_setup.R
-  echo "[2/8] Download/validate MeLiDos inputs, including trial_times"
+  echo "[2/8] Download/validate MeLiDos inputs, including exercise diary and trial_times"
   Rscript scripts/01_download_melidos.R
   echo "[3/8] Refresh local MeLiDos inventory"
   Rscript scripts/02_inventory.R
@@ -109,8 +113,10 @@ export RQ3_PART_WORKERS="${RQ3_PART_WORKERS:-8}"
   echo "===== FIGURE 1 ====="
   Rscript scripts/11_plot_fig1.R
 
-  echo "===== RQ2 V5 ====="
-  Rscript results/runtime/12_rq2_analysis_v5.runtime.R
+  echo "===== RQ2 V5 + LAYERED CONTEXT ====="
+  # Canonical wrapper sources the corrected runtime and the layered extension in
+  # one R process, so all context models reuse the same transition objects.
+  Rscript scripts/12_rq2_analysis.R
   echo "===== RQ2 V5 FIGURES ====="
   Rscript scripts/13_plot_rq2.R
   echo "===== RQ3 V5 ====="
