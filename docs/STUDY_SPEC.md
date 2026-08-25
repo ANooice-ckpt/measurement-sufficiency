@@ -50,9 +50,18 @@ Daily-defined metric windows are aggregated from the durable daily metric cube u
 
 ## 6. RQ2 conditionality and separability
 
-RQ2 reads the RQ1 pairwise representation-change artifact. Primary conditional transitions are placement, optical, adjacent primary temporal levels and adjacent nested duration windows. Exposure state is explanatory, not a metric-specific re-ranking. External weather/solar variables are personal-measurement-independent context.
+RQ2 reads the RQ1 pairwise representation-change artifact. Primary conditional transitions are placement, optical, adjacent primary temporal levels and adjacent nested duration windows. Exposure state is explanatory, not a metric-specific re-ranking.
 
-Duration exposure state is local and low leakage: the longer-window exposure level, represented by log absolute longer-window mean MEDI, together with day-to-day variability in the shorter window before adding the new day. The target change itself is not used as a predictor.
+Contextual explanation is organized into four prespecified layers without redefining measurement configurations or target representations:
+
+- **External opportunity:** personal-measurement-independent weather/solar opportunity from the existing ERA5/unit-context pipeline, including radiation, direct fraction, cloud level/variability, solar-noon elevation, civil photoperiod, temperature and wet hours.
+- **Micro-environment:** time-weighted reported outdoor exposure and primary daylight/display-light fractions from the harmonized MeLiDos light-exposure diary.
+- **Behaviour:** time-weighted home/work/vehicle fractions plus the harmonized work/free-day, exercise-intensity and prior-sleep fields.
+- **Exposure state:** the transition-local target-aligned exposure state already defined below, plus duration day-to-day variability where estimable.
+
+Layer-specific models quantify each information source separately; the joint model includes the usable predictors from all four layers. Predictors are standardized on the fitting data. Participant-grouped cross-validation preserves all rows belonging to a held-out participant. The diary-derived context follows the existing MeLiDos interval and category conventions; ERA5 variables are consumed from the existing core context and are not re-derived under RQ2-specific weather rules.
+
+Duration exposure state is local and low leakage: the longer-window exposure level, represented by log absolute longer-window mean MEDI, together with day-to-day variability in the shorter window before adding the new day. The target change itself is not used as a predictor. Duration contextual predictors are aggregated over the exact member dates of the longer observed window.
 
 For actual four-cell cross-dimensional contrasts:
 
