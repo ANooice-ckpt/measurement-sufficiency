@@ -26,7 +26,7 @@ Installed reproduction version: 0.10.3.
 
 Zauner release `v0.9.9` records LightLogR 0.10.3 in `renv.lock`; the earlier 0.10.0 entry was an unverified placeholder.
 
-Zauner et al.
+## Zauner et al.
 Reference implementation:
 `external/zauner_position/`
 
