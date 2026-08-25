@@ -31,7 +31,11 @@ LOG="results/logs/downstream_v5.log"
   Rscript --vanilla -e '
     fs <- c(
       "scripts/utils/analysis_design.R",
+      "scripts/utils/rq_context.R",
+      "scripts/utils/rq2_context_features.R",
       "results/runtime/12_rq2_analysis_v5.runtime.R",
+      "scripts/12_rq2_analysis.R",
+      "scripts/12c_rq2_context_models.R",
       "scripts/13_plot_rq2_v5.R",
       "scripts/13_plot_rq2.R",
       "results/runtime/14_rq3_analysis_v5.runtime.R",
@@ -39,7 +43,7 @@ LOG="results/logs/downstream_v5.log"
       "scripts/15_plot_rq3.R"
     )
     invisible(lapply(fs, parse))
-    cat("All downstream analysis runtimes and plot sources parse successfully\n")
+    cat("All downstream analysis runtimes, layered RQ2 sources and plot sources parse successfully\n")
   '
 
   echo "===== STRUCTURAL PREFLIGHT ====="
@@ -101,6 +105,11 @@ LOG="results/logs/downstream_v5.log"
     results/rq2/rq2_model_coefficients.csv \
     results/rq2/rq2_model_performance.csv \
     results/rq2/rq2_model_artifact_manifest.csv \
+    results/rq2/rq2_layered_context_model_coefficients.csv \
+    results/rq2/rq2_layered_context_model_performance.csv \
+    results/rq2/rq2_layered_context_model_manifest.csv \
+    results/rq2/rq2_layered_context_model_input_shard_manifest.csv \
+    results/rq2/rq2_layered_context_run_report.txt \
     results/rq2/rq2_gamma_long.rds \
     results/rq2/rq2_gamma_summary.csv \
     results/rq2/rq2_conditional_geometry_gamma.csv \
@@ -127,8 +136,10 @@ LOG="results/logs/downstream_v5.log"
   echo "===== FIGURE 1 (FROZEN RQ1) ====="
   Rscript scripts/11_plot_fig1.R
 
-  echo "===== RQ2 V5 ====="
-  Rscript results/runtime/12_rq2_analysis_v5.runtime.R
+  echo "===== RQ2 V5 + LAYERED CONTEXT ====="
+  # Use the canonical wrapper so the runtime and layered extension share one R
+  # process and therefore one set of validated canonical transition objects.
+  Rscript scripts/12_rq2_analysis.R
 
   echo "===== RQ2 V5 FIGURES ====="
   Rscript scripts/13_plot_rq2.R
