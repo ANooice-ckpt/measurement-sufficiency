@@ -41,7 +41,7 @@ export RQ3_PART_WORKERS="${RQ3_PART_WORKERS:-8}"
   echo "Repository: ${ROOT}"
   echo "Host: $(hostname)"
   echo "Commit: $(git rev-parse HEAD)"
-  echo "Workers: core=${CORE_WORKERS}; core_duration=${CORE_DURATION_WORKERS}; rq1_startup=${RQ1_STARTUP_WORKERS}; rq1_parts=${RQ1_PART_WORKERS}; rq1_boot=${RQ1_BOOT_WORKERS}; rq1_fragments=${RQ1_FRAGMENT_WORKERS}; rq2=${RQ2_WORKERS}; rq3_parts=${RQ3_PART_WORKERS}"
+  echo "Workers: core=${CORE_WORKERS}; core_duration=${CORE_DURATION_WORKERS}; rq1_startup=${RQ1_STARTUP_WORKERS}; rq1_parts=${RQ1_PART_WORKERS}; rq1_boot=${RQ1_BOOT_WORKERS}; rq1_fragments=${RQ1_FRAGMENT_WORKERS}; rq2=${RQ2_WORKERS}; rq3=${RQ3_WORKERS}; rq3_parts=${RQ3_PART_WORKERS}"
   echo
 
   echo "===== PREFLIGHT ====="
@@ -72,11 +72,15 @@ export RQ3_PART_WORKERS="${RQ3_PART_WORKERS:-8}"
       "results/runtime/09_build_core_artifacts.optimized.R",
       "results/runtime/10_rq1_analysis.optimized.R",
       "results/runtime/12_rq2_analysis_v5.runtime.R",
-      "results/runtime/13_plot_rq2_v5.runtime.R",
       "results/runtime/14_rq3_analysis_v5.runtime.R",
-      "results/runtime/15_plot_rq3_v5.runtime.R"
+      "scripts/09b_validate_core_design.R",
+      "scripts/11_plot_fig1.R",
+      "scripts/13_plot_rq2.R",
+      "scripts/13_plot_rq2_v5.R",
+      "scripts/15_plot_rq3.R",
+      "scripts/15_plot_rq3_v5.R"
     )
-    invisible(lapply(fs, parse)); cat("Optimized/corrected R entry points parse successfully\n")
+    invisible(lapply(fs, parse)); cat("Optimized/corrected analysis and canonical plotting entry points parse successfully\n")
   '
   echo
 
@@ -97,6 +101,8 @@ export RQ3_PART_WORKERS="${RQ3_PART_WORKERS:-8}"
   Rscript scripts/04c_prepare_raw_eye_spans.R
   echo "[8/8] Build versioned core artifacts with ${CORE_WORKERS} workers; duration workers=${CORE_DURATION_WORKERS}"
   CORE_WORKERS="${CORE_WORKERS}" CORE_DURATION_WORKERS="${CORE_DURATION_WORKERS}" CORE_FORCE="${CORE_FORCE}" Rscript results/runtime/09_build_core_artifacts.optimized.R
+  echo "[audit] Validate core against the frozen measurement design"
+  Rscript scripts/09b_validate_core_design.R
 
   echo "===== RQ1 ====="
   Rscript results/runtime/10_rq1_analysis.optimized.R
@@ -106,11 +112,11 @@ export RQ3_PART_WORKERS="${RQ3_PART_WORKERS:-8}"
   echo "===== RQ2 V5 ====="
   Rscript results/runtime/12_rq2_analysis_v5.runtime.R
   echo "===== RQ2 V5 FIGURES ====="
-  Rscript results/runtime/13_plot_rq2_v5.runtime.R
+  Rscript scripts/13_plot_rq2.R
   echo "===== RQ3 V5 ====="
   Rscript results/runtime/14_rq3_analysis_v5.runtime.R
   echo "===== RQ3 V5 FIGURES ====="
-  Rscript results/runtime/15_plot_rq3_v5.runtime.R
+  Rscript scripts/15_plot_rq3.R
 
   echo "===== PROVENANCE ====="
   git rev-parse HEAD > results/logs/git_commit.txt
