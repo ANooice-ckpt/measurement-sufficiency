@@ -23,10 +23,11 @@ Rscript --vanilla -e 'files <- c(
   "scripts/utils/paths.R", "scripts/utils/duration_artifacts.R", "scripts/utils/parallel_runtime.R",
   "scripts/utils/core_artifacts.R", "scripts/utils/core_temporal_sampling.R", "scripts/utils/core_context.R",
   "scripts/utils/figure_style.R", "scripts/utils/rq1_pairwise_artifacts.R",
+  "scripts/utils/rq_context.R", "scripts/utils/rq2_context_features.R",
   "scripts/01_download_melidos.R", "scripts/04c_prepare_raw_eye_spans.R",
   "scripts/09_build_core_artifacts.R", "scripts/09b_validate_core_design.R",
   "scripts/10_rq1_analysis.R", "scripts/11_plot_fig1.R",
-  "scripts/12_rq2_analysis.R", "scripts/12_rq2_analysis_v5.R",
+  "scripts/12_rq2_analysis.R", "scripts/12_rq2_analysis_v5.R", "scripts/12c_rq2_context_models.R",
   "scripts/13_plot_rq2.R", "scripts/13_plot_rq2_v5.R",
   "scripts/14_rq3_analysis.R", "scripts/14_rq3_analysis_v5.R",
   "scripts/15_plot_rq3.R", "scripts/15_plot_rq3_v5.R",
@@ -37,7 +38,7 @@ python3 -m py_compile scripts/utils/build_downstream_v5_runtime.py
 echo "[1/8] Restore/pin R 4.5.0 environment"
 Rscript scripts/00_setup.R
 
-echo "[2/8] Download/validate MeLiDos inputs, including trial_times"
+echo "[2/8] Download/validate MeLiDos inputs, including exercise diary and trial_times"
 Rscript scripts/01_download_melidos.R
 
 echo "[3/8] Refresh local MeLiDos inventory"
