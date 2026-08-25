@@ -52,3 +52,11 @@ jobs:
           message("All R scripts parsed successfully.")
       - name: Parse runtime patch builder
         run: python3 -m py_compile scripts/utils/build_downstream_v5_runtime.py
+      - name: Check server runner shell syntax
+        run: |
+          bash -n \
+            scripts/run_core_artifacts.sh \
+            scripts/run_downstream_v5_server.sh \
+            scripts/run_downstream_server.sh \
+            scripts/run_full_server.sh \
+            scripts/run_full_server_optimized.sh
