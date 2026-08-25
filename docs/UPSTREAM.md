@@ -5,12 +5,19 @@ Data loader: melidosData 1.0.6
 
 Use harmonized 10-s datasets as the source layer.
 
-Required modalities:
+Core measurement modalities:
 - light_glasses
 - light_chest
 - light_wrist
 - wearlog
 - sleepdiaries
+
+RQ2 contextual covariates additionally use the harmonized continuous exports:
+- lightexposurediary
+- exercisediary
+- sleepdiaries (work/free day and prior sleep duration)
+
+The downloader validates these RData payloads with the same `melidos_io.R` loader used for the core inputs. The RQ2 contextual layer reuses the published MeLiDos field/category conventions; it does not reinterpret raw questionnaire codes independently of those exports.
 
 Do not use pre-aggregated 1-minute datasets for primary analyses because temporal compression must be generated from the same 10-s reference.
 
@@ -19,7 +26,7 @@ Installed reproduction version: 0.10.3.
 
 Zauner release `v0.9.9` records LightLogR 0.10.3 in `renv.lock`; the earlier 0.10.0 entry was an unverified placeholder.
 
-## Zauner et al.
+Zauner et al.
 Reference implementation:
 `external/zauner_position/`
 
@@ -33,6 +40,10 @@ Use this repository to reproduce:
 - metric classes
 
 Do not modify files under `external/`.
+
+## ERA5 context
+
+ERA5 payloads are consumed only through the existing `weather_era5.R` ingestion and validation path. Daily RQ2 external-opportunity variables are read from the resulting core `unit_context` fields; RQ2 does not introduce a second file-format detector, time-zone convention, accumulation rule or daily weather aggregation.
 
 ## Environment boundary
 
