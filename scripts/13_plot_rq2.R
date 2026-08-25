@@ -62,11 +62,103 @@ p2a <- ggplot() +
   )
 
 # -----------------------------------------------------------------------------
-# Main-text display refinement for Fig. 2b.
+# Main-text Fig. 2b: fixed representatives of the four prespecified contextual
+# layers. Selection is conceptual and fixed in source, never data-driven. The
+# complete layered coefficient table remains in results/rq2. When the layered
+# extension was intentionally disabled, retain the frozen v5 display rather than
+# fabricating missing predictor rows.
+# -----------------------------------------------------------------------------
+LAYERED_PREDICTOR_LEVELS <- c(
+  "external_radiation", "external_direct_fraction", "external_cloud",
+  "solar_noon_elevation_deg",
+  "micro_outdoor_fraction", "micro_daylight_indoor_fraction",
+  "behaviour_work_fraction", "behaviour_exercise_level",
+  "primary_state_raw", "duration_day_variability"
+)
+LAYERED_PREDICTOR_LABELS <- c(
+  external_radiation = "Solar radiation",
+  external_direct_fraction = "Direct fraction",
+  external_cloud = "Cloud cover",
+  solar_noon_elevation_deg = "Solar-noon elevation",
+  micro_outdoor_fraction = "Outdoor fraction",
+  micro_daylight_indoor_fraction = "Indoor-daylight fraction",
+  behaviour_work_fraction = "Work fraction",
+  behaviour_exercise_level = "Exercise level",
+  primary_state_raw = "Primary exposure state",
+  duration_day_variability = "Day-to-day variability"
+)
+LAYERED_PREDICTOR_FAMILY <- c(
+  external_radiation = "External opportunity",
+  external_direct_fraction = "External opportunity",
+  external_cloud = "External opportunity",
+  solar_noon_elevation_deg = "External opportunity",
+  micro_outdoor_fraction = "Micro-environment",
+  micro_daylight_indoor_fraction = "Micro-environment",
+  behaviour_work_fraction = "Behaviour",
+  behaviour_exercise_level = "Behaviour",
+  primary_state_raw = "Exposure state",
+  duration_day_variability = "Exposure state"
+)
+LAYERED_FAMILY_COLORS <- c(
+  "External opportunity" = MS_PRIMARY,
+  "Micro-environment" = unname(MS_THREE_COLORS[[3]]),
+  "Behaviour" = MS_NEUTRAL,
+  "Exposure state" = MS_SECONDARY
+)
+
+layered_available <- nrow(coefficients) &&
+  any(coefficients$model_family == "joint" & coefficients$term %in% c(
+    "micro_outdoor_fraction", "micro_daylight_indoor_fraction",
+    "behaviour_work_fraction", "behaviour_exercise_level"
+  ))
+
+if (layered_available) {
+  coef_metric <- coefficients |>
+    filter(
+      model_family == "joint", term %in% LAYERED_PREDICTOR_LEVELS,
+      is.finite(estimate)
+    ) |>
+    group_by(dimension, metric, outcome, term) |>
+    summarise(estimate = median(estimate, na.rm = TRUE), .groups = "drop") |>
+    left_join(metric_class_lookup, by = "metric") |>
+    mutate(
+      dimension = factor(
+        dimension, levels = DIMENSIONS,
+        labels = unname(DIM_TITLES[DIMENSIONS])
+      ),
+      predictor = factor(
+        term,
+        levels = rev(LAYERED_PREDICTOR_LEVELS),
+        labels = rev(unname(LAYERED_PREDICTOR_LABELS[LAYERED_PREDICTOR_LEVELS]))
+      ),
+      predictor_num = as.integer(predictor),
+      predictor_family = factor(
+        unname(LAYERED_PREDICTOR_FAMILY[term]),
+        levels = names(LAYERED_FAMILY_COLORS)
+      ),
+      outcome_label = recode(outcome, signed = "Signed", magnitude = "Absolute", .default = outcome),
+      outcome_label = factor(outcome_label, levels = c("Signed", "Absolute")),
+      y_pos = predictor_num + if_else(outcome_label == "Signed", -.11, .11)
+    ) |>
+    filter(!is.na(predictor), !is.na(dimension), !is.na(predictor_family))
+
+  coef_summary <- coef_metric |>
+    group_by(dimension, predictor, predictor_num, predictor_family, outcome_label) |>
+    summarise(
+      n_metrics = n_distinct(metric),
+      estimate_median = median(estimate, na.rm = TRUE),
+      estimate_q25 = quantile(estimate, .25, na.rm = TRUE, names = FALSE),
+      estimate_q75 = quantile(estimate, .75, na.rm = TRUE, names = FALSE),
+      .groups = "drop"
+    ) |>
+    mutate(y_pos = predictor_num + if_else(outcome_label == "Signed", -.11, .11))
+
+  PREDICTOR_COLORS <- LAYERED_FAMILY_COLORS
+}
+
 # Keep the coefficient axis linear and shared across dimensions, but prevent a
 # very small number of extreme metric-level coefficients from determining the
 # whole display window. Class summaries are always computed from all estimates.
-# -----------------------------------------------------------------------------
 if (exists("coef_metric") && nrow(coef_metric) && exists("coef_summary") && nrow(coef_summary)) {
   coef_abs_cutoff <- as.numeric(
     stats::quantile(abs(coef_metric$estimate), probs = .99, na.rm = TRUE, names = FALSE, type = 8)
@@ -115,7 +207,10 @@ if (exists("coef_metric") && nrow(coef_metric) && exists("coef_summary") && nrow
       inherit.aes = FALSE, size = 1.45
     ) +
     facet_wrap(~dimension, ncol = 2) +
-    scale_color_manual(values = PREDICTOR_COLORS, drop = FALSE) +
+    scale_color_manual(
+      values = PREDICTOR_COLORS,
+      limits = names(PREDICTOR_COLORS), drop = FALSE
+    ) +
     scale_shape_manual(values = OUTCOME_SHAPES, drop = FALSE) +
     scale_y_continuous(
       breaks = seq_along(levels(coef_metric$predictor)),
@@ -138,18 +233,23 @@ if (exists("coef_metric") && nrow(coef_metric) && exists("coef_summary") && nrow
     ) +
     labs(
       title = "b  Contextual predictors of distortion",
-      subtitle = "raw points: central 99% of |β|; summaries use all estimates",
+      subtitle = if (layered_available) {
+        "prespecified layer representatives; raw points show central 99% of |β|"
+      } else {
+        "raw points: central 99% of |β|; summaries use all estimates"
+      },
       x = "standardized joint-model coefficient", y = NULL
     ) +
     theme_rq2(base_size = 6.1, legend_position = "bottom") +
     theme(
       panel.grid.major.y = element_blank(),
       axis.line.y = element_blank(), axis.ticks.y = element_blank(),
-      axis.text.y = element_text(size = 4.5), strip.text = element_text(size = 5.35),
+      axis.text.y = element_text(size = if (layered_available) 4.05 else 4.5),
+      strip.text = element_text(size = 5.35),
       plot.subtitle = element_text(
         size = 4.45, colour = "#666A6D", margin = margin(t = -1, b = 2)
       ),
-      legend.text = element_text(size = 4.45),
+      legend.text = element_text(size = 4.25),
       legend.key.width = grid::unit(2.8, "mm"),
       legend.spacing.x = grid::unit(.8, "mm"),
       panel.spacing = grid::unit(1.8, "mm")
@@ -185,6 +285,7 @@ if (exists("coef_metric") && nrow(coef_metric) && exists("coef_summary") && nrow
     "Fig. 2 display refinement: ",
     sum(!coef_metric_display$displayed_in_fig2b), " / ", nrow(coef_metric_display),
     " raw coefficient points omitted beyond pooled q99(|beta|)=",
-    signif(coef_abs_cutoff, 4), "; summaries retain all estimates."
+    signif(coef_abs_cutoff, 4), "; summaries retain all displayed-term estimates; layered=",
+    layered_available, "."
   )
 }
