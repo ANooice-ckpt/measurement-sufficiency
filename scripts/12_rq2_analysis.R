@@ -6,7 +6,17 @@ py <- unname(py[nzchar(py)][1])
 if (!length(py) || is.na(py) || !nzchar(py)) stop("Python 3 is required to build the corrected RQ2 runtime")
 status <- system2(py, file.path("scripts", "utils", "build_downstream_v5_runtime.py"))
 if (!identical(status, 0L)) stop("Failed to build corrected downstream v5 runtime")
+
+# The layered model stage supersedes the former external/state/joint fits but
+# still needs the canonical runtime's transition features and gamma products.
+# Preserve the user's model switch, suppress only those redundant base fits, and
+# then restore the requested setting for the layered stage.
+.requested_rq2_models <- tolower(Sys.getenv("RQ2_RUN_MODELS", unset = "1")) %in% c("1", "true", "yes")
+.rq2_models_env_original <- Sys.getenv("RQ2_RUN_MODELS", unset = NA_character_)
+Sys.setenv(RQ2_RUN_MODELS = "0")
 source(file.path("results", "runtime", "12_rq2_analysis_v5.runtime.R"), local = .GlobalEnv)
+RUN_MODELS <- .requested_rq2_models
+Sys.setenv(RQ2_RUN_MODELS = if (.requested_rq2_models) "1" else "0")
 
 # The layered contextual extension deliberately runs in the same R process: it
 # reuses the validated canonical transition objects created above and never
@@ -51,6 +61,7 @@ if (isTRUE(RUN_MODELS)) {
 
   cat(
     "\nLayered context extension: ", CONTEXT_VERSION,
+    "\nBase legacy coefficient fits: intentionally skipped; canonical conditional/gamma products retained.",
     "\nModel families: external opportunity, micro-environment, behaviour, exposure state, joint.",
     "\nContext inputs reuse unit_context ERA5 fields plus harmonised MeLiDos diaries; no core or ERA5 ingestion rule is redefined.\n",
     file = file.path(OUT, "RQ2_RUN_REPORT.md"), append = TRUE, sep = ""
@@ -60,3 +71,10 @@ if (isTRUE(RUN_MODELS)) {
     unlink(CONTEXT_SHARD_ROOT, recursive = TRUE, force = TRUE)
   }
 }
+
+if (is.na(.rq2_models_env_original)) {
+  Sys.unsetenv("RQ2_RUN_MODELS")
+} else {
+  Sys.setenv(RQ2_RUN_MODELS = .rq2_models_env_original)
+}
+rm(.requested_rq2_models, .rq2_models_env_original)
