@@ -4,7 +4,7 @@ options(timeout = max(3600, getOption("timeout")))
 sites <- melidos_sites()
 modalities <- c(
   "light_glasses", "light_chest", "light_wrist",
-  "wearlog", "sleepdiaries", "lightexposurediary", "trial_times"
+  "wearlog", "sleepdiaries", "lightexposurediary", "exercisediary", "trial_times"
 )
 optional_modalities <- "trial_times"
 site_override <- Sys.getenv("MELIDOS_SITES", "")
