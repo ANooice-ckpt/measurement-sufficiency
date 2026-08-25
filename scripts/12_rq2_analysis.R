@@ -12,3 +12,51 @@ source(file.path("results", "runtime", "12_rq2_analysis_v5.runtime.R"), local = 
 # reuses the validated canonical transition objects created above and never
 # reconstructs RQ1/core objects under a second set of rules.
 source(file.path("scripts", "12c_rq2_context_models.R"), local = .GlobalEnv)
+
+if (isTRUE(RUN_MODELS)) {
+  expected_context_files <- file.path(OUT, c(
+    "rq2_layered_context_model_coefficients.csv",
+    "rq2_layered_context_model_performance.csv",
+    "rq2_layered_context_model_manifest.csv",
+    "rq2_layered_context_run_report.txt"
+  ))
+  missing_context_files <- expected_context_files[!file.exists(expected_context_files)]
+  if (length(missing_context_files)) {
+    stop("Layered RQ2 context stage did not produce: ", paste(missing_context_files, collapse = ", "))
+  }
+
+  expected_families <- c(
+    "external_context", "microenvironment", "behaviour", "exposure_state", "joint"
+  )
+  observed_families <- unique(as.character(context_coefficients$model_family))
+  missing_families <- setdiff(expected_families, observed_families)
+  if (length(missing_families)) {
+    stop("Layered RQ2 model families missing from coefficients: ", paste(missing_families, collapse = ", "))
+  }
+
+  # Fig. 2b is allowed to show only a fixed representative subset, but the
+  # corresponding joint-model layers must actually have been estimated.
+  required_joint_terms <- c(
+    "micro_outdoor_fraction", "micro_daylight_indoor_fraction",
+    "behaviour_work_fraction", "behaviour_exercise_level"
+  )
+  observed_joint_terms <- unique(as.character(
+    context_coefficients$term[context_coefficients$model_family == "joint"]
+  ))
+  missing_joint_terms <- setdiff(required_joint_terms, observed_joint_terms)
+  if (length(missing_joint_terms)) {
+    stop("Layered RQ2 joint-model terms required for Fig. 2b are missing: ",
+         paste(missing_joint_terms, collapse = ", "))
+  }
+
+  cat(
+    "\nLayered context extension: ", CONTEXT_VERSION,
+    "\nModel families: external opportunity, micro-environment, behaviour, exposure state, joint.",
+    "\nContext inputs reuse unit_context ERA5 fields plus harmonised MeLiDos diaries; no core or ERA5 ingestion rule is redefined.\n",
+    file = file.path(OUT, "RQ2_RUN_REPORT.md"), append = TRUE, sep = ""
+  )
+
+  if (!KEEP_MODEL_INPUTS && exists("CONTEXT_SHARD_ROOT") && dir.exists(CONTEXT_SHARD_ROOT)) {
+    unlink(CONTEXT_SHARD_ROOT, recursive = TRUE, force = TRUE)
+  }
+}
