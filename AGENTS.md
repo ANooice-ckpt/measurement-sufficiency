@@ -24,29 +24,30 @@ Plot scripts read frozen outputs only and must not silently refit/recompute thei
 - Scientific object: `configuration -> observed exposure process -> target representation`.
 - 54 published exposure metrics are analytical units; six metric classes are descriptive only.
 - Distribution first: preserve smallest-unit distortion before A/B, models, sufficiency, or Pareto projections.
-- High-information benchmark is eye / MEDI / 10 s / protocol-anchored seven-day reference; it is an empirical benchmark, not biological truth.
+- High-information benchmark is eye / MEDI / 10 s; it is an empirical scale anchor, not biological truth.
 - Support is part of the estimand. Pairwise placement analyses keep maximal eye–chest / eye–wrist supports.
 - Optical LIGHT is an operational proxy. MDER/nvRD are unavailable when the candidate configuration has LIGHT only.
-- Temporal primary levels: **10, 20, 30, 60, 300, 900, 1800 s**. Reserve: 120, 600, 3600 s. 15 s is prohibited.
+- Temporal primary levels: **10, 20, 30, 40, 60 and 120 s**. Reserve sensitivity: 300 s. 15 s is prohibited.
 - Coarse temporal configurations are **systematic sparse subsamples of the 10-s grid**, not bin means. Retained source values cannot change.
-- Monitoring duration uses MeLiDos `trial_times` to anchor a fixed seven-day reference. Enumerate all contiguous 1–6 d candidate windows; do not substitute arbitrary non-contiguous subsets.
+- Monitoring duration uses consecutive complete analysis days and enumerates every contiguous 1–6 d window in each valid run. `trial_times` remains audit/descriptive metadata and does not define primary eligibility.
 - Unavailable configurations are unavailable, not high-distortion/insufficient.
+- RQ2 contextual models may consume the existing ERA5/unit-context variables and harmonized MeLiDos diaries, but must not redefine core weather ingestion, measurement configurations or target representations.
 - RQ3 Pareto dominance applies only to justified ordered dimensions (temporal resolution, duration). Placement/optical are incomparable facets.
 - Multidimensional RQ3 uses facet-specific maximal supports, not a gratuitous eye+chest+wrist full-support intersection.
 
 ## Artifact/cache rules
-Current core version: `v2_sparse_sampling_protocol7`.
+Current core version family: `v4_sparse_sampling_complete_days__<core_design_id>`.
 
-Interim core blocks are versioned under `data/interim/core/<core_version>/`. Do not point v2 at pre-v2 cache paths. Final core artifacts carry `core_artifact_version` and `data/derived/core/core_manifest.csv` records the temporal operator.
+Interim core blocks are versioned under the current results/core cache hierarchy. Do not point the active core at pre-v4 cache paths. Final core artifacts carry `core_artifact_version`, and the core manifest records the temporal operator and design identity.
 
 RQ1 outputs carry `rq1_analysis_version`; RQ2 checkpoint paths include that upstream version. Never reuse old RQ2 checkpoints after an upstream scientific version changes.
 
 ## Runtime
-Full rebuilds use R 4.5.0, LightLogR 0.10.3, melidosData 1.0.6. On the 96-vCPU Linux ECS, `CORE_WORKERS=48` is the intended start. On a 16-core/32-thread local Windows machine, RQ2 defaults near 12 PSOCK workers; workers keep BLAS/OpenMP at one thread each.
+Full rebuilds use R 4.5.0, LightLogR 0.10.3, melidosData 1.0.6. On the large Linux ECS, worker counts are controlled by the server runners and remain environment-overridable. On a 16-core/32-thread local Windows machine, RQ2 defaults near 12 PSOCK workers; workers keep BLAS/OpenMP at one thread each.
 
 ## Do not
 - Return to the raw 10-s source for ordinary RQ1–RQ3 changes after a validated core exists.
 - Average hidden high-frequency observations to simulate a slower logger.
-- Use Day 8 to replace a missing protocol reference day merely to reach seven days.
+- Use Day 8 or protocol dates to manufacture a fixed-duration reference when complete-analysis-day eligibility does not support it.
 - Treat metric classes as inferential replicates.
 - Invent universal sufficiency thresholds or universal burden orders for placement/optical.
