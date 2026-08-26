@@ -311,18 +311,18 @@ rq1 = replace_once(rq1, rq1_window_old, rq1_window_new, "RQ1 duration-window vec
 rq1_anchor_old = '''duration_anchor_values <- if (length(duration_part_paths)) {
   map_dfr(duration_part_paths, function(part_path) {
     readRDS(part_path) |>
-      filter(n_days == 6L) |>
+      filter(n_days == MAX_DURATION_DAYS) |>
       select(metric, metric_geometry, value)
   })
 } else {
   duration_artifact |>
-    filter(n_days == 6L) |>
+    filter(n_days == MAX_DURATION_DAYS) |>
     select(metric, metric_geometry, value)
 }
 '''
 rq1_anchor_new = '''read_duration_anchor_part <- function(part_path) {
   readRDS(part_path) |>
-    filter(n_days == 6L) |>
+    filter(n_days == MAX_DURATION_DAYS) |>
     select(metric, metric_geometry, value)
 }
 duration_anchor_values <- if (length(duration_part_paths)) {
@@ -346,7 +346,7 @@ duration_anchor_values <- if (length(duration_part_paths)) {
   }
 } else {
   duration_artifact |>
-    filter(n_days == 6L) |>
+    filter(n_days == MAX_DURATION_DAYS) |>
     select(metric, metric_geometry, value)
 }
 '''
