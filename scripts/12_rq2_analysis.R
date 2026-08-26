@@ -6,6 +6,8 @@ py <- unname(py[nzchar(py)][1])
 if (!length(py) || is.na(py) || !nzchar(py)) stop("Python 3 is required to build the corrected RQ2 runtime")
 status <- system2(py, file.path("scripts", "utils", "build_downstream_v5_runtime.py"))
 if (!identical(status, 0L)) stop("Failed to build corrected downstream v5 runtime")
+status <- system2(py, file.path("scripts", "utils", "patch_rq2_stream_runtime.py"))
+if (!identical(status, 0L)) stop("Failed to patch parallel/checkpointed RQ2 streaming runtime")
 
 # The layered model stage supersedes the former external/state/joint fits but
 # still needs the canonical runtime's transition features and gamma products.
@@ -67,8 +69,15 @@ if (isTRUE(RUN_MODELS)) {
     file = file.path(OUT, "RQ2_RUN_REPORT.md"), append = TRUE, sep = ""
   )
 
-  if (!KEEP_MODEL_INPUTS && exists("CONTEXT_SHARD_ROOT") && dir.exists(CONTEXT_SHARD_ROOT)) {
-    unlink(CONTEXT_SHARD_ROOT, recursive = TRUE, force = TRUE)
+  # Delete large row-level model inputs only after the entire layered RQ2 stage
+  # has succeeded. Durable pass-1 unit-feature checkpoints are intentionally kept.
+  if (!KEEP_MODEL_INPUTS) {
+    if (exists("SHARD_DIR") && dir.exists(SHARD_DIR)) {
+      unlink(SHARD_DIR, recursive = TRUE, force = TRUE)
+    }
+    if (exists("CONTEXT_SHARD_ROOT") && dir.exists(CONTEXT_SHARD_ROOT)) {
+      unlink(CONTEXT_SHARD_ROOT, recursive = TRUE, force = TRUE)
+    }
   }
 }
 
