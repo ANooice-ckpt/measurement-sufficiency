@@ -8,6 +8,8 @@ status <- system2(py, file.path("scripts", "utils", "build_downstream_v5_runtime
 if (!identical(status, 0L)) stop("Failed to build corrected downstream v5 runtime")
 status <- system2(py, file.path("scripts", "utils", "patch_rq2_stream_runtime.py"))
 if (!identical(status, 0L)) stop("Failed to patch parallel/checkpointed RQ2 streaming runtime")
+status <- system2(py, file.path("scripts", "utils", "patch_rq2_context_stream_runtime.py"))
+if (!identical(status, 0L)) stop("Failed to patch parallel RQ2 layered-context streaming runtime")
 
 # The layered model stage supersedes the former external/state/joint fits but
 # still needs the canonical runtime's transition features and gamma products.
@@ -23,7 +25,7 @@ Sys.setenv(RQ2_RUN_MODELS = if (.requested_rq2_models) "1" else "0")
 # The layered contextual extension deliberately runs in the same R process: it
 # reuses the validated canonical transition objects created above and never
 # reconstructs RQ1/core objects under a second set of rules.
-source(file.path("scripts", "12c_rq2_context_models.R"), local = .GlobalEnv)
+source(file.path("results", "runtime", "12c_rq2_context_models.runtime.R"), local = .GlobalEnv)
 
 if (isTRUE(RUN_MODELS)) {
   expected_context_files <- file.path(OUT, c(
