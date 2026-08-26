@@ -34,8 +34,14 @@ ms_plot_assert_prefix <- function(value, prefix, label) {
   invisible(value)
 }
 
-ms_plot_assert_core <- function(values, expected = "v3_sparse_sampling_complete_days") {
+ms_plot_assert_core <- function(values, expected = NULL) {
   value <- ms_plot_one_version(values, "core_artifact_version")
+  if (is.null(expected)) {
+    if (!exists("core_artifact_version", mode = "function")) {
+      source("scripts/utils/core_artifacts.R")
+    }
+    expected <- core_artifact_version()
+  }
   if (!identical(value, expected)) {
     stop("Plot input core version is ", value, "; expected ", expected, call. = FALSE)
   }
