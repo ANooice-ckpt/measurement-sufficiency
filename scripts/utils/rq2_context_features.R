@@ -40,19 +40,28 @@ rq2_context_daily_diary <- function(site) {
   missing <- setdiff(required, names(diary))
   if (length(missing)) stop(site, " lightexposurediary missing columns: ", paste(missing, collapse = ", "))
 
-  classified <- rq_context_prepare_diary(diary)
+  # classified and raw are two row-preserving views of the same source diary.
+  # Some MeLiDos exports contain repeated Id/start/end interval keys (notably
+  # THUAS), so those fields are not a safe relational key: joining on them
+  # creates a many-to-many Cartesian expansion. Preserve source-row identity
+  # instead, which retains every original diary record exactly once.
+  classified <- rq_context_prepare_diary(diary) |>
+    dplyr::mutate(.diary_row_id = dplyr::row_number(), .before = 1)
   raw <- diary |>
     dplyr::select(dplyr::all_of(required)) |>
     dplyr::mutate(
+      .diary_row_id = dplyr::row_number(),
       Id = as.character(Id), Date = as.Date(Date),
       interval_h = as.numeric(difftime(end, start, units = "hours")),
       end = end - lubridate::seconds(1),
       lightsource_primary = as.character(lightsource_primary),
       dplyr::across(dplyr::all_of(act_cols), ~tidyr::replace_na(as.logical(.x), FALSE))
-    )
+    ) |>
+    dplyr::select(.diary_row_id, Date, interval_h, lightsource_primary, dplyr::all_of(act_cols))
 
+  if (nrow(classified) != nrow(raw)) stop(site, " light-exposure diary row-preserving transforms disagree")
   x <- classified |>
-    dplyr::left_join(raw, by = c("Id", "start", "end")) |>
+    dplyr::left_join(raw, by = ".diary_row_id", relationship = "one-to-one") |>
     dplyr::mutate(
       site = site,
       source_reported = !is.na(lightsource_primary) & nzchar(lightsource_primary),
@@ -60,7 +69,7 @@ rq2_context_daily_diary <- function(site) {
       activity_reported = !is.na(activity),
       behaviour_work = act_working_indoor | act_working_outdoor
     )
-  if (nrow(x) != nrow(classified)) stop(site, " light-exposure diary join changed interval count")
+  if (nrow(x) != nrow(classified)) stop(site, " light-exposure diary row-identity join changed interval count")
 
   x |>
     dplyr::group_by(site, Id, Date) |>
