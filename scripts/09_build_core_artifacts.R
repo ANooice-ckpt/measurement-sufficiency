@@ -386,11 +386,13 @@ write_core_manifest()
 
 n_metric_participants <- metric_cube |> distinct(site, Id) |> nrow()
 n_context_participants <- unit_context |> distinct(site, Id) |> nrow()
+n_duration_participants <- duration_artifacts$manifest |> distinct(site, Id) |> nrow()
+n_duration_sites <- n_distinct(duration_artifacts$manifest$site)
 diag <- tibble(
   artifact = c("metric_cube", "unit_context", "duration_metric_cube", "weather_1min"),
   rows = c(nrow(metric_cube), nrow(unit_context), attr(duration_metric_cube, "duration_rows"), nrow(weather_1min)),
-  participants = c(n_metric_participants, n_context_participants, NA_integer_),
-  sites = c(n_distinct(metric_cube$site), n_distinct(unit_context$site), n_distinct(weather_1min$site)),
+  participants = c(n_metric_participants, n_context_participants, n_duration_participants, NA_integer_),
+  sites = c(n_distinct(metric_cube$site), n_distinct(unit_context$site), n_duration_sites, n_distinct(weather_1min$site)),
   core_artifact_version = CORE_VERSION
 )
 write.csv(diag, file.path("results", "logs", "core_artifact_summary.csv"), row.names = FALSE)
