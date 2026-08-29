@@ -419,8 +419,10 @@ pareto_base <- pareto |>
   mutate(
     ever_pareto = as.logical(ever_pareto),
     pareto_persistence = pmax(0, pmin(1, pareto_persistence)),
-    metric_class = factor(metric_class, levels = METRIC_CLASSES)
-  )
+    metric_class = factor(metric_class, levels = METRIC_CLASSES),
+    resolution_rank = match(resolution_s, RES_LEVELS)
+  ) |>
+  filter(is.finite(resolution_rank))
 
 # Main-text Fig. 5 is deliberately not tolerance-on-the-x-axis: Fig. 4 already
 # owns tolerance-response. Here tolerance is an intrinsic property of each joint
