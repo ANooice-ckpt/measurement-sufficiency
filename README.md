@@ -77,9 +77,9 @@ Rscript scripts/14_rq3_analysis.R
 Rscript scripts/15_plot_rq3.R
 ```
 
-The canonical RQ2 entrypoint first executes the corrected v5 runtime and then, in the same R process, adds the layered contextual models. Those models reuse existing ERA5 fields from `unit_context` and harmonized MeLiDos light-exposure, exercise and sleep diaries; they do not introduce an alternate core/weather preprocessing path.
+The canonical RQ2 entrypoint contains the corrected streamed analysis directly and then, in the same R process, adds the layered contextual models. Those models reuse existing ERA5 fields from `unit_context` and harmonized MeLiDos light-exposure, exercise and sleep diaries; they do not introduce an alternate core/weather preprocessing path.
 
-On the Linux server, the resumable downstream chain can be launched with `scripts/run_downstream_server.sh`. The server runners define their own high-core-count defaults and every worker count remains environment-overridable; inspect the selected runner before changing concurrency for a different instance size.
+On the Linux server, the resumable downstream chain can be launched with `scripts/run_downstream_server.sh`. The server runners define their own high-core-count defaults and every worker count remains environment-overridable; inspect the selected runner before changing concurrency for a different instance size. Downstream RQ2/RQ3 sources are canonical and are no longer generated through a v5 runtime-patch layer.
 
 The analysis stages emit versioned model/checkpoint and figure provenance tables alongside their primary outputs. Main PNG figures are centralized under `results/figures`; RQ-specific figure manifests remain at the corresponding `results/rqX/` roots.
 

@@ -62,17 +62,14 @@ export RQ3_PART_WORKERS="${RQ3_PART_WORKERS:-8}"
     cat("Project package preflight passed\n")
   '
 
-  echo "Generate runtime-only optimized RQ1 and corrected downstream v5 entrypoints"
+  echo "Generate runtime-only optimized core/RQ1 entrypoints; downstream uses canonical sources"
   python3 scripts/utils/build_runtime_optimized.py
   python3 scripts/utils/patch_rq1_memory_safe.py
-  python3 scripts/utils/build_downstream_v5_runtime.py
   Rscript --vanilla -e '
     fs <- c(
       "results/runtime/duration_artifacts.optimized.R",
       "results/runtime/09_build_core_artifacts.optimized.R",
       "results/runtime/10_rq1_analysis.optimized.R",
-      "results/runtime/12_rq2_analysis_v5.runtime.R",
-      "results/runtime/14_rq3_analysis_v5.runtime.R",
       "scripts/utils/rq_context.R",
       "scripts/utils/rq2_context_features.R",
       "scripts/09b_validate_core_design.R",
@@ -80,9 +77,9 @@ export RQ3_PART_WORKERS="${RQ3_PART_WORKERS:-8}"
       "scripts/12_rq2_analysis.R",
       "scripts/12c_rq2_context_models.R",
       "scripts/13_plot_rq2.R",
-      "scripts/13_plot_rq2_v5.R",
       "scripts/15_plot_rq3.R",
-      "scripts/15_plot_rq3_v5.R"
+      "scripts/14_rq3_analysis.R",
+      "scripts/15_plot_rq3.R"
     )
     invisible(lapply(fs, parse)); cat("Optimized/corrected analysis, layered RQ2 and canonical plotting entry points parse successfully\n")
   '
@@ -113,15 +110,15 @@ export RQ3_PART_WORKERS="${RQ3_PART_WORKERS:-8}"
   echo "===== FIGURE 1 ====="
   Rscript scripts/11_plot_fig1.R
 
-  echo "===== RQ2 V5 + LAYERED CONTEXT ====="
-  # Canonical wrapper sources the corrected runtime and the layered extension in
-  # one R process, so all context models reuse the same transition objects.
+  echo "===== RQ2 + LAYERED CONTEXT ====="
+  # Canonical RQ2 sources the layered extension in the same R process, so all
+  # context models reuse the same transition objects.
   Rscript scripts/12_rq2_analysis.R
-  echo "===== RQ2 V5 FIGURES ====="
+  echo "===== RQ2 FIGURES ====="
   Rscript scripts/13_plot_rq2.R
-  echo "===== RQ3 V5 ====="
-  Rscript results/runtime/14_rq3_analysis_v5.runtime.R
-  echo "===== RQ3 V5 FIGURES ====="
+  echo "===== RQ3 ====="
+  Rscript scripts/14_rq3_analysis.R
+  echo "===== RQ3 FIGURES ====="
   Rscript scripts/15_plot_rq3.R
 
   echo "===== PROVENANCE ====="
