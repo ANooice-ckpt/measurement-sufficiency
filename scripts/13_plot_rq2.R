@@ -491,61 +491,102 @@ context_summary <- context_task |>
   )
 
 
-# c. Independent contextual information from participant-grouped CV. The two
-# increments are evaluated only on matched test sets and therefore isolate the
-# held-out information added by external context beyond state, and vice versa.
-metric_direction_shift <- transition_state |>
-  filter(is.finite(delta_direction_HL)) |>
-  group_by(dimension, metric, metric_class) |>
-  summarise(delta_direction_HL = median(delta_direction_HL, na.rm = TRUE), .groups = "drop") |>
-  mutate(metric_class = factor(metric_class, levels = METRIC_CLASSES))
+# c. Out-of-sample contextual predictability from the joint contextual model.
+# This uses the participant-grouped CV R2 already produced by RQ2. It does not
+# subtract model-family R2 values evaluated on different complete-case samples.
+joint_cv_metric <- performance |>
+  filter(
+    str_detect(validation_scheme, "^participant_grouped"),
+    model_family == "joint", is.finite(r2)
+  ) |>
+  group_by(dimension, comparison_pair_id, metric, outcome) |>
+  summarise(
+    r2 = median(r2, na.rm = TRUE),
+    n_test = max(n_test, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  group_by(dimension, metric, outcome) |>
+  summarise(
+    r2 = median(r2, na.rm = TRUE),
+    n_test = max(n_test, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  left_join(metric_class_lookup, by = "metric") |>
+  mutate(
+    metric_class = factor(metric_class, levels = METRIC_CLASSES),
+    dimension = factor(
+      dimension, levels = DIMENSIONS,
+      labels = unname(DIM_TITLES[DIMENSIONS])
+    ),
+    outcome_label = recode(
+      outcome,
+      signed = "Signed distortion",
+      magnitude = "Absolute distortion",
+      .default = outcome
+    )
+  ) |>
+  filter(!is.na(dimension), !is.na(metric_class), is.finite(r2))
 
-direction_shift_summary <- metric_direction_shift |>
-  group_by(dimension, metric_class) |>
+joint_cv_summary <- joint_cv_metric |>
+  group_by(dimension, outcome_label, metric_class) |>
   summarise(
     n_metrics = n_distinct(metric),
-    shift_median = median(delta_direction_HL, na.rm = TRUE),
-    shift_q25 = quantile(delta_direction_HL, .25, na.rm = TRUE, names = FALSE),
-    shift_q75 = quantile(delta_direction_HL, .75, na.rm = TRUE, names = FALSE),
+    r2_median = median(r2, na.rm = TRUE),
+    r2_q25 = quantile(r2, .25, na.rm = TRUE, names = FALSE),
+    r2_q75 = quantile(r2, .75, na.rm = TRUE, names = FALSE),
     .groups = "drop"
   )
 
-CONTEXT_COLORS <- c("External beyond state" = MS_PRIMARY, "State beyond external" = MS_SECONDARY)
-CONTEXT_SHAPES <- c("External beyond state" = 16, "State beyond external" = 17)
+if (nrow(joint_cv_metric)) {
+  joint_cv_cutoff <- as.numeric(
+    quantile(abs(joint_cv_metric$r2), .99, na.rm = TRUE, names = FALSE, type = 8)
+  )
+  summary_extent <- max(abs(c(
+    joint_cv_summary$r2_median,
+    joint_cv_summary$r2_q25,
+    joint_cv_summary$r2_q75
+  )), na.rm = TRUE)
+  joint_cv_limit <- max(joint_cv_cutoff, summary_extent, na.rm = TRUE) * 1.04
+  if (!is.finite(joint_cv_limit) || joint_cv_limit <= 0) joint_cv_limit <- 1
 
-if (nrow(context_task)) {
-  context_plot <- context_task |>
+  joint_cv_plot <- joint_cv_metric |>
     mutate(
       dimension_num = as.integer(dimension),
-      y_pos = dimension_num + if_else(information == "External beyond state", -.11, .11)
-    )
-  context_plot_summary <- context_summary |>
+      class_num = as.integer(metric_class),
+      class_offset = (class_num - (length(METRIC_CLASSES) + 1) / 2) * .060,
+      y_pos = dimension_num + class_offset,
+      displayed = abs(r2) <= joint_cv_limit + 1e-12
+    ) |>
+    filter(displayed)
+
+  joint_cv_plot_summary <- joint_cv_summary |>
     mutate(
       dimension_num = as.integer(dimension),
-      y_pos = dimension_num + if_else(information == "External beyond state", -.11, .11)
+      class_num = as.integer(metric_class),
+      class_offset = (class_num - (length(METRIC_CLASSES) + 1) / 2) * .060,
+      y_pos = dimension_num + class_offset
     )
 
-  p2c <- ggplot(context_plot, aes(delta_r2, y_pos, color = information, shape = information)) +
+  p2c <- ggplot(joint_cv_plot, aes(r2, y_pos, color = metric_class)) +
     geom_vline(xintercept = 0, linewidth = .30, color = "#9DA2A5") +
     geom_point(
-      position = position_jitter(width = 0, height = .035, seed = 56),
-      size = .56, alpha = .18
+      position = position_jitter(width = 0, height = .018, seed = 56),
+      size = .54, alpha = .20
     ) +
     geom_segment(
-      data = context_plot_summary,
-      aes(x = delta_q25, xend = delta_q75, y = y_pos, yend = y_pos, color = information),
-      inherit.aes = FALSE, linewidth = .92, alpha = .58, lineend = "round"
+      data = joint_cv_plot_summary,
+      aes(x = r2_q25, xend = r2_q75, y = y_pos, yend = y_pos, color = metric_class),
+      inherit.aes = FALSE, linewidth = .86, alpha = .52, lineend = "round"
     ) +
     geom_point(
-      data = context_plot_summary,
-      aes(delta_median, y_pos, color = information, shape = information),
-      inherit.aes = FALSE, size = 1.50
+      data = joint_cv_plot_summary,
+      aes(r2_median, y_pos, color = metric_class),
+      inherit.aes = FALSE, shape = 18, size = 1.42
     ) +
     facet_wrap(~outcome_label, nrow = 1) +
-    scale_color_manual(values = CONTEXT_COLORS, drop = FALSE) +
-    scale_shape_manual(values = CONTEXT_SHAPES, drop = FALSE) +
+    scale_color_ms_metric(guide = "none") +
     scale_x_continuous(
-      trans = scales::transform_asinh(),
+      limits = c(-joint_cv_limit, joint_cv_limit),
       breaks = scales::breaks_extended(n = 4)
     ) +
     scale_y_continuous(
@@ -553,36 +594,39 @@ if (nrow(context_task)) {
       labels = unname(DIM_TITLES[DIMENSIONS]),
       limits = c(.55, length(DIMENSIONS) + .45)
     ) +
-    guides(
-      color = guide_legend(title = NULL, nrow = 2, byrow = TRUE,
-                           override.aes = list(alpha = 1, size = 1.1)),
-      shape = guide_legend(title = NULL, nrow = 2, byrow = TRUE,
-                           override.aes = list(alpha = 1, size = 1.1))
-    ) +
     labs(
-      title = "c  Independent contextual information",
-      x = "incremental participant-grouped CV R²", y = NULL
+      title = "c  Out-of-sample contextual predictability",
+      subtitle = "joint contextual model; participant-grouped cross-validation",
+      x = "participant-grouped CV R²", y = NULL
     ) +
-    theme_rq2(base_size = 6.05, legend_position = "bottom") +
+    theme_rq2(base_size = 6.05) +
     theme(
       panel.grid.major.y = element_blank(),
       axis.line.y = element_blank(), axis.ticks.y = element_blank(),
       axis.text.y = element_text(size = 4.9),
-      strip.text = element_text(size = 5.45),
-      legend.text = element_text(size = 4.35),
-      legend.key.width = grid::unit(2.7, "mm"),
-      legend.spacing.x = grid::unit(.6, "mm"),
+      strip.text = element_text(size = 5.35),
+      plot.subtitle = element_text(
+        size = 4.35, colour = "#666A6D", margin = margin(t = -1, b = 2)
+      ),
       panel.spacing = grid::unit(1.8, "mm")
     )
 } else {
   p2c <- ggplot() + theme_void(base_family = MS_FONT) +
     annotate(
       "text", x = 0, y = 0,
-      label = "c  Independent contextual information\nNo matched grouped-CV results",
+      label = "c  Out-of-sample contextual predictability\nNo joint grouped-CV results",
       size = 2.2, colour = "#55595C"
     )
 }
 
+readr::write_csv(
+  joint_cv_metric |>
+    mutate(
+      dimension = as.character(dimension),
+      metric_class = as.character(metric_class)
+    ),
+  file.path("results", "rq2", "fig2_joint_context_cv.csv"), na = ""
+)
 
 # Keep one visually dominant conditional-geometry panel above two orthogonal
 # explanatory panels. The upper panel carries the empirical state response; the
@@ -926,273 +970,4 @@ source(file.path("scripts", "utils", "analysis_design.R"), local = .GlobalEnv)
 if (is.list(condition) && !is.null(condition$analysis_design_id) &&
     !identical(as.character(condition$analysis_design_id[[1]]), ms_analysis_design_id())) {
   stop("RQ2 plotting inputs do not match the current frozen analysis design", call. = FALSE)
-}
-
-# Main Fig. 2a deliberately keeps a linear y scale. Facets retain their own
-# ranges because the scientific comparison is exposure-state modulation within
-# each measurement dimension, not transformed cross-dimension magnitude.
-p2a <- ggplot() +
-  geom_point(
-    data = conditional_metric_state,
-    aes(x_pos, A_state, color = metric_class),
-    position = position_jitter(width = .018, height = 0, seed = 41),
-    size = .48, alpha = .20
-  ) +
-  geom_linerange(
-    data = conditional_profile_summary,
-    aes(x_pos, ymin = A_q25, ymax = A_q75, color = metric_class),
-    linewidth = .68, alpha = .50
-  ) +
-  geom_point(
-    data = conditional_profile_summary,
-    aes(x_pos, A_median, color = metric_class),
-    shape = 18, size = 1.55
-  ) +
-  facet_wrap(
-    ~factor(dimension, levels = DIMENSIONS, labels = unname(DIM_TITLES[DIMENSIONS])),
-    ncol = 2, scales = "free_y"
-  ) +
-  scale_color_ms_metric(guide = "none") +
-  scale_x_continuous(
-    breaks = 1:3, labels = c("Low", "Middle", "High"),
-    limits = c(.72, 3.28), expand = expansion(mult = c(0, 0))
-  ) +
-  scale_y_continuous(breaks = scales::breaks_extended(n = 4)) +
-  labs(
-    title = "a  Conditional distortion magnitude across exposure state",
-    x = "transition-local exposure state", y = "conditional A = mean |z|"
-  ) +
-  theme_rq2(base_size = 6.45) +
-  theme(
-    panel.grid.major.x = element_blank(), strip.text = element_text(size = 5.9),
-    panel.spacing = grid::unit(2.2, "mm")
-  )
-
-# -----------------------------------------------------------------------------
-# Main-text Fig. 2b: fixed representatives of the four prespecified contextual
-# layers. Selection is conceptual and fixed in source, never data-driven. The
-# complete layered coefficient table remains in results/rq2. When the layered
-# extension was intentionally disabled, retain the frozen v5 display rather than
-# fabricating missing predictor rows.
-# -----------------------------------------------------------------------------
-LAYERED_PREDICTOR_LEVELS <- c(
-  "external_radiation", "external_direct_fraction", "external_cloud",
-  "solar_noon_elevation_deg",
-  "micro_outdoor_fraction", "micro_daylight_indoor_fraction",
-  "behaviour_work_fraction", "behaviour_exercise_level",
-  "primary_state_raw", "duration_day_variability"
-)
-LAYERED_PREDICTOR_LABELS <- c(
-  external_radiation = "Solar radiation",
-  external_direct_fraction = "Direct fraction",
-  external_cloud = "Cloud cover",
-  solar_noon_elevation_deg = "Solar-noon elevation",
-  micro_outdoor_fraction = "Outdoor fraction",
-  micro_daylight_indoor_fraction = "Indoor-daylight fraction",
-  behaviour_work_fraction = "Work fraction",
-  behaviour_exercise_level = "Exercise level",
-  primary_state_raw = "Primary exposure state",
-  duration_day_variability = "Day-to-day variability"
-)
-LAYERED_PREDICTOR_FAMILY <- c(
-  external_radiation = "External opportunity",
-  external_direct_fraction = "External opportunity",
-  external_cloud = "External opportunity",
-  solar_noon_elevation_deg = "External opportunity",
-  micro_outdoor_fraction = "Micro-environment",
-  micro_daylight_indoor_fraction = "Micro-environment",
-  behaviour_work_fraction = "Behaviour",
-  behaviour_exercise_level = "Behaviour",
-  primary_state_raw = "Exposure state",
-  duration_day_variability = "Exposure state"
-)
-LAYERED_FAMILY_COLORS <- c(
-  "External opportunity" = MS_PRIMARY,
-  "Micro-environment" = unname(MS_THREE_COLORS[[3]]),
-  "Behaviour" = MS_NEUTRAL,
-  "Exposure state" = MS_SECONDARY
-)
-
-layered_available <- nrow(coefficients) &&
-  any(coefficients$model_family == "joint" & coefficients$term %in% c(
-    "micro_outdoor_fraction", "micro_daylight_indoor_fraction",
-    "behaviour_work_fraction", "behaviour_exercise_level"
-  ))
-
-if (layered_available) {
-  coef_metric <- coefficients |>
-    filter(
-      model_family == "joint", term %in% LAYERED_PREDICTOR_LEVELS,
-      is.finite(estimate)
-    ) |>
-    group_by(dimension, metric, outcome, term) |>
-    summarise(estimate = median(estimate, na.rm = TRUE), .groups = "drop") |>
-    left_join(metric_class_lookup, by = "metric") |>
-    mutate(
-      dimension = factor(
-        dimension, levels = DIMENSIONS,
-        labels = unname(DIM_TITLES[DIMENSIONS])
-      ),
-      predictor = factor(
-        term,
-        levels = rev(LAYERED_PREDICTOR_LEVELS),
-        labels = rev(unname(LAYERED_PREDICTOR_LABELS[LAYERED_PREDICTOR_LEVELS]))
-      ),
-      predictor_num = as.integer(predictor),
-      predictor_family = factor(
-        unname(LAYERED_PREDICTOR_FAMILY[term]),
-        levels = names(LAYERED_FAMILY_COLORS)
-      ),
-      outcome_label = recode(outcome, signed = "Signed", magnitude = "Absolute", .default = outcome),
-      outcome_label = factor(outcome_label, levels = c("Signed", "Absolute")),
-      y_pos = predictor_num + if_else(outcome_label == "Signed", -.11, .11)
-    ) |>
-    filter(!is.na(predictor), !is.na(dimension), !is.na(predictor_family))
-
-  coef_summary <- coef_metric |>
-    group_by(dimension, predictor, predictor_num, predictor_family, outcome_label) |>
-    summarise(
-      n_metrics = n_distinct(metric),
-      estimate_median = median(estimate, na.rm = TRUE),
-      estimate_q25 = quantile(estimate, .25, na.rm = TRUE, names = FALSE),
-      estimate_q75 = quantile(estimate, .75, na.rm = TRUE, names = FALSE),
-      .groups = "drop"
-    ) |>
-    mutate(y_pos = predictor_num + if_else(outcome_label == "Signed", -.11, .11))
-
-  PREDICTOR_COLORS <- LAYERED_FAMILY_COLORS
-}
-
-# Keep the coefficient axis linear and shared across dimensions, but prevent a
-# very small number of extreme metric-level coefficients from determining the
-# whole display window. Class summaries are always computed from all estimates.
-if (exists("coef_metric") && nrow(coef_metric) && exists("coef_summary") && nrow(coef_summary)) {
-  coef_abs_cutoff <- as.numeric(
-    stats::quantile(abs(coef_metric$estimate), probs = .99, na.rm = TRUE, names = FALSE, type = 8)
-  )
-  if (!is.finite(coef_abs_cutoff) || coef_abs_cutoff <= 0) {
-    coef_abs_cutoff <- max(abs(coef_metric$estimate), na.rm = TRUE)
-  }
-
-  coef_metric_display <- coef_metric |>
-    mutate(
-      abs_estimate = abs(estimate),
-      display_cutoff = coef_abs_cutoff,
-      displayed_in_fig2b = is.finite(estimate) & abs_estimate <= display_cutoff
-    )
-
-  summary_extent <- max(abs(c(
-    coef_summary$estimate_median,
-    coef_summary$estimate_q25,
-    coef_summary$estimate_q75
-  )), na.rm = TRUE)
-  coef_limit_display <- max(coef_abs_cutoff, summary_extent, na.rm = TRUE) * 1.04
-  if (!is.finite(coef_limit_display) || coef_limit_display <= 0) coef_limit_display <- 1
-
-  coef_metric_visible <- coef_metric_display |> filter(displayed_in_fig2b)
-
-  p2b <- ggplot(
-    coef_metric_visible,
-    aes(estimate, y_pos, color = predictor_family, shape = outcome_label)
-  ) +
-    geom_vline(xintercept = 0, linewidth = .30, color = "#9DA2A5") +
-    geom_point(
-      position = position_jitter(width = 0, height = .035, seed = 54),
-      size = .52, alpha = .18
-    ) +
-    geom_segment(
-      data = coef_summary,
-      aes(
-        x = estimate_q25, xend = estimate_q75,
-        y = y_pos, yend = y_pos, color = predictor_family
-      ),
-      inherit.aes = FALSE, linewidth = .90, alpha = .58, lineend = "round"
-    ) +
-    geom_point(
-      data = coef_summary,
-      aes(estimate_median, y_pos, color = predictor_family, shape = outcome_label),
-      inherit.aes = FALSE, size = 1.45
-    ) +
-    facet_wrap(~dimension, ncol = 2) +
-    scale_color_manual(
-      values = PREDICTOR_COLORS,
-      limits = names(PREDICTOR_COLORS), drop = FALSE
-    ) +
-    scale_shape_manual(values = OUTCOME_SHAPES, drop = FALSE) +
-    scale_y_continuous(
-      breaks = seq_along(levels(coef_metric$predictor)),
-      labels = levels(coef_metric$predictor),
-      limits = c(.55, length(levels(coef_metric$predictor)) + .45)
-    ) +
-    scale_x_continuous(
-      limits = c(-coef_limit_display, coef_limit_display),
-      breaks = scales::breaks_extended(n = 5)
-    ) +
-    guides(
-      color = guide_legend(
-        title = NULL, nrow = 1, order = 1,
-        override.aes = list(alpha = 1, size = 1.15)
-      ),
-      shape = guide_legend(
-        title = NULL, nrow = 1, order = 2,
-        override.aes = list(alpha = 1, size = 1.15)
-      )
-    ) +
-    labs(
-      title = "b  Contextual predictors of distortion",
-      subtitle = if (layered_available) {
-        "prespecified layer representatives; raw points show central 99% of |β|"
-      } else {
-        "raw points: central 99% of |β|; summaries use all estimates"
-      },
-      x = "standardized joint-model coefficient", y = NULL
-    ) +
-    theme_rq2(base_size = 6.1, legend_position = "bottom") +
-    theme(
-      panel.grid.major.y = element_blank(),
-      axis.line.y = element_blank(), axis.ticks.y = element_blank(),
-      axis.text.y = element_text(size = if (layered_available) 4.05 else 4.5),
-      strip.text = element_text(size = 5.35),
-      plot.subtitle = element_text(
-        size = 4.45, colour = "#666A6D", margin = margin(t = -1, b = 2)
-      ),
-      legend.text = element_text(size = 4.25),
-      legend.key.width = grid::unit(2.8, "mm"),
-      legend.spacing.x = grid::unit(.8, "mm"),
-      panel.spacing = grid::unit(1.8, "mm")
-    )
-
-  p2bottom <- cowplot::plot_grid(
-    p2b, p2c, ncol = 2, rel_widths = c(.56, .44),
-    align = "hv", axis = "tblr", greedy = TRUE
-  )
-  p2body <- cowplot::plot_grid(
-    p2a, p2bottom, ncol = 1, rel_heights = c(1.10, .90),
-    align = "v", axis = "l", greedy = TRUE
-  )
-  p2 <- cowplot::plot_grid(
-    metric_legend, p2body, ncol = 1, rel_heights = c(.042, 1),
-    align = "v", greedy = TRUE
-  )
-  ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.png"), 9.0, 6.6)
-
-  readr::write_csv(
-    coef_metric_display |>
-      mutate(
-        dimension = as.character(dimension),
-        predictor = as.character(predictor),
-        predictor_family = as.character(predictor_family),
-        outcome_label = as.character(outcome_label)
-      ),
-    file.path("results", "rq2", "fig2_context_predictor_display_diagnostics.csv"),
-    na = ""
-  )
-
-  message(
-    "Fig. 2 display refinement: ",
-    sum(!coef_metric_display$displayed_in_fig2b), " / ", nrow(coef_metric_display),
-    " raw coefficient points omitted beyond pooled q99(|beta|)=",
-    signif(coef_abs_cutoff, 4), "; summaries retain all displayed-term estimates; layered=",
-    layered_available, "."
-  )
 }

@@ -424,10 +424,11 @@ pareto_base <- pareto |>
   ) |>
   filter(is.finite(resolution_rank))
 
-# Main-text Fig. 5 is deliberately not tolerance-on-the-x-axis: Fig. 4 already
-# owns tolerance-response. Here tolerance is an intrinsic property of each joint
-# configuration (the entry tolerance), and the other panels describe the local
-# geometry of the resulting temporal × duration surface.
+# Main-text Fig. 5 maps the joint temporal-resolution × duration design space.
+# Fig. 4 owns tolerance-response curves. Here entry tolerance is treated as an
+# intrinsic property of each joint configuration; class-specific heatmaps show
+# heterogeneity around the common landscape, and the lower panel shows local
+# substitution/complementarity between the two burden axes.
 metric_class_lookup5 <- rq1_summary |> distinct(metric, metric_class)
 joint_plot_base <- joint
 if (!"metric_class" %in% names(joint_plot_base)) {
@@ -452,20 +453,42 @@ fig5_res_labels <- format_resolution5(fig5_res_levels)
 joint_plot_base <- joint_plot_base |>
   mutate(resolution_rank = match(resolution_s, fig5_res_levels))
 
-# a. Joint entry-tolerance surface: darker cells require a more permissive
-# fidelity tolerance before the configuration becomes sufficient. Unresolved
-# upper boundaries remain NA and therefore visually distinct from poor fidelity.
-entry_surface <- joint_plot_base |>
-  group_by(resolution_s, resolution_rank, n_days) |>
+# Equal-weight metrics: first collapse support/placement/optical facets within a
+# metric, then summarize across metrics. This prevents metrics represented by
+# more fixed-facet combinations from dominating the display.
+entry_metric_surface <- joint_plot_base |>
+  filter(status == "resolved", is.finite(epsilon_entry), !is.na(metric_class)) |>
+  group_by(metric, metric_class, resolution_s, resolution_rank, n_days) |>
   summarise(
-    n_records = n(),
-    n_resolved = sum(status == "resolved" & is.finite(epsilon_entry)),
-    resolved_fraction = n_resolved / n_records,
-    epsilon_entry_median = safe_median(epsilon_entry[status == "resolved"]),
-    epsilon_entry_q25 = safe_q(epsilon_entry[status == "resolved"], .25),
-    epsilon_entry_q75 = safe_q(epsilon_entry[status == "resolved"], .75),
+    epsilon_metric = median(epsilon_entry, na.rm = TRUE),
+    n_facets = n(),
     .groups = "drop"
   )
+
+entry_surface <- entry_metric_surface |>
+  group_by(resolution_s, resolution_rank, n_days) |>
+  summarise(
+    n_metrics = n_distinct(metric),
+    epsilon_entry_median = median(epsilon_metric, na.rm = TRUE),
+    epsilon_entry_q25 = quantile(epsilon_metric, .25, na.rm = TRUE, names = FALSE),
+    epsilon_entry_q75 = quantile(epsilon_metric, .75, na.rm = TRUE, names = FALSE),
+    .groups = "drop"
+  )
+
+entry_class_surface <- entry_metric_surface |>
+  group_by(metric_class, resolution_s, resolution_rank, n_days) |>
+  summarise(
+    n_metrics = n_distinct(metric),
+    epsilon_entry_median = median(epsilon_metric, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  left_join(
+    entry_surface |>
+      select(resolution_s, resolution_rank, n_days,
+             overall_entry_tolerance = epsilon_entry_median),
+    by = c("resolution_s", "resolution_rank", "n_days")
+  ) |>
+  mutate(entry_tolerance_difference = epsilon_entry_median - overall_entry_tolerance)
 
 entry_grid <- tidyr::crossing(
   resolution_rank = seq_along(fig5_res_levels),
@@ -473,15 +496,38 @@ entry_grid <- tidyr::crossing(
 ) |>
   left_join(
     entry_surface |>
-      select(
-        resolution_rank, n_days, n_records, n_resolved, resolved_fraction,
-        epsilon_entry_median, epsilon_entry_q25, epsilon_entry_q75
-      ),
+      select(resolution_rank, n_days, n_metrics,
+             epsilon_entry_median, epsilon_entry_q25, epsilon_entry_q75),
     by = c("resolution_rank", "n_days")
   )
 
+entry_class_grid <- tidyr::crossing(
+  metric_class = factor(METRIC_CLASSES, levels = METRIC_CLASSES),
+  resolution_rank = seq_along(fig5_res_levels),
+  n_days = fig5_days
+) |>
+  left_join(
+    entry_class_surface |>
+      select(metric_class, resolution_rank, n_days, n_metrics,
+             epsilon_entry_median, overall_entry_tolerance,
+             entry_tolerance_difference),
+    by = c("metric_class", "resolution_rank", "n_days")
+  )
+
+contrast_limit <- max(abs(entry_class_grid$entry_tolerance_difference), na.rm = TRUE)
+if (!is.finite(contrast_limit) || contrast_limit <= 0) contrast_limit <- .01
+
+# a. Overall joint entry-tolerance surface. Small numeric labels make the compact
+# heatmap quantitative without adding another visual channel.
 p5a <- ggplot(entry_grid, aes(resolution_rank, n_days, fill = epsilon_entry_median)) +
-  geom_tile(color = "white", linewidth = .42) +
+  geom_tile(width = .92, height = .92, color = "white", linewidth = .34) +
+  geom_text(
+    aes(label = if_else(
+      is.finite(epsilon_entry_median),
+      formatC(epsilon_entry_median, format = "f", digits = 2), ""
+    )),
+    size = 1.75, color = "#2F3437", na.rm = TRUE
+  ) +
   scale_fill_ms_sequential(
     trans = scales::transform_asinh(),
     na.value = "#ECEEEF",
@@ -489,67 +535,99 @@ p5a <- ggplot(entry_grid, aes(resolution_rank, n_days, fill = epsilon_entry_medi
   ) +
   scale_x_continuous(
     breaks = seq_along(fig5_res_levels), labels = fig5_res_labels,
-    expand = expansion(add = .02)
+    expand = expansion(add = .30)
   ) +
   scale_y_continuous(
     breaks = fig5_days, labels = paste0(fig5_days, " d"),
-    expand = expansion(add = .02)
+    expand = expansion(add = .30)
   ) +
-  coord_fixed(ratio = .58, clip = "off") +
+  coord_fixed(ratio = .86, clip = "off") +
   labs(
     title = "a  Joint configurations differ in the tolerance required for sufficiency",
-    subtitle = "darker = more permissive tolerance required; grey = unresolved within the observed higher-state domain",
+    subtitle = "darker = more permissive tolerance required; grey = unresolved",
     x = "temporal resolution  (low → high burden)", y = "monitoring duration"
   ) +
-  theme_rq3(base_size = 6.5, legend_position = "bottom") +
+  theme_rq3(base_size = 6.25, legend_position = "bottom") +
   theme(
     panel.grid = element_blank(),
-    axis.text.x = element_text(angle = 28, hjust = 1, size = 5.25),
-    plot.subtitle = element_text(size = 4.85, colour = "#666A6D", margin = margin(t = -1, b = 2)),
-    legend.text = element_text(size = 4.8),
-    legend.title = element_text(size = 4.9),
-    legend.key.width = grid::unit(7.0, "mm")
+    axis.text.x = element_text(angle = 30, hjust = 1, size = 4.95),
+    plot.subtitle = element_text(size = 4.55, colour = "#666A6D", margin = margin(t = -1, b = 2)),
+    legend.text = element_text(size = 4.55),
+    legend.title = element_text(size = 4.7),
+    legend.key.width = grid::unit(6.8, "mm")
   )
 
-# b. Conditional marginal returns. Within each fixed support × placement ×
-# optical × metric facet, compare adjacent joint states along one burden axis
-# while holding the other axis fixed. Positive values mean the added burden
-# reduces the tolerance required for sufficiency.
-resolved_cells <- joint_plot_base |>
-  filter(status == "resolved", is.finite(epsilon_entry)) |>
+# b. Representation-class deviations from the common entry-tolerance landscape.
+# Warm cells need more permissive tolerance than overall; cool cells need less.
+p5b <- ggplot(
+  entry_class_grid,
+  aes(resolution_rank, n_days, fill = entry_tolerance_difference)
+) +
+  geom_tile(width = .92, height = .92, color = "white", linewidth = .23) +
+  facet_wrap(~metric_class, ncol = 3) +
+  scale_x_continuous(
+    breaks = seq_along(fig5_res_levels), labels = fig5_res_labels,
+    expand = expansion(add = .25)
+  ) +
+  scale_y_continuous(
+    breaks = fig5_days, labels = paste0(fig5_days, " d"),
+    expand = expansion(add = .25)
+  ) +
+  scale_fill_ms_diverging(
+    max_abs = contrast_limit,
+    na.value = "#F1F2F2",
+    name = "class − overall\nentry tolerance ε"
+  ) +
+  coord_fixed(ratio = .86, clip = "off") +
+  labs(
+    title = "b  Representation classes deviate from the common joint landscape",
+    subtitle = "warm = more permissive tolerance required; cool = stricter tolerance sufficient",
+    x = "temporal burden", y = "duration"
+  ) +
+  theme_rq3(base_size = 5.7, legend_position = "bottom") +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 36, hjust = 1, size = 4.25),
+    axis.text.y = element_text(size = 4.35),
+    strip.text = element_text(size = 4.85),
+    plot.subtitle = element_text(size = 4.15, colour = "#666A6D", margin = margin(t = -1, b = 2)),
+    panel.spacing = grid::unit(1.6, "mm"),
+    legend.text = element_text(size = 4.4),
+    legend.title = element_text(size = 4.45),
+    legend.key.width = grid::unit(6.5, "mm")
+  )
+
+# c. Conditional marginal returns. Positive gain means that adding burden along
+# one axis lowers the entry tolerance required for sufficiency while holding the
+# other axis fixed.
+resolved_cells <- entry_metric_surface |>
   transmute(
-    support_id, placement, optical, metric, metric_class,
-    resolution_s, resolution_rank, n_days, epsilon_entry
+    metric, metric_class, resolution_s, resolution_rank, n_days,
+    epsilon_entry = epsilon_metric
   ) |>
   distinct()
 
 duration_from <- resolved_cells |>
   transmute(
-    support_id, placement, optical, metric, metric_class, resolution_s, resolution_rank,
+    metric, metric_class, resolution_s, resolution_rank,
     n_days_from = n_days, n_days_to = n_days + 1,
     epsilon_from = epsilon_entry
   )
 duration_to <- resolved_cells |>
   transmute(
-    support_id, placement, optical, metric, metric_class, resolution_s, resolution_rank,
+    metric, metric_class, resolution_s, resolution_rank,
     n_days_to = n_days, epsilon_to = epsilon_entry
   )
 duration_gain_raw <- inner_join(
   duration_from, duration_to,
-  by = c(
-    "support_id", "placement", "optical", "metric", "metric_class",
-    "resolution_s", "resolution_rank", "n_days_to"
-  )
+  by = c("metric", "metric_class", "resolution_s", "resolution_rank", "n_days_to")
 ) |>
-  mutate(
-    gain = epsilon_from - epsilon_to,
-    transition = paste0(n_days_from, "→", n_days_to, " d")
-  ) |>
+  mutate(gain = epsilon_from - epsilon_to) |>
   filter(is.finite(gain))
 
 temporal_from <- resolved_cells |>
   transmute(
-    support_id, placement, optical, metric, metric_class, n_days,
+    metric, metric_class, n_days,
     resolution_rank_from = resolution_rank,
     resolution_rank_to = resolution_rank + 1,
     resolution_s_from = resolution_s,
@@ -557,22 +635,16 @@ temporal_from <- resolved_cells |>
   )
 temporal_to <- resolved_cells |>
   transmute(
-    support_id, placement, optical, metric, metric_class, n_days,
+    metric, metric_class, n_days,
     resolution_rank_to = resolution_rank,
     resolution_s_to = resolution_s,
     epsilon_to = epsilon_entry
   )
 temporal_gain_raw <- inner_join(
   temporal_from, temporal_to,
-  by = c(
-    "support_id", "placement", "optical", "metric", "metric_class",
-    "n_days", "resolution_rank_to"
-  )
+  by = c("metric", "metric_class", "n_days", "resolution_rank_to")
 ) |>
-  mutate(
-    gain = epsilon_from - epsilon_to,
-    transition = paste0(format_resolution5(resolution_s_from), "→", format_resolution5(resolution_s_to))
-  ) |>
+  mutate(gain = epsilon_from - epsilon_to) |>
   filter(is.finite(gain))
 
 duration_metric_gain <- duration_gain_raw |>
@@ -608,30 +680,30 @@ gain_limit <- ms_symmetric_limit(
   pad = 1.05, fallback = 1
 )
 
-p5b_duration <- ggplot(duration_metric_gain, aes(resolution_rank, gain)) +
+p5c_duration <- ggplot(duration_metric_gain, aes(resolution_rank, gain)) +
   geom_hline(yintercept = 0, linewidth = .28, color = "#9DA2A5") +
   geom_point(
     position = position_jitter(width = .07, height = 0, seed = 81),
-    size = .45, color = "#A7B0B5", alpha = .24
+    size = .43, color = "#A7B0B5", alpha = .23
   ) +
   geom_segment(
     data = duration_gain_summary,
     aes(x = resolution_rank, xend = resolution_rank, y = gain_q25, yend = gain_q75),
-    inherit.aes = FALSE, linewidth = .95, color = MS_PRIMARY, alpha = .58, lineend = "round"
+    inherit.aes = FALSE, linewidth = .92, color = MS_PRIMARY, alpha = .58, lineend = "round"
   ) +
   geom_line(
     data = duration_gain_summary,
     aes(resolution_rank, gain_median),
-    inherit.aes = FALSE, linewidth = .72, color = MS_PRIMARY
+    inherit.aes = FALSE, linewidth = .70, color = MS_PRIMARY
   ) +
   geom_point(
     data = duration_gain_summary,
     aes(resolution_rank, gain_median),
-    inherit.aes = FALSE, shape = 18, size = 1.55, color = MS_PRIMARY
+    inherit.aes = FALSE, shape = 18, size = 1.50, color = MS_PRIMARY
   ) +
   scale_x_continuous(
     breaks = seq_along(fig5_res_levels), labels = fig5_res_labels,
-    expand = expansion(add = .22)
+    expand = expansion(add = .20)
   ) +
   scale_y_continuous(
     limits = c(-gain_limit, gain_limit),
@@ -641,38 +713,38 @@ p5b_duration <- ggplot(duration_metric_gain, aes(resolution_rank, gain)) +
     title = "Added duration | temporal state fixed",
     x = "temporal resolution", y = "reduction in entry tolerance"
   ) +
-  theme_rq3(base_size = 5.8) +
+  theme_rq3(base_size = 5.75) +
   theme(
     panel.grid.major.x = element_blank(),
-    axis.text.x = element_text(angle = 32, hjust = 1, size = 4.55),
-    plot.title = element_text(size = 5.45, hjust = .5),
+    axis.text.x = element_text(angle = 30, hjust = 1, size = 4.45),
+    plot.title = element_text(size = 5.35, hjust = .5),
     plot.margin = margin(2, 2, 2, 2)
   )
 
-p5b_temporal <- ggplot(temporal_metric_gain, aes(n_days, gain)) +
+p5c_temporal <- ggplot(temporal_metric_gain, aes(n_days, gain)) +
   geom_hline(yintercept = 0, linewidth = .28, color = "#9DA2A5") +
   geom_point(
     position = position_jitter(width = .07, height = 0, seed = 83),
-    size = .45, color = "#A7B0B5", alpha = .24
+    size = .43, color = "#A7B0B5", alpha = .23
   ) +
   geom_segment(
     data = temporal_gain_summary,
     aes(x = n_days, xend = n_days, y = gain_q25, yend = gain_q75),
-    inherit.aes = FALSE, linewidth = .95, color = MS_SECONDARY, alpha = .58, lineend = "round"
+    inherit.aes = FALSE, linewidth = .92, color = MS_SECONDARY, alpha = .58, lineend = "round"
   ) +
   geom_line(
     data = temporal_gain_summary,
     aes(n_days, gain_median),
-    inherit.aes = FALSE, linewidth = .72, color = MS_SECONDARY
+    inherit.aes = FALSE, linewidth = .70, color = MS_SECONDARY
   ) +
   geom_point(
     data = temporal_gain_summary,
     aes(n_days, gain_median),
-    inherit.aes = FALSE, shape = 18, size = 1.55, color = MS_SECONDARY
+    inherit.aes = FALSE, shape = 18, size = 1.50, color = MS_SECONDARY
   ) +
   scale_x_continuous(
     breaks = fig5_days, labels = paste0(fig5_days, " d"),
-    expand = expansion(add = .22)
+    expand = expansion(add = .20)
   ) +
   scale_y_continuous(
     limits = c(-gain_limit, gain_limit),
@@ -682,164 +754,62 @@ p5b_temporal <- ggplot(temporal_metric_gain, aes(n_days, gain)) +
     title = "Temporal refinement | duration fixed",
     x = "monitoring duration", y = NULL
   ) +
-  theme_rq3(base_size = 5.8) +
+  theme_rq3(base_size = 5.75) +
   theme(
     panel.grid.major.x = element_blank(),
-    axis.text.x = element_text(size = 4.7),
+    axis.text.x = element_text(size = 4.65),
     axis.text.y = element_blank(), axis.ticks.y = element_blank(),
     axis.line.y = element_blank(),
-    plot.title = element_text(size = 5.45, hjust = .5),
+    plot.title = element_text(size = 5.35, hjust = .5),
     plot.margin = margin(2, 2, 2, 2)
   )
 
-p5b_core <- cowplot::plot_grid(
-  p5b_duration, p5b_temporal, ncol = 2, rel_widths = c(1.05, .95),
+p5c_core <- cowplot::plot_grid(
+  p5c_duration, p5c_temporal, ncol = 2, rel_widths = c(1.05, .95),
   align = "hv", axis = "tblr", greedy = TRUE
 )
-p5b <- cowplot::ggdraw() +
-  cowplot::draw_plot(p5b_core, x = 0, y = 0, width = 1, height = .93) +
+p5c <- cowplot::ggdraw() +
+  cowplot::draw_plot(p5c_core, x = 0, y = 0, width = 1, height = .92) +
   cowplot::draw_label(
-    "b  Conditional marginal returns reveal joint trade-offs",
+    "c  Conditional marginal returns reveal joint trade-offs",
     x = .002, y = .998, hjust = 0, vjust = 1,
-    fontface = "bold", size = 6.3
+    fontface = "bold", size = 6.2
   )
 
-# c. Representation-class burden orientation. Each metric contributes one
-# temporal-refinement benefit and one added-duration benefit; class medians and
-# IQRs show whether efficient fidelity depends more on one burden axis.
-duration_metric_overall <- duration_metric_gain |>
-  group_by(metric, metric_class) |>
-  summarise(duration_gain = median(gain, na.rm = TRUE), .groups = "drop")
-temporal_metric_overall <- temporal_metric_gain |>
-  group_by(metric, metric_class) |>
-  summarise(temporal_gain = median(gain, na.rm = TRUE), .groups = "drop")
-
-class_orientation_metric <- inner_join(
-  temporal_metric_overall, duration_metric_overall,
-  by = c("metric", "metric_class")
-) |>
-  filter(is.finite(temporal_gain), is.finite(duration_gain))
-
-class_orientation_summary <- class_orientation_metric |>
-  group_by(metric_class) |>
-  summarise(
-    n_metrics = n_distinct(metric),
-    temporal_median = median(temporal_gain, na.rm = TRUE),
-    temporal_q25 = quantile(temporal_gain, .25, na.rm = TRUE, names = FALSE),
-    temporal_q75 = quantile(temporal_gain, .75, na.rm = TRUE, names = FALSE),
-    duration_median = median(duration_gain, na.rm = TRUE),
-    duration_q25 = quantile(duration_gain, .25, na.rm = TRUE, names = FALSE),
-    duration_q75 = quantile(duration_gain, .75, na.rm = TRUE, names = FALSE),
-    .groups = "drop"
-  )
-
-overall_orientation <- class_orientation_metric |>
-  summarise(
-    temporal_gain = median(temporal_gain, na.rm = TRUE),
-    duration_gain = median(duration_gain, na.rm = TRUE)
-  )
-
-orientation_limit <- ms_symmetric_limit(
-  class_orientation_metric$temporal_gain, class_orientation_metric$duration_gain,
-  class_orientation_summary$temporal_q25, class_orientation_summary$temporal_q75,
-  class_orientation_summary$duration_q25, class_orientation_summary$duration_q75,
-  pad = 1.08, fallback = 1
-)
-
-p5c <- ggplot(
-  class_orientation_metric,
-  aes(temporal_gain, duration_gain, color = metric_class)
-) +
-  geom_hline(yintercept = 0, linewidth = .28, color = "#A7ABAE") +
-  geom_vline(xintercept = 0, linewidth = .28, color = "#A7ABAE") +
-  geom_point(size = .58, alpha = .20) +
-  geom_segment(
-    data = class_orientation_summary,
-    aes(
-      x = temporal_q25, xend = temporal_q75,
-      y = duration_median, yend = duration_median,
-      color = metric_class
-    ),
-    inherit.aes = FALSE, linewidth = .95, alpha = .50, lineend = "round"
-  ) +
-  geom_segment(
-    data = class_orientation_summary,
-    aes(
-      x = temporal_median, xend = temporal_median,
-      y = duration_q25, yend = duration_q75,
-      color = metric_class
-    ),
-    inherit.aes = FALSE, linewidth = .95, alpha = .50, lineend = "round"
-  ) +
-  geom_point(
-    data = class_orientation_summary,
-    aes(temporal_median, duration_median, color = metric_class),
-    inherit.aes = FALSE, shape = 18, size = 2.05
-  ) +
-  geom_point(
-    data = overall_orientation,
-    aes(temporal_gain, duration_gain),
-    inherit.aes = FALSE, shape = 4, stroke = .70, size = 2.0, color = "#4C5053"
-  ) +
-  scale_color_ms_metric() +
-  scale_x_continuous(
-    limits = c(-orientation_limit, orientation_limit),
-    breaks = scales::breaks_extended(n = 4)
-  ) +
-  scale_y_continuous(
-    limits = c(-orientation_limit, orientation_limit),
-    breaks = scales::breaks_extended(n = 4)
-  ) +
-  coord_equal() +
-  labs(
-    title = "c  Representation classes differ in burden orientation",
-    x = "benefit of temporal refinement",
-    y = "benefit of added duration"
-  ) +
-  theme_rq3(base_size = 5.85, legend_position = "bottom") +
-  theme(
-    panel.grid = element_blank(),
-    legend.title = element_blank(),
-    legend.text = element_text(size = 4.35),
-    legend.key.width = grid::unit(2.9, "mm"),
-    plot.title = element_text(size = 6.0)
-  ) +
-  guides(color = guide_legend(nrow = 2, byrow = TRUE, override.aes = list(alpha = 1, size = 1.2)))
-
-fig5_bottom <- cowplot::plot_grid(
-  p5b, p5c, ncol = 2, rel_widths = c(.60, .40),
+fig5_top <- cowplot::plot_grid(
+  p5a, p5b, ncol = 2, rel_widths = c(.40, .60),
   align = "hv", axis = "tblr", greedy = TRUE
 )
 fig5_body <- cowplot::plot_grid(
-  p5a, fig5_bottom, ncol = 1, rel_heights = c(1.15, .85),
+  fig5_top, p5c, ncol = 1, rel_heights = c(1.22, .78),
   align = "v", axis = "l", greedy = TRUE
 )
-ms_plot_save(fig5_body, file.path(OUT_DIR, "Fig5_RQ3.pdf"), 9.0, 6.2)
-ms_plot_save(fig5_body, file.path(OUT_DIR, "Fig5_RQ3.png"), 9.0, 6.2)
+ms_plot_save(fig5_body, file.path(OUT_DIR, "Fig5_RQ3.pdf"), 9.0, 6.3)
+ms_plot_save(fig5_body, file.path(OUT_DIR, "Fig5_RQ3.png"), 9.0, 6.3)
 
 readr::write_csv(
   entry_surface,
   file.path("results", "rq3", "fig5_joint_entry_tolerance_surface.csv"), na = ""
 )
 readr::write_csv(
-  bind_rows(
-    duration_metric_gain |>
-      transmute(
-        axis = "duration_gain_by_temporal_state", condition = format_resolution5(resolution_s),
-        metric, metric_class = as.character(metric_class), gain
-      ),
-    temporal_metric_gain |>
-      transmute(
-        axis = "temporal_gain_by_duration", condition = paste0(n_days, " d"),
-        metric, metric_class = as.character(metric_class), gain
-      )
-  ),
-  file.path("results", "rq3", "fig5_conditional_marginal_returns.csv"), na = ""
+  entry_class_surface |>
+    mutate(metric_class = as.character(metric_class)),
+  file.path("results", "rq3", "fig5_entry_tolerance_by_class.csv"), na = ""
 )
 readr::write_csv(
-  class_orientation_summary |>
+  entry_class_grid |>
     mutate(metric_class = as.character(metric_class)),
-  file.path("results", "rq3", "fig5_class_burden_orientation.csv"), na = ""
+  file.path("results", "rq3", "fig5_entry_tolerance_class_contrast.csv"), na = ""
+)
+readr::write_csv(
+  duration_metric_gain |>
+    mutate(metric_class = as.character(metric_class)),
+  file.path("results", "rq3", "fig5_duration_marginal_gain.csv"), na = ""
+)
+readr::write_csv(
+  temporal_metric_gain |>
+    mutate(metric_class = as.character(metric_class)),
+  file.path("results", "rq3", "fig5_temporal_marginal_gain.csv"), na = ""
 )
 
 # Supplement: preserve support × placement × optical explicitly as an audit view.
@@ -1107,153 +1077,3 @@ fig4 <- cowplot::plot_grid(
 ms_plot_save(fig4, file.path(OUT_DIR, "Fig4_RQ3.png"), 9.0, 6.1)
 
 # -----------------------------------------------------------------------------
-# Main-text redesign for Fig. 5.
-# The previous bubble display encoded ever-Pareto frequency and conditional
-# persistence separately; both visual channels saturated across much of the grid.
-# Their product is the unconditional Pareto occupancy of a configuration. Panel a
-# shows that common landscape directly; panel b removes it and shows only each
-# representation class's deviation from the overall landscape.
-# -----------------------------------------------------------------------------
-pareto_global_display <- pareto_global |>
-  mutate(
-    pareto_occupancy = fraction_ever_pareto * persistence_when_pareto
-  )
-
-pareto_class_display <- pareto_class |>
-  mutate(
-    pareto_occupancy = fraction_ever_pareto * persistence_when_pareto
-  ) |>
-  left_join(
-    pareto_global_display |>
-      select(resolution_s, resolution_rank, n_days, overall_pareto_occupancy = pareto_occupancy),
-    by = c("resolution_s", "resolution_rank", "n_days")
-  ) |>
-  mutate(
-    occupancy_difference = pareto_occupancy - overall_pareto_occupancy
-  )
-
-pareto_global_grid <- landscape_bg |>
-  left_join(
-    pareto_global_display |>
-      select(resolution_rank, n_days, pareto_occupancy),
-    by = c("resolution_rank", "n_days")
-  )
-
-pareto_class_grid <- tidyr::crossing(
-  metric_class = factor(METRIC_CLASSES, levels = METRIC_CLASSES),
-  landscape_bg
-) |>
-  left_join(
-    pareto_class_display |>
-      select(metric_class, resolution_rank, n_days, pareto_occupancy, occupancy_difference),
-    by = c("metric_class", "resolution_rank", "n_days")
-  )
-
-occupancy_max <- max(pareto_global_grid$pareto_occupancy, na.rm = TRUE)
-if (!is.finite(occupancy_max) || occupancy_max <= 0) occupancy_max <- 1
-contrast_limit <- max(abs(pareto_class_grid$occupancy_difference), na.rm = TRUE)
-if (!is.finite(contrast_limit) || contrast_limit <= 0) contrast_limit <- .01
-
-p5a <- ggplot(
-  pareto_global_grid,
-  aes(resolution_rank, n_days, fill = pareto_occupancy)
-) +
-  geom_tile(width = .92, height = .92, color = "white", linewidth = .34) +
-  scale_x_continuous(
-    breaks = seq_along(RES_LEVELS), labels = RES_LABELS,
-    expand = expansion(add = .35)
-  ) +
-  scale_y_continuous(
-    breaks = DURATION_LEVELS, labels = paste0(DURATION_LEVELS, " d"),
-    expand = expansion(add = .35)
-  ) +
-  scale_fill_ms_sequential(
-    limits = c(0, occupancy_max),
-    labels = scales::label_percent(accuracy = 1),
-    na.value = "#F1F2F2",
-    name = "Pareto occupancy"
-  ) +
-  coord_fixed(ratio = .88, clip = "off") +
-  labs(
-    title = "a  Persistent Pareto occupancy across joint measurement burden",
-    subtitle = "darker cells remain Pareto-efficient across a larger share of evaluated conditions",
-    x = "temporal resolution  (low → high burden)",
-    y = "monitoring duration"
-  ) +
-  theme_rq3(base_size = 6.5, legend_position = "bottom") +
-  theme(
-    panel.grid = element_blank(),
-    axis.text.x = element_text(angle = 28, hjust = 1, size = 5.3),
-    plot.subtitle = element_text(size = 4.9, colour = "#666A6D", margin = margin(t = -1, b = 2)),
-    legend.text = element_text(size = 4.9),
-    legend.title = element_text(size = 5.0),
-    legend.key.width = grid::unit(8.0, "mm")
-  )
-
-p5b <- ggplot(
-  pareto_class_grid,
-  aes(resolution_rank, n_days, fill = occupancy_difference)
-) +
-  geom_tile(width = .92, height = .92, color = "white", linewidth = .24) +
-  facet_wrap(~metric_class, ncol = 3) +
-  scale_x_continuous(
-    breaks = seq_along(RES_LEVELS), labels = RES_LABELS,
-    expand = expansion(add = .28)
-  ) +
-  scale_y_continuous(
-    breaks = DURATION_LEVELS, labels = paste0(DURATION_LEVELS, " d"),
-    expand = expansion(add = .28)
-  ) +
-  scale_fill_ms_diverging(
-    max_abs = contrast_limit,
-    labels = scales::label_percent(accuracy = 1),
-    na.value = "#F1F2F2",
-    name = "class − overall\nPareto occupancy"
-  ) +
-  coord_fixed(ratio = .88, clip = "off") +
-  labs(
-    title = "b  Representation classes deviate from the common Pareto landscape",
-    subtitle = "orange = above overall occupancy; blue = below overall occupancy",
-    x = "temporal burden", y = "duration"
-  ) +
-  theme_rq3(base_size = 5.8, legend_position = "bottom") +
-  theme(
-    panel.grid = element_blank(),
-    axis.text.x = element_text(angle = 36, hjust = 1, size = 4.5),
-    axis.text.y = element_text(size = 4.6),
-    strip.text = element_text(size = 5.0),
-    plot.subtitle = element_text(size = 4.35, colour = "#666A6D", margin = margin(t = -1, b = 2)),
-    panel.spacing = grid::unit(1.8, "mm"),
-    legend.text = element_text(size = 4.7),
-    legend.title = element_text(size = 4.8),
-    legend.key.width = grid::unit(7.0, "mm")
-  )
-
-fig5 <- cowplot::plot_grid(
-  p5a, p5b, ncol = 2, rel_widths = c(.40, .60),
-  align = "hv", axis = "tblr", greedy = TRUE
-)
-ms_plot_save(fig5, file.path(OUT_DIR, "Fig5_RQ3.png"), 9.0, 5.6)
-
-readr::write_csv(
-  pareto_global_display,
-  file.path("results", "rq3", "fig5_pareto_occupancy_overall.csv"),
-  na = ""
-)
-readr::write_csv(
-  pareto_class_display |>
-    mutate(metric_class = as.character(metric_class)),
-  file.path("results", "rq3", "fig5_pareto_occupancy_by_class.csv"),
-  na = ""
-)
-readr::write_csv(
-  pareto_class_grid |>
-    mutate(metric_class = as.character(metric_class)),
-  file.path("results", "rq3", "fig5_pareto_occupancy_class_contrast.csv"),
-  na = ""
-)
-
-message(
-  "Fig. 4 display refinement: shared log1p tolerance axis with explicit dense breaks and linear R_obs. ",
-  "Fig. 5 redesign: dynamic frozen-lattice occupancy heatmap plus class-minus-overall contrasts."
-)
