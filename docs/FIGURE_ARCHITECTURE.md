@@ -28,9 +28,13 @@ does not enter the primary figures.
 
 ## Frozen inputs and output locations
 
-The current plot scripts read only frozen RQ outputs. Main figures are written as
-PNG files to the centralized `results/figures` directory. RQ-specific artifact
-manifests remain under `results/rq1`, `results/rq2`, and `results/rq3`.
+The current plot scripts read only frozen RQ outputs. Fig. 1 additionally derives a
+lightweight Spearman rank-preservation diagnostic directly from the frozen RQ1
+pairwise artifact and writes it as a separate figure-level audit CSV; it does not
+change the canonical RQ1 estimand or any downstream sufficiency calculation. Main
+figures are written as PNG files to the centralized `results/figures` directory.
+RQ-specific artifact manifests remain under `results/rq1`, `results/rq2`, and
+`results/rq3`.
 
 Every RQ artifact version incorporates the current analysis-design identifier.
 Canonical plotting wrappers check or reconstruct ordered-axis levels from the
@@ -41,8 +45,9 @@ survive a design change.
 
 `11_plot_fig1.R` presents:
 
-- Fig. 1a: normalized metric-level sensitivity across placement, optical,
-  temporal resolution, and monitoring duration;
+- Fig. 1a: absolute standardized distortion versus Spearman rank loss across
+  placement, optical, temporal-resolution and monitoring-duration contrasts;
+  ordinary rank preservation is not assigned to circular-time representations;
 - Fig. 1b: target-aligned signed-versus-absolute distortion geometry for
   placement and optical representation on a shared linear A/B scale;
 - Fig. 1c: the distribution of each metric's adjacent local-response share over
@@ -76,7 +81,8 @@ RQ1. Duration enters multidimensional stability directly in RQ3.
 `15_plot_rq3.R` presents:
 
 - Fig. 4a: tolerance-dependent minimum sufficient requirement rank for the two
-  ordered dimensions;
+  ordered dimensions, with a thin strip showing the fraction of evaluable metrics
+  for which a sufficient resolved state is observed within the candidate domain;
 - Fig. 4b: residual observed instability `R_obs` by requirement rank;
 - Fig. 4c: target-aligned placement/optical substitutability as tolerance relaxes;
 - Fig. 5a: overall Pareto occupancy across the temporal-resolution × duration
