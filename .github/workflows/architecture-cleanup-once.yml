@@ -25,7 +25,11 @@ jobs:
           use-public-rspm: true
 
       - name: Consolidate exact corrected runtime into canonical sources
-        run: python3 scripts/utils/consolidate_architecture_once.py
+        run: |
+          python3 scripts/utils/consolidate_architecture_once.py
+          # GITHUB_TOKEN may not update workflow files. Keep workflow changes out
+          # of the generated commit; they are applied separately after validation.
+          git checkout -- .github/workflows
 
       - name: Parse canonical R sources
         shell: Rscript {0}
@@ -69,6 +73,7 @@ jobs:
             scripts/run_full_server.sh \
             scripts/run_full_server_optimized.sh \
             scripts/run_rq1_memory_safe.sh
+          rm -rf scripts/utils/__pycache__
 
       - name: Check retired-path references
         run: |
@@ -88,8 +93,8 @@ jobs:
             patch_rq2_context_stream_runtime.py
           )
           for name in "${retired[@]}"; do
-            if grep -RFn --exclude-dir=.git --exclude='*.lock' "$name" .; then
-              echo "ERROR: retired path still referenced: $name" >&2
+            if grep -RFn --exclude-dir=.git --exclude-dir=.github --exclude='*.lock' "$name" .; then
+              echo "ERROR: retired path still referenced outside workflow metadata: $name" >&2
               exit 1
             fi
           done
