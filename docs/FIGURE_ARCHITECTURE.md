@@ -81,8 +81,8 @@ RQ1. Duration enters multidimensional stability directly in RQ3.
 `15_plot_rq3.R` presents:
 
 - Fig. 4a: tolerance-dependent minimum sufficient requirement rank for the two
-  ordered dimensions, with a thin strip showing the fraction of metrics for which
-  a resolved sufficient state is observed within the candidate domain;
+  ordered dimensions, with a thin strip showing the fraction of evaluable metrics
+  for which a sufficient resolved state is observed within the candidate domain;
 - Fig. 4b: residual observed instability `R_obs` by requirement rank;
 - Fig. 4c: target-aligned placement/optical substitutability as tolerance relaxes;
 - Fig. 5a: overall Pareto occupancy across the temporal-resolution × duration

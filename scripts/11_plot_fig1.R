@@ -142,7 +142,7 @@ if (!length(rank_part_paths) || any(!file.exists(rank_part_paths))) {
 
 rank_group_vars <- c(
   "dimension", "comparison_lattice", "comparison_pair_id", "config_a_id", "config_b_id",
-  "config_a_label", "config_b_label", "orientation_type", "orientation_basis",
+  "config_a_label", "config_b_label", "orientation_type", "orientation_basis", "base_config_id",
   "metric", "metric_class", "metric_geometry"
 )
 
@@ -155,6 +155,11 @@ rank_fragment <- function(part_path) {
     ) |>
     mutate(
       dimension = as.character(dimension),
+      base_config_id = if_else(
+        dimension == "duration",
+        sub("^(.*)__([^|]+\\|.*)$", "\\1", as.character(config_a_id)),
+        NA_character_
+      ),
       comparison_pair_id = if_else(
         dimension == "duration", paste0(n_days_a, "d_vs_", n_days_b, "d"),
         as.character(comparison_pair_id)
@@ -224,7 +229,7 @@ rank_base <- rank_rows |>
     pair_label = paste(config_a_label, "to", config_b_label),
     core_artifact_version = CORE_VERSION,
     rq1_analysis_version = RQ1_VERSION,
-    rank_estimand = "Spearman correlation across paired RQ1 analysis units"
+    rank_estimand = "Spearman correlation across paired RQ1 analysis units within comparison/base configuration"
   ) |>
   select(
     all_of(rank_group_vars), pair_label, n_participants, n_units, n_unique_a, n_unique_b,

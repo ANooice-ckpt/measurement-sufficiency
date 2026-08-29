@@ -207,7 +207,6 @@ p4a_main <- ggplot(requirement_summary, aes(epsilon, rank_median, color = metric
   )
 
 p4a_coverage <- ggplot(resolved_coverage, aes(epsilon, coverage)) +
-  geom_area(fill = "#D9DDE0", alpha = .62, position = "identity") +
   geom_step(linewidth = .50, color = "#5D6265") +
   facet_wrap(~dimension, nrow = 1) +
   scale_x_continuous(
@@ -218,7 +217,7 @@ p4a_coverage <- ggplot(resolved_coverage, aes(epsilon, coverage)) +
     limits = c(0, 1), breaks = c(0, .5, 1),
     labels = scales::label_percent(accuracy = 50), expand = expansion(mult = c(0, .02))
   ) +
-  labs(x = "tolerance ε", y = "resolved\ncoverage") +
+  labs(x = "tolerance ε", y = "sufficient\ncoverage") +
   theme_rq3(base_size = 5.75) +
   theme(
     panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(),
@@ -348,7 +347,7 @@ ms_plot_save(fig4, file.path(OUT_DIR, "Fig4_RQ3.png"), 9.0, 6.1)
 readr::write_csv(
   resolved_coverage |>
     mutate(dimension = as.character(dimension)),
-  file.path("results", "rq3", "fig4_resolved_coverage.csv"), na = ""
+  file.path("results", "rq3", "fig4_sufficient_metric_coverage.csv"), na = ""
 )
 
 readr::write_csv(
