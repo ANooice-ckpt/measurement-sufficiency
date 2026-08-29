@@ -3,13 +3,15 @@ name: One-shot architecture cleanup
 on:
   push:
     branches: [cleanup/canonicalize-v5]
+  pull_request:
+    branches: [master]
 
 permissions:
   contents: write
 
 jobs:
   consolidate-and-validate:
-    if: ${{ !contains(github.event.head_commit.message, '[cleanup-generated]') }}
+    if: ${{ github.event_name == 'pull_request' || !contains(github.event.head_commit.message, '[cleanup-generated]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,8 +62,7 @@ jobs:
         run: |
           python3 -m py_compile \
             scripts/utils/build_runtime_optimized.py \
-            scripts/utils/patch_rq1_memory_safe.py \
-            scripts/utils/patch_rq2_context_stream_runtime.py 2>/dev/null || true
+            scripts/utils/patch_rq1_memory_safe.py
           bash -n \
             scripts/run_core_artifacts.sh \
             scripts/run_downstream_server.sh \
