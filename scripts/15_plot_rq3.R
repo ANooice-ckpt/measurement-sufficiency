@@ -341,8 +341,6 @@ fig4_body <- cowplot::plot_grid(
 )
 fig4 <- cowplot::plot_grid(metric_legend, fig4_body, ncol = 1,
                            rel_heights = c(.042, 1), align = "v", greedy = TRUE)
-ms_plot_save(fig4, file.path(OUT_DIR, "Fig4_RQ3.pdf"), 9.0, 6.1)
-ms_plot_save(fig4, file.path(OUT_DIR, "Fig4_RQ3.png"), 9.0, 6.1)
 
 readr::write_csv(
   resolved_coverage |>
@@ -971,11 +969,11 @@ p4a <- ggplot(requirement_summary, aes(epsilon, rank_median, color = metric_clas
   scale_color_ms_metric(guide = "none") +
   scale_x_continuous(
     trans = epsilon_log1p,
-    limits = c(0, epsilon_limit),
     breaks = epsilon_ticks,
     labels = epsilon_labels,
     expand = expansion(mult = c(0, .01))
   ) +
+  coord_cartesian(xlim = c(0, epsilon_limit), clip = "on") +
   scale_y_continuous(
     breaks = seq_len(ORDERED_MAX_RANK),
     limits = c(.8, ORDERED_MAX_RANK + .2)
@@ -1044,11 +1042,11 @@ p4c <- ggplot(
   scale_color_manual(values = pair_palette, breaks = pair_levels, name = NULL) +
   scale_x_continuous(
     trans = epsilon_log1p,
-    limits = c(0, epsilon_limit),
     breaks = epsilon_ticks,
     labels = epsilon_labels,
     expand = expansion(mult = c(0, .01))
   ) +
+  coord_cartesian(xlim = c(0, epsilon_limit), clip = "on") +
   scale_y_continuous(limits = c(0, 1), labels = scales::label_percent(accuracy = 25)) +
   labs(
     title = "c  Target-aligned alternatives become substitutable as tolerance relaxes",
@@ -1072,8 +1070,9 @@ fig4_body <- cowplot::plot_grid(
 )
 fig4 <- cowplot::plot_grid(
   metric_legend, fig4_body, ncol = 1,
-  rel_heights = c(.042, 1), align = "v", greedy = TRUE
+  rel_heights = c(.042, 1), align = "v", axis = "l", greedy = TRUE
 )
+ms_plot_save(fig4, file.path(OUT_DIR, "Fig4_RQ3.pdf"), 9.0, 6.1)
 ms_plot_save(fig4, file.path(OUT_DIR, "Fig4_RQ3.png"), 9.0, 6.1)
 
 # -----------------------------------------------------------------------------
