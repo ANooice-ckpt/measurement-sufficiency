@@ -111,60 +111,177 @@ metric_legend <- ms_metric_legend(text_size = 5.35, point_size = 1.5, key_width_
 # Fig. 2 — context dependence of distortion
 # =============================================================================
 
-# a. Exposure-state dependence is shown as distributions rather than spaghetti
-# trajectories. Each dimension is allowed its own y scale so state modulation is
-# visible even when absolute conditional distortion differs strongly by dimension.
-conditional_metric_state <- conditional |>
+
+# a. Conditional distortion geometry combines magnitude and directional coherence
+# on the same exposure-state axis. Transition-level trajectories retain the paired
+# state response, while metric-class summaries remain the visual foreground.
+conditional_trajectory_state <- conditional |>
   mutate(
     metric = as.character(metric),
     metric_class = factor(as.character(metric_class), levels = METRIC_CLASSES),
     state_num = as.integer(state_bin_label),
     class_num = as.integer(metric_class),
-    x_pos = state_num + (class_num - (length(METRIC_CLASSES) + 1) / 2) * .055
+    class_offset = (class_num - (length(METRIC_CLASSES) + 1) / 2) * .055,
+    x_pos = state_num + class_offset
   ) |>
-  filter(is.finite(A_conditional), is.finite(state_num)) |>
-  group_by(dimension, metric, metric_class, state_bin_label, state_num, class_num, x_pos) |>
-  summarise(A_state = median(A_conditional, na.rm = TRUE), .groups = "drop")
+  filter(
+    is.finite(A_conditional), is.finite(direction_ratio), is.finite(state_num),
+    state_bin_label %in% c("Low", "Middle", "High")
+  ) |>
+  group_by(
+    dimension, comparison_pair_id, pair_label, metric, metric_class,
+    state_bin_label, state_num, class_num, class_offset, x_pos
+  ) |>
+  summarise(
+    A_state = median(A_conditional, na.rm = TRUE),
+    direction_state = median(direction_ratio, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+conditional_metric_state <- conditional_trajectory_state |>
+  group_by(
+    dimension, metric, metric_class, state_bin_label,
+    state_num, class_num, class_offset, x_pos
+  ) |>
+  summarise(
+    A_state = median(A_state, na.rm = TRUE),
+    direction_state = median(direction_state, na.rm = TRUE),
+    .groups = "drop"
+  )
 
 conditional_profile_summary <- conditional_metric_state |>
-  group_by(dimension, metric_class, state_bin_label, state_num, class_num, x_pos) |>
+  group_by(
+    dimension, metric_class, state_bin_label,
+    state_num, class_num, class_offset, x_pos
+  ) |>
   summarise(
     n_metrics = n_distinct(metric),
     A_median = median(A_state, na.rm = TRUE),
     A_q25 = quantile(A_state, .25, na.rm = TRUE, names = FALSE),
     A_q75 = quantile(A_state, .75, na.rm = TRUE, names = FALSE),
+    direction_median = median(direction_state, na.rm = TRUE),
+    direction_q25 = quantile(direction_state, .25, na.rm = TRUE, names = FALSE),
+    direction_q75 = quantile(direction_state, .75, na.rm = TRUE, names = FALSE),
     .groups = "drop"
   )
 
-p2a <- ggplot() +
-  geom_point(
-    data = conditional_metric_state,
-    aes(x_pos, A_state, color = metric_class),
-    position = position_jitter(width = .018, height = 0, seed = 41),
-    size = .48, alpha = .20
-  ) +
-  geom_linerange(
-    data = conditional_profile_summary,
-    aes(x_pos, ymin = A_q25, ymax = A_q75, color = metric_class),
-    linewidth = .68, alpha = .50
-  ) +
-  geom_point(
-    data = conditional_profile_summary,
-    aes(x_pos, A_median, color = metric_class),
-    shape = 18, size = 1.55
-  ) +
-  facet_wrap(~factor(dimension, levels = DIMENSIONS, labels = unname(DIM_TITLES[DIMENSIONS])),
-             ncol = 2, scales = "free_y") +
-  scale_color_ms_metric(guide = "none") +
-  scale_x_continuous(breaks = 1:3, labels = c("Low", "Middle", "High"),
-                     limits = c(.72, 3.28), expand = expansion(mult = c(0, 0))) +
-  scale_y_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
-  labs(title = "a  Conditional distortion magnitude across exposure state",
-       x = "transition-local exposure state", y = "conditional A = mean |z|") +
-  theme_rq2(base_size = 6.45) +
-  theme(
-    panel.grid.major.x = element_blank(), strip.text = element_text(size = 5.9),
-    panel.spacing = grid::unit(2.2, "mm")
+make_conditional_state_block <- function(dim_name) {
+  tr <- conditional_trajectory_state |> filter(dimension == dim_name)
+  sm <- conditional_profile_summary |> filter(dimension == dim_name)
+
+  p_mag <- ggplot() +
+    geom_line(
+      data = tr,
+      aes(x_pos, A_state, group = interaction(metric, comparison_pair_id), color = metric_class),
+      linewidth = .25, alpha = .10
+    ) +
+    geom_point(
+      data = tr,
+      aes(x_pos, A_state, color = metric_class),
+      size = .34, alpha = .12
+    ) +
+    geom_linerange(
+      data = sm,
+      aes(x_pos, ymin = A_q25, ymax = A_q75, color = metric_class),
+      linewidth = .72, alpha = .48
+    ) +
+    geom_line(
+      data = sm,
+      aes(x_pos, A_median, group = metric_class, color = metric_class),
+      linewidth = .68, alpha = .90
+    ) +
+    geom_point(
+      data = sm,
+      aes(x_pos, A_median, color = metric_class),
+      shape = 18, size = 1.45
+    ) +
+    scale_color_ms_metric(guide = "none") +
+    scale_x_continuous(
+      breaks = 1:3, labels = c("Low", "Middle", "High"),
+      limits = c(.70, 3.30), expand = expansion(mult = c(0, 0))
+    ) +
+    scale_y_continuous(
+      trans = scales::transform_asinh(),
+      breaks = scales::breaks_extended(n = 4)
+    ) +
+    labs(
+      title = unname(DIM_TITLES[[dim_name]]),
+      x = NULL, y = "conditional A"
+    ) +
+    theme_rq2(base_size = 5.95) +
+    theme(
+      panel.grid.major.x = element_blank(),
+      axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+      axis.title.x = element_blank(),
+      strip.text = element_blank(),
+      plot.title = element_text(size = 6.0, hjust = .5, margin = margin(b = 1.5)),
+      plot.margin = margin(1.5, 2.5, 0, 2.5)
+    )
+
+  p_dir <- ggplot() +
+    geom_hline(yintercept = 0, linewidth = .28, color = "#9DA2A5") +
+    geom_line(
+      data = tr,
+      aes(x_pos, direction_state, group = interaction(metric, comparison_pair_id), color = metric_class),
+      linewidth = .24, alpha = .09
+    ) +
+    geom_point(
+      data = tr,
+      aes(x_pos, direction_state, color = metric_class),
+      size = .31, alpha = .11
+    ) +
+    geom_linerange(
+      data = sm,
+      aes(x_pos, ymin = direction_q25, ymax = direction_q75, color = metric_class),
+      linewidth = .66, alpha = .46
+    ) +
+    geom_line(
+      data = sm,
+      aes(x_pos, direction_median, group = metric_class, color = metric_class),
+      linewidth = .62, alpha = .90
+    ) +
+    geom_point(
+      data = sm,
+      aes(x_pos, direction_median, color = metric_class),
+      shape = 18, size = 1.30
+    ) +
+    scale_color_ms_metric(guide = "none") +
+    scale_x_continuous(
+      breaks = 1:3, labels = c("Low", "Middle", "High"),
+      limits = c(.70, 3.30), expand = expansion(mult = c(0, 0))
+    ) +
+    scale_y_continuous(
+      limits = c(-1.03, 1.03), breaks = c(-1, 0, 1),
+      expand = expansion(mult = c(0, 0))
+    ) +
+    labs(x = "transition-local exposure state", y = "B / A") +
+    theme_rq2(base_size = 5.55) +
+    theme(
+      panel.grid.major.x = element_blank(),
+      axis.text.x = element_text(size = 4.8),
+      axis.text.y = element_text(size = 4.5),
+      axis.title.x = element_text(size = 5.15),
+      axis.title.y = element_text(size = 4.9),
+      plot.margin = margin(0, 2.5, 1.5, 2.5)
+    )
+
+  cowplot::plot_grid(
+    p_mag, p_dir, ncol = 1, rel_heights = c(.77, .23),
+    align = "v", axis = "lr", greedy = TRUE
+  )
+}
+
+state_blocks <- lapply(DIMENSIONS, make_conditional_state_block)
+p2a_core <- cowplot::plot_grid(
+  plotlist = state_blocks, ncol = 2,
+  align = "hv", axis = "tblr", greedy = TRUE
+)
+p2a <- cowplot::ggdraw() +
+  cowplot::draw_plot(p2a_core, x = 0, y = 0, width = 1, height = .965) +
+  cowplot::draw_label(
+    "a  Conditional distortion geometry across exposure state",
+    x = .002, y = .998, hjust = 0, vjust = 1,
+    fontface = "bold", size = 7.0
   )
 
 # Transition-resolved state geometry. The transition-spread view remains a
@@ -373,7 +490,10 @@ context_summary <- context_task |>
     .groups = "drop"
   )
 
-# c. Exposure-state dependence of distortion direction.
+
+# c. Independent contextual information from participant-grouped CV. The two
+# increments are evaluated only on matched test sets and therefore isolate the
+# held-out information added by external context beyond state, and vice versa.
 metric_direction_shift <- transition_state |>
   filter(is.finite(delta_direction_HL)) |>
   group_by(dimension, metric, metric_class) |>
@@ -390,48 +510,97 @@ direction_shift_summary <- metric_direction_shift |>
     .groups = "drop"
   )
 
-dir_limit <- max(abs(metric_direction_shift$delta_direction_HL), na.rm = TRUE)
-if (!is.finite(dir_limit) || dir_limit <= 0) dir_limit <- 1
+CONTEXT_COLORS <- c("External beyond state" = MS_PRIMARY, "State beyond external" = MS_SECONDARY)
+CONTEXT_SHAPES <- c("External beyond state" = 16, "State beyond external" = 17)
 
-p2c <- ggplot(metric_direction_shift,
-              aes(delta_direction_HL, metric_class, color = metric_class)) +
-  geom_vline(xintercept = 0, linewidth = .30, color = "#9DA2A5") +
-  geom_point(position = position_jitter(width = 0, height = .09, seed = 52),
-             size = .68, alpha = .26) +
-  geom_segment(
-    data = direction_shift_summary,
-    aes(x = shift_q25, xend = shift_q75, y = metric_class, yend = metric_class,
-        color = metric_class),
-    inherit.aes = FALSE, linewidth = 1.0, alpha = .46, lineend = "round"
-  ) +
-  geom_point(
-    data = direction_shift_summary,
-    aes(shift_median, metric_class, color = metric_class),
-    inherit.aes = FALSE, shape = 18, size = 1.85
-  ) +
-  facet_wrap(~factor(dimension, levels = DIMENSIONS, labels = unname(DIM_TITLES[DIMENSIONS])), ncol = 2) +
-  scale_color_ms_metric(guide = "none") +
-  scale_x_continuous(limits = c(-dir_limit * 1.03, dir_limit * 1.03),
-                     breaks = scales::breaks_extended(n = 4)) +
-  labs(title = "c  Conditional shift in distortion direction",
-       x = "Δ(B/A), High − Low", y = NULL) +
-  theme_rq2(base_size = 6.3) +
-  theme(
-    panel.grid.major.y = element_blank(), axis.line.y = element_blank(), axis.ticks.y = element_blank(),
-    axis.text.y = element_text(size = 5.0), strip.text = element_text(size = 5.65),
-    panel.spacing = grid::unit(2.0, "mm")
-  )
+if (nrow(context_task)) {
+  context_plot <- context_task |>
+    mutate(
+      dimension_num = as.integer(dimension),
+      y_pos = dimension_num + if_else(information == "External beyond state", -.11, .11)
+    )
+  context_plot_summary <- context_summary |>
+    mutate(
+      dimension_num = as.integer(dimension),
+      y_pos = dimension_num + if_else(information == "External beyond state", -.11, .11)
+    )
 
-# Keep the accepted asymmetric composition: one full-width contextual-state panel
-# above two compact, orthogonal detail panels.
-p2bottom <- cowplot::plot_grid(p2b, p2c, ncol = 2, rel_widths = c(.56, .44),
-                               align = "hv", axis = "tblr", greedy = TRUE)
-p2body <- cowplot::plot_grid(p2a, p2bottom, ncol = 1, rel_heights = c(1.10, .90),
-                             align = "v", axis = "l", greedy = TRUE)
-p2 <- cowplot::plot_grid(metric_legend, p2body, ncol = 1, rel_heights = c(.042, 1),
-                         align = "v", greedy = TRUE)
-ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.pdf"), 9.0, 6.6)
-ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.png"), 9.0, 6.6)
+  p2c <- ggplot(context_plot, aes(delta_r2, y_pos, color = information, shape = information)) +
+    geom_vline(xintercept = 0, linewidth = .30, color = "#9DA2A5") +
+    geom_point(
+      position = position_jitter(width = 0, height = .035, seed = 56),
+      size = .56, alpha = .18
+    ) +
+    geom_segment(
+      data = context_plot_summary,
+      aes(x = delta_q25, xend = delta_q75, y = y_pos, yend = y_pos, color = information),
+      inherit.aes = FALSE, linewidth = .92, alpha = .58, lineend = "round"
+    ) +
+    geom_point(
+      data = context_plot_summary,
+      aes(delta_median, y_pos, color = information, shape = information),
+      inherit.aes = FALSE, size = 1.50
+    ) +
+    facet_wrap(~outcome_label, nrow = 1) +
+    scale_color_manual(values = CONTEXT_COLORS, drop = FALSE) +
+    scale_shape_manual(values = CONTEXT_SHAPES, drop = FALSE) +
+    scale_x_continuous(
+      trans = scales::transform_asinh(),
+      breaks = scales::breaks_extended(n = 4)
+    ) +
+    scale_y_continuous(
+      breaks = seq_along(DIMENSIONS),
+      labels = unname(DIM_TITLES[DIMENSIONS]),
+      limits = c(.55, length(DIMENSIONS) + .45)
+    ) +
+    guides(
+      color = guide_legend(title = NULL, nrow = 2, byrow = TRUE,
+                           override.aes = list(alpha = 1, size = 1.1)),
+      shape = guide_legend(title = NULL, nrow = 2, byrow = TRUE,
+                           override.aes = list(alpha = 1, size = 1.1))
+    ) +
+    labs(
+      title = "c  Independent contextual information",
+      x = "incremental participant-grouped CV R²", y = NULL
+    ) +
+    theme_rq2(base_size = 6.05, legend_position = "bottom") +
+    theme(
+      panel.grid.major.y = element_blank(),
+      axis.line.y = element_blank(), axis.ticks.y = element_blank(),
+      axis.text.y = element_text(size = 4.9),
+      strip.text = element_text(size = 5.45),
+      legend.text = element_text(size = 4.35),
+      legend.key.width = grid::unit(2.7, "mm"),
+      legend.spacing.x = grid::unit(.6, "mm"),
+      panel.spacing = grid::unit(1.8, "mm")
+    )
+} else {
+  p2c <- ggplot() + theme_void(base_family = MS_FONT) +
+    annotate(
+      "text", x = 0, y = 0,
+      label = "c  Independent contextual information\nNo matched grouped-CV results",
+      size = 2.2, colour = "#55595C"
+    )
+}
+
+
+# Keep one visually dominant conditional-geometry panel above two orthogonal
+# explanatory panels. The upper panel carries the empirical state response; the
+# lower panels separate coefficient structure from held-out information.
+p2bottom <- cowplot::plot_grid(
+  p2b, p2c, ncol = 2, rel_widths = c(.60, .40),
+  align = "hv", axis = "tblr", greedy = TRUE
+)
+p2body <- cowplot::plot_grid(
+  p2a, p2bottom, ncol = 1, rel_heights = c(1.22, .78),
+  align = "v", axis = "l", greedy = TRUE
+)
+p2 <- cowplot::plot_grid(
+  metric_legend, p2body, ncol = 1, rel_heights = c(.040, 1),
+  align = "v", greedy = TRUE
+)
+ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.pdf"), 9.0, 6.9)
+ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.png"), 9.0, 6.9)
 
 readr::write_csv(conditional_profile_summary |>
   mutate(metric_class = as.character(metric_class), state_bin_label = as.character(state_bin_label)),
