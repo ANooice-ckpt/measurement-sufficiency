@@ -1,0 +1,52 @@
+name: One-shot figure preservation update
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    if: ${{ github.head_ref == 'fig1-rank-fig4-coverage' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: fig1-rank-fig4-coverage
+
+      - name: Apply idempotent figure update
+        run: python3 scripts/utils/apply_fig_preservation_once.py
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.5.0'
+          use-public-rspm: true
+
+      - name: Parse changed R sources
+        shell: Rscript {0}
+        run: |
+          parse(file = "scripts/11_plot_fig1.R", keep.source = TRUE)
+          parse(file = "scripts/15_plot_rq3.R", keep.source = TRUE)
+          cat("Changed figure sources parse successfully\n")
+
+      - name: Check generated diff
+        run: |
+          git diff --check
+          git status --short
+          git diff --stat
+
+      - name: Commit generated figure sources
+        run: |
+          if git diff --quiet; then
+            echo "No generated changes; update already applied."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/11_plot_fig1.R scripts/15_plot_rq3.R docs/FIGURE_ARCHITECTURE.md
+          git diff --cached --check
+          git commit -m "Add rank preservation and resolved coverage [fig-update-generated]"
+          git push origin HEAD:fig1-rank-fig4-coverage
