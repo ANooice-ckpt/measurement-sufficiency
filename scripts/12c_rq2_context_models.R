@@ -161,11 +161,25 @@ if (!isTRUE(RUN_MODELS)) {
     manifest
   }
 
-  message("RQ2 layered context: build model-input shards from canonical RQ1 parts")
-  context_shard_manifest <- bind_rows(lapply(seq_along(part_paths), function(i) {
-    if (i %% 8L == 0L || i == length(part_paths)) message("  context shards ", i, "/", length(part_paths))
-    build_context_shards(part_paths[[i]], i)
-  }))
+  CONTEXT_STREAM_WORKERS <- ms_resolve_workers("RQ2_STREAM_WORKERS", default = 12L, cap = 24L)
+  context_shard_task <- function(task) build_context_shards(task$path, task$i)
+  context_shard_tasks <- lapply(seq_along(part_paths), function(i) {
+    list(path = part_paths[[i]], i = i)
+  })
+  message(
+    "RQ2 layered context: build model-input shards from canonical RQ1 parts across ",
+    CONTEXT_STREAM_WORKERS, " PSOCK workers"
+  )
+  context_shard_manifest <- bind_rows(ms_parallel_map(
+    context_shard_tasks, context_shard_task,
+    workers = CONTEXT_STREAM_WORKERS,
+    packages = c("tidyverse"),
+    exports = c(
+      "context_shard_task", "build_context_shards", "CONTEXT_SHARD_ROOT",
+      "context_part_token", "CONTEXT_VERSION", "normalize_primary",
+      "unit_features_layered", "CONTEXT_ALL", "task_catalog", "sanitize_task"
+    )
+  ))
   readr::write_csv(
     context_shard_manifest,
     file.path(OUT, "rq2_layered_context_model_input_shard_manifest.csv"), na = ""
