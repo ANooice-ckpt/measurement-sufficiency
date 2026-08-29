@@ -31,14 +31,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(grep -c '"'"'Fig5_RQ3.png'"'"' scripts/15_plot_rq3.R)" -eq 1
-          test "$(grep -c '"'"'Fig5_RQ3.pdf'"'"' scripts/15_plot_rq3.R)" -eq 1
-          ! grep -q 'Conditional marginal returns reveal joint trade-offs' scripts/15_plot_rq3.R
-          ! grep -q 'FigS_RQ3_pareto_facets' scripts/15_plot_rq3.R
-          ! grep -q 'pareto_persistence' scripts/15_plot_rq3.R
-          grep -q 'Jointly sufficient regions expand as tolerance relaxes' scripts/15_plot_rq3.R
-          grep -q 'fraction_confirmed_sufficient' scripts/15_plot_rq3.R
-          grep -q 'FIG5_TOLERANCE_SLICES <- c(.10, .25, .50, .75)' scripts/15_plot_rq3.R
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('scripts/15_plot_rq3.R').read_text(encoding='utf-8')
+          assert text.count('"Fig5_RQ3.png"') == 1, 'Fig5 PNG must have one writer'
+          assert text.count('"Fig5_RQ3.pdf"') == 1, 'Fig5 PDF must have one writer'
+          for token in (
+              'Conditional marginal returns reveal joint trade-offs',
+              'FigS_RQ3_pareto_facets',
+              'pareto_persistence',
+              'fraction_ever_pareto',
+              'fig5_duration_marginal_gain.csv',
+              'fig5_temporal_marginal_gain.csv',
+          ):
+              assert token not in text, f'legacy Fig5 token remains: {token}'
+          for token in (
+              'Jointly sufficient regions expand as tolerance relaxes',
+              'fraction_confirmed_sufficient',
+              'FIG5_TOLERANCE_SLICES',
+              'coverage-efficient frontier',
+              'fig5_tolerance_slice_coverage.csv',
+          ):
+              assert token in text, f'required Fig5 token missing: {token}'
+          PY
           git diff --check
       - name: Commit redesigned plotting source
         shell: bash
