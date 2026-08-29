@@ -170,7 +170,19 @@ epsilon_values <- epsilon_values[is.finite(epsilon_values) & epsilon_values >= 0
 epsilon_limit <- if (length(epsilon_values)) max(epsilon_values) * 1.02 else 1
 if (!is.finite(epsilon_limit) || epsilon_limit <= 0) epsilon_limit <- 1
 
-p4a <- ggplot(requirement_summary, aes(epsilon, rank_median, color = metric_class)) +
+resolved_coverage <- requirement_grid |>
+  group_by(dimension, epsilon) |>
+  summarise(
+    n_metrics = n_distinct(metric),
+    coverage = mean(is.finite(least_rank)),
+    .groups = "drop"
+  ) |>
+  mutate(
+    dimension = factor(dimension, levels = ORDERED_DIMS,
+                       labels = unname(ORDERED_TITLES[ORDERED_DIMS]))
+  )
+
+p4a_main <- ggplot(requirement_summary, aes(epsilon, rank_median, color = metric_class)) +
   geom_step(aes(y = rank_q25, group = metric_class), linewidth = .34, alpha = .24) +
   geom_step(aes(y = rank_q75, group = metric_class), linewidth = .34, alpha = .24) +
   geom_step(aes(group = metric_class), linewidth = .82, alpha = .96) +
@@ -184,13 +196,42 @@ p4a <- ggplot(requirement_summary, aes(epsilon, rank_median, color = metric_clas
   labs(
     title = "a  Tolerance sets the minimum sufficient measurement burden",
     subtitle = "thick line = class median; thin lines = interquartile range",
-    x = "tolerance ε", y = "minimum sufficient requirement rank\n(low → high burden)"
+    x = NULL, y = "minimum sufficient requirement rank\n(low → high burden)"
   ) +
   theme_rq3(base_size = 6.6) +
   theme(
     panel.grid.major.x = element_blank(), strip.text = element_text(size = 6.2),
-    plot.subtitle = element_text(size = 5.0, colour = "#666A6D", margin = margin(t = -1, b = 2))
+    axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+    plot.subtitle = element_text(size = 5.0, colour = "#666A6D", margin = margin(t = -1, b = 2)),
+    plot.margin = margin(2, 3, 0, 3)
   )
+
+p4a_coverage <- ggplot(resolved_coverage, aes(epsilon, coverage)) +
+  geom_area(fill = "#D9DDE0", alpha = .62, position = "identity") +
+  geom_step(linewidth = .50, color = "#5D6265") +
+  facet_wrap(~dimension, nrow = 1) +
+  scale_x_continuous(
+    trans = scales::transform_asinh(), limits = c(0, epsilon_limit),
+    breaks = scales::breaks_extended(n = 4), expand = expansion(mult = c(0, .01))
+  ) +
+  scale_y_continuous(
+    limits = c(0, 1), breaks = c(0, .5, 1),
+    labels = scales::label_percent(accuracy = 50), expand = expansion(mult = c(0, .02))
+  ) +
+  labs(x = "tolerance ε", y = "resolved\ncoverage") +
+  theme_rq3(base_size = 5.75) +
+  theme(
+    panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(),
+    strip.text = element_blank(), strip.background = element_blank(),
+    axis.text.x = element_text(size = 5.0), axis.text.y = element_text(size = 4.7),
+    axis.title.x = element_text(size = 5.5), axis.title.y = element_text(size = 5.0),
+    plot.margin = margin(0, 3, 1, 3)
+  )
+
+p4a <- cowplot::plot_grid(
+  p4a_main, p4a_coverage, ncol = 1, rel_heights = c(1, .22),
+  align = "v", axis = "lr", greedy = TRUE
+)
 
 # b. Distribution of the empirical entry threshold R_obs at each ordered state.
 observed_summary <- observed_display |>
@@ -296,13 +337,19 @@ fig4_bottom <- cowplot::plot_grid(
   align = "hv", axis = "tblr", greedy = TRUE
 )
 fig4_body <- cowplot::plot_grid(
-  p4a, fig4_bottom, ncol = 1, rel_heights = c(1.08, .92),
+  p4a, fig4_bottom, ncol = 1, rel_heights = c(1.14, .86),
   align = "v", axis = "l", greedy = TRUE
 )
 fig4 <- cowplot::plot_grid(metric_legend, fig4_body, ncol = 1,
                            rel_heights = c(.042, 1), align = "v", greedy = TRUE)
 ms_plot_save(fig4, file.path(OUT_DIR, "Fig4_RQ3.pdf"), 9.0, 6.1)
 ms_plot_save(fig4, file.path(OUT_DIR, "Fig4_RQ3.png"), 9.0, 6.1)
+
+readr::write_csv(
+  resolved_coverage |>
+    mutate(dimension = as.character(dimension)),
+  file.path("results", "rq3", "fig4_resolved_coverage.csv"), na = ""
+)
 
 readr::write_csv(
   requirement_summary |>
@@ -749,7 +796,7 @@ fig4_bottom <- cowplot::plot_grid(
   align = "hv", axis = "tblr", greedy = TRUE
 )
 fig4_body <- cowplot::plot_grid(
-  p4a, fig4_bottom, ncol = 1, rel_heights = c(1.08, .92),
+  p4a, fig4_bottom, ncol = 1, rel_heights = c(1.14, .86),
   align = "v", axis = "l", greedy = TRUE
 )
 fig4 <- cowplot::plot_grid(
