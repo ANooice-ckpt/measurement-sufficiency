@@ -42,6 +42,7 @@ jobs:
                   'Fig4c epsilon50 and guides',
                   'Fig4c subtitle',
                   'Fig4c subtitle theme',
+                  'Fig4 layout weights',
               }
               if label in final_fig4_labels and n == 2:
                   head, sep, tail = text.rpartition(old)
