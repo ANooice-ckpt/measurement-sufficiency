@@ -15,13 +15,14 @@ suppressPackageStartupMessages({library(tidyverse); library(cowplot)})
 source("scripts/utils/figure_style.R")
 source("scripts/utils/figure_atlas.R")
 source("scripts/utils/plot_contracts.R")
+source("scripts/utils/analysis_design.R")
 
 RQ1_SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
 CONDITION_RDS <- file.path("results", "rq2", "rq2_condition_long.rds")
 COND_GEOM_CSV <- file.path("results", "rq2", "rq2_conditional_geometry.csv")
-MODEL_COEF_CSV <- file.path("results", "rq2", "rq2_model_coefficients.csv")
-MODEL_PERF_CSV <- file.path("results", "rq2", "rq2_model_performance.csv")
-MODEL_MANIFEST_CSV <- file.path("results", "rq2", "rq2_model_artifact_manifest.csv")
+MODEL_COEF_CSV <- file.path("results", "rq2", "rq2_layered_context_model_coefficients.csv")
+MODEL_PERF_CSV <- file.path("results", "rq2", "rq2_layered_context_model_performance.csv")
+MODEL_MANIFEST_CSV <- file.path("results", "rq2", "rq2_layered_context_model_manifest.csv")
 GAMMA_RDS <- file.path("results", "rq2", "rq2_gamma_long.rds")
 GAMMA_SUMMARY_CSV <- file.path("results", "rq2", "rq2_gamma_summary.csv")
 SCOPE_CSV <- file.path("results", "rq2", "rq2_interaction_scope.csv")
@@ -49,7 +50,7 @@ gamma_long <- readRDS(GAMMA_RDS)
 gamma_summary <- readr::read_csv(GAMMA_SUMMARY_CSV, show_col_types = FALSE, progress = FALSE)
 scope <- readr::read_csv(SCOPE_CSV, show_col_types = FALSE, progress = FALSE)
 
-ms_plot_require_columns(rq1_summary, c("metric", "metric_class", "dimension", "A_mean_absolute"),
+ms_plot_require_columns(rq1_summary, c("core_artifact_version", "rq1_analysis_version", "metric", "metric_class", "dimension", "A_mean_absolute"),
                         "rq1_pairwise_summary.csv")
 ms_plot_require_columns(conditional,
   c("core_artifact_version", "rq1_analysis_version", "rq2_analysis_version", "dimension",
@@ -57,13 +58,14 @@ ms_plot_require_columns(conditional,
     "state_bin_label", "A_conditional", "B_conditional"), "rq2_conditional_geometry.csv")
 ms_plot_require_columns(coefficients,
   c("dimension", "comparison_pair_id", "metric", "outcome", "model_family", "term",
-    "estimate", "std_error", "p_value"), "rq2_model_coefficients.csv")
+    "estimate", "std_error", "p_value"), "rq2_layered_context_model_coefficients.csv")
 ms_plot_require_columns(performance,
   c("dimension", "comparison_pair_id", "metric", "outcome", "model_family", "validation_scheme",
-    "n_test", "rmse", "mae", "r2"), "rq2_model_performance.csv")
+    "n_test", "rmse", "mae", "r2"), "rq2_layered_context_model_performance.csv")
 ms_plot_require_columns(model_manifest,
-  c("core_artifact_version", "rq1_analysis_version", "rq2_analysis_version"),
-  "rq2_model_artifact_manifest.csv")
+  c("artifact_type", "core_artifact_version", "rq1_analysis_version", "rq2_analysis_version",
+    "context_model_version"),
+  "rq2_layered_context_model_manifest.csv")
 ms_plot_require_columns(gamma_summary,
   c("dimension_a", "dimension_b", "comparison_lattice", "transition", "metric", "metric_class", "R", "Q"),
   "rq2_gamma_summary.csv")
@@ -72,16 +74,39 @@ ms_plot_require_columns(scope, c("dimension_pair", "primary_scope"), "rq2_intera
 condition_core <- if (is.list(condition)) condition$core_artifact_version else NULL
 condition_rq1 <- if (is.list(condition)) condition$rq1_analysis_version else NULL
 condition_rq2 <- if (is.list(condition)) condition$rq2_analysis_version else NULL
-RQ1_VERSION <- ms_plot_one_version(c(condition_rq1, conditional$rq1_analysis_version,
-                                     model_manifest$rq1_analysis_version, gamma_long$rq1_analysis_version),
-                                   "rq1_analysis_version")
+RQ1_VERSION <- ms_plot_one_version(c(
+  rq1_summary$rq1_analysis_version, condition_rq1, conditional$rq1_analysis_version,
+  model_manifest$rq1_analysis_version, gamma_long$rq1_analysis_version
+), "rq1_analysis_version")
 RQ2_VERSION <- ms_plot_one_version(c(condition_rq2, conditional$rq2_analysis_version,
                                      model_manifest$rq2_analysis_version, gamma_long$rq2_analysis_version),
                                    "rq2_analysis_version")
-CORE_VERSION <- ms_plot_assert_core(c(condition_core, conditional$core_artifact_version,
-                                     model_manifest$core_artifact_version, gamma_long$core_artifact_version))
+CORE_VERSION <- ms_plot_assert_core(c(
+  rq1_summary$core_artifact_version, condition_core, conditional$core_artifact_version,
+  model_manifest$core_artifact_version, gamma_long$core_artifact_version
+))
 ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
 ms_plot_assert_prefix(RQ2_VERSION, "rq2_v5_", "rq2_analysis_version")
+if (!grepl(ms_analysis_design_id(), RQ2_VERSION, fixed = TRUE)) {
+  stop("RQ2 plotting inputs do not match the current frozen analysis design", call. = FALSE)
+}
+if (is.list(condition) && !is.null(condition$analysis_design_id) &&
+    !identical(as.character(condition$analysis_design_id[[1]]), ms_analysis_design_id())) {
+  stop("RQ2 condition artifact does not match the current frozen analysis design", call. = FALSE)
+}
+if (any(is.na(model_manifest$artifact_type)) ||
+    any(model_manifest$artifact_type != "rq2_layered_context_model_checkpoint_v1")) {
+  stop("RQ2 plotting requires the layered-context model manifest", call. = FALSE)
+}
+CONTEXT_MODEL_VERSION <- ms_plot_one_version(
+  model_manifest$context_model_version, "context_model_version"
+)
+if (!identical(CONTEXT_MODEL_VERSION, paste0("rq2_layered_context_v1__", RQ2_VERSION))) {
+  stop("RQ2 layered-context model version does not match the frozen RQ2 version", call. = FALSE)
+}
+if (!"joint" %in% coefficients$model_family || !"joint" %in% performance$model_family) {
+  stop("RQ2 plotting requires fitted layered joint-context model outputs", call. = FALSE)
+}
 
 metric_order <- ms_metric_order(rq1_summary)
 metric_class_lookup <- rq1_summary |> distinct(metric, metric_class)
@@ -732,7 +757,7 @@ if (nrow(joint_cv_metric)) {
     ) +
     labs(
       title = "c  Out-of-sample contextual predictability",
-      subtitle = "class summaries use all joint-model CV results; right labels = fraction of metrics with CV R² > 0",
+      subtitle = "class summaries use all joint-model CV results; right labels = fraction of evaluable metrics with CV R² > 0",
       x = "participant-grouped CV R²", y = NULL
     ) +
     theme_rq2(base_size = 6.05) +
@@ -1103,13 +1128,13 @@ ms_plot_write_manifest(
       "FigS_RQ2_context_increment", "FigS_RQ2_gamma_atlas", "FigS_RQ2_model_performance"
     ),
     input_artifact = c(
-      "rq2_conditional_geometry+rq2_model_coefficients",
+      "rq2_conditional_geometry+rq2_layered_context_model_coefficients+rq2_layered_context_model_performance",
       "rq2_gamma_summary",
       "rq2_conditional_geometry",
       "rq2_conditional_geometry",
-      "rq2_model_performance",
+      "rq2_layered_context_model_performance",
       "rq2_gamma_summary",
-      "rq2_model_performance"
+      "rq2_layered_context_model_performance"
     ),
     core_artifact_version = CORE_VERSION,
     rq1_analysis_version = RQ1_VERSION,
@@ -1117,11 +1142,3 @@ ms_plot_write_manifest(
     rq3_analysis_version = NA_character_
   ))
 message("RQ2 v5 figures complete: Fig. 2 combines state-conditioned geometry, layered contextual effects and held-out predictability; Fig. 3 reports interaction sign, magnitude and coherence.")
-
-source(file.path("scripts", "utils", "analysis_design.R"), local = .GlobalEnv)
-
-# Guard against plotting stale RQ2 artifacts after a measurement-lattice change.
-if (is.list(condition) && !is.null(condition$analysis_design_id) &&
-    !identical(as.character(condition$analysis_design_id[[1]]), ms_analysis_design_id())) {
-  stop("RQ2 plotting inputs do not match the current frozen analysis design", call. = FALSE)
-}

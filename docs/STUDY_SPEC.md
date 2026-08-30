@@ -97,7 +97,7 @@ Pareto dominance is calculated only inside the observed sufficient region. Finer
 
 ## 9. Figures and implementation invariants
 
-Plot scripts read frozen results artifacts only. They do not read raw series, call LightLogR operators, construct duration windows, bootstrap, refit models, calculate gamma or calculate sufficiency.
+Plot scripts read frozen results artifacts only. They do not read raw series, call LightLogR operators, construct duration windows, bootstrap, refit models, or recompute the canonical A/B, gamma, R_obs, sufficiency or Pareto estimands. They may derive display-only inversions and coverage summaries from already-frozen R_obs/epsilon_entry thresholds; these derivatives do not feed back into RQ1-RQ3.
 
 The primary temporal lattice, primary duration domain, labels and analysis-design identifier are defined once in `scripts/utils/analysis_design.R` and consumed by core, RQ1-RQ3 and canonical plot wrappers. A lattice change therefore changes artifact identities and cannot silently reuse stale downstream caches.
 

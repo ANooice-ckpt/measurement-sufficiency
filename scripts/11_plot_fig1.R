@@ -139,14 +139,16 @@ rank_cache <- if (file.exists(RANK_CSV)) {
   readr::read_csv(RANK_CSV, show_col_types = FALSE, progress = FALSE)
 } else tibble()
 rank_cache_required <- c(
-  "core_artifact_version", "rq1_analysis_version", "dimension", "metric",
+  "core_artifact_version", "rq1_analysis_version", "dimension", "metric", "metric_class",
   "A_mean_absolute", "rank_loss", "rank_preservation_available"
 )
-rank_cache_core <- unique(rank_cache$core_artifact_version[!is.na(rank_cache$core_artifact_version)])
-rank_cache_rq1 <- unique(rank_cache$rq1_analysis_version[!is.na(rank_cache$rq1_analysis_version)])
-rank_cache_valid <- nrow(rank_cache) > 0 && all(rank_cache_required %in% names(rank_cache)) &&
-  length(rank_cache_core) == 1L && identical(rank_cache_core[[1]], CORE_VERSION) &&
-  length(rank_cache_rq1) == 1L && identical(rank_cache_rq1[[1]], RQ1_VERSION)
+rank_cache_valid <- nrow(rank_cache) > 0 && all(rank_cache_required %in% names(rank_cache))
+if (rank_cache_valid) {
+  rank_cache_core <- unique(rank_cache$core_artifact_version[!is.na(rank_cache$core_artifact_version)])
+  rank_cache_rq1 <- unique(rank_cache$rq1_analysis_version[!is.na(rank_cache$rq1_analysis_version)])
+  rank_cache_valid <- length(rank_cache_core) == 1L && identical(rank_cache_core[[1]], CORE_VERSION) &&
+    length(rank_cache_rq1) == 1L && identical(rank_cache_rq1[[1]], RQ1_VERSION)
+}
 
 if (rank_cache_valid) {
   rank_base <- rank_cache

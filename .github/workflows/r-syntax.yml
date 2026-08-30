@@ -44,6 +44,31 @@ jobs:
             parse(file = f, keep.source = TRUE)
           }
           message("All R scripts parsed successfully.")
+      - name: Check frozen plotting semantics
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          f11 = Path("scripts/11_plot_fig1.R").read_text(encoding="utf-8")
+          f13 = Path("scripts/13_plot_rq2.R").read_text(encoding="utf-8")
+          f15 = Path("scripts/15_plot_rq3.R").read_text(encoding="utf-8")
+          doc = Path("docs/FIGURE_ARCHITECTURE.md").read_text(encoding="utf-8")
+          assert "metric_class" in f11[f11.index("rank_cache_required"):f11.index("rank_cache_valid")]
+          assert "rq2_layered_context_model_coefficients.csv" in f13
+          assert "rq2_layered_context_model_performance.csv" in f13
+          assert "fraction of evaluable metrics with CV R² > 0" in f13
+          assert "display_threshold_like = threshold_like_at" in f15
+          assert "canonical RQ3 threshold-like requirement" in f15
+          assert "does not contain exactly the frozen primary temporal states" in f15
+          assert "does not contain exactly the frozen primary duration states" in f15
+          assert "missing one or more frozen temporal-duration configurations" in f15
+          assert "nrow(requirement_native_check) != nrow(canonical_requirement_check)" in f15
+          assert "c(1800, 900, 300, 60, 30, 20, 10)" not in f15
+          assert f15.count("p4a_main <-") == 1
+          assert f15.count("fig4 <- cowplot::plot_grid(") == 1
+          assert f15.count("FIG5_TOLERANCE_SLICES <-") == 1
+          assert "threshold-like" in doc
+          assert "joint-analysis target-metric universe" in doc
+          PY
       - name: Check server runner shell syntax
         run: |
           bash -n \
