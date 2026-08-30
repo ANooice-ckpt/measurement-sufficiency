@@ -7,6 +7,7 @@ on:
       - 'scripts/13_plot_rq2.R'
       - 'scripts/15_plot_rq3.R'
       - 'docs/FIGURE_ARCHITECTURE.md'
+      - '.github/workflows/r-syntax.yml'
       - '.github/workflows/freeze-validation-final-once.yml'
 
 permissions:
@@ -27,55 +28,166 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          def one(t, old, new, label):
-              n = t.count(old)
-              if n != 1:
-                  raise SystemExit(f'{label}: expected one match, found {n}')
-              return t.replace(old, new, 1)
+          def replace_or_assert(text, old, new, label):
+              if new in text:
+                  return text
+              if old not in text:
+                  raise SystemExit(f"{label}: neither old nor new form found")
+              return text.replace(old, new, 1)
 
-          # RQ2 plots bind explicitly to the layered-context products rather than
-          # to the generic aliases that are overwritten during the canonical run.
+          # ------------------------------------------------------------------
+          # RQ2 plots: bind explicitly to layered-context artifacts and tighten
+          # provenance/wording for the held-out R2 panel.
+          # ------------------------------------------------------------------
           p = Path('scripts/13_plot_rq2.R')
           t = p.read_text(encoding='utf-8')
-          t = one(t,
+          t = replace_or_assert(
+              t,
               '''MODEL_COEF_CSV <- file.path("results", "rq2", "rq2_model_coefficients.csv")
           MODEL_PERF_CSV <- file.path("results", "rq2", "rq2_model_performance.csv")
-          MODEL_MANIFEST_CSV <- file.path("results", "rq2", "rq2_model_artifact_manifest.csv")
-          ''',
+          MODEL_MANIFEST_CSV <- file.path("results", "rq2", "rq2_model_artifact_manifest.csv")''',
               '''MODEL_COEF_CSV <- file.path("results", "rq2", "rq2_layered_context_model_coefficients.csv")
           MODEL_PERF_CSV <- file.path("results", "rq2", "rq2_layered_context_model_performance.csv")
-          MODEL_MANIFEST_CSV <- file.path("results", "rq2", "rq2_layered_context_model_manifest.csv")
-          ''', 'RQ2 layered file binding')
+          MODEL_MANIFEST_CSV <- file.path("results", "rq2", "rq2_layered_context_model_manifest.csv")''',
+              'RQ2 layered file binding'
+          )
           t = t.replace('"rq2_model_coefficients.csv")', '"rq2_layered_context_model_coefficients.csv")')
           t = t.replace('"rq2_model_performance.csv")', '"rq2_layered_context_model_performance.csv")')
           t = t.replace('"rq2_model_artifact_manifest.csv")', '"rq2_layered_context_model_manifest.csv")')
-          t = t.replace('"rq2_conditional_geometry+rq2_model_coefficients"',
-                        '"rq2_conditional_geometry+rq2_layered_context_model_coefficients+rq2_layered_context_model_performance"')
+          t = replace_or_assert(
+              t,
+              'ms_plot_require_columns(rq1_summary, c("metric", "metric_class", "dimension", "A_mean_absolute"),',
+              'ms_plot_require_columns(rq1_summary, c("core_artifact_version", "rq1_analysis_version", "metric", "metric_class", "dimension", "A_mean_absolute"),',
+              'RQ2 RQ1-summary provenance schema'
+          )
+          old_versions = '''RQ1_VERSION <- ms_plot_one_version(c(condition_rq1, conditional$rq1_analysis_version,
+                                               model_manifest$rq1_analysis_version, gamma_long$rq1_analysis_version),
+                                             "rq1_analysis_version")
+          RQ2_VERSION <- ms_plot_one_version(c(condition_rq2, conditional$rq2_analysis_version,
+                                               model_manifest$rq2_analysis_version, gamma_long$rq2_analysis_version),
+                                             "rq2_analysis_version")
+          CORE_VERSION <- ms_plot_assert_core(c(condition_core, conditional$core_artifact_version,
+                                               model_manifest$core_artifact_version, gamma_long$core_artifact_version))'''
+          new_versions = '''RQ1_VERSION <- ms_plot_one_version(c(
+            rq1_summary$rq1_analysis_version, condition_rq1, conditional$rq1_analysis_version,
+            model_manifest$rq1_analysis_version, gamma_long$rq1_analysis_version
+          ), "rq1_analysis_version")
+          RQ2_VERSION <- ms_plot_one_version(c(condition_rq2, conditional$rq2_analysis_version,
+                                               model_manifest$rq2_analysis_version, gamma_long$rq2_analysis_version),
+                                             "rq2_analysis_version")
+          CORE_VERSION <- ms_plot_assert_core(c(
+            rq1_summary$core_artifact_version, condition_core, conditional$core_artifact_version,
+            model_manifest$core_artifact_version, gamma_long$core_artifact_version
+          ))'''
+          t = replace_or_assert(t, old_versions, new_versions, 'RQ2 provenance version block')
+          t = t.replace(
+              'subtitle = "class summaries use all joint-model CV results; right labels = fraction of metrics with CV R² > 0",',
+              'subtitle = "class summaries use all joint-model CV results; right labels = fraction of evaluable metrics with CV R² > 0",'
+          )
+          t = t.replace(
+              '"rq2_conditional_geometry+rq2_model_coefficients"',
+              '"rq2_conditional_geometry+rq2_layered_context_model_coefficients+rq2_layered_context_model_performance"'
+          )
           t = t.replace('"rq2_model_performance"', '"rq2_layered_context_model_performance"')
           p.write_text(t, encoding='utf-8')
 
-          # RQ3: require the complete frozen ordered lattice, and respect the
-          # canonical threshold-like condition before displaying a minimum burden.
+          # ------------------------------------------------------------------
+          # RQ3 plots: exact frozen-state contract, cross-artifact provenance,
+          # canonical threshold-like semantics, and fixed metric denominators.
+          # ------------------------------------------------------------------
           p = Path('scripts/15_plot_rq3.R')
           t = p.read_text(encoding='utf-8')
-          old = '''if (!all(sort(unique(joint$resolution_s)) %in% sort(ms_primary_temporal_s()))) {
-            stop("RQ3 joint artifact contains temporal states outside the frozen primary design", call. = FALSE)
-          }
-          if (!all(sort(unique(joint$n_days)) %in% DURATION_LEVELS)) {
-            stop("RQ3 joint artifact contains duration states outside the frozen primary design", call. = FALSE)
-          }
-          temporal_ranks <- observed$requirement_rank[
-            observed$dimension == "temporal" & is.finite(observed$requirement_rank)
-          ]
-          duration_ranks <- observed$requirement_rank[
-            observed$dimension == "duration" & is.finite(observed$requirement_rank)
-          ]
-          if (any(!temporal_ranks %in% seq_along(RES_LEVELS)) ||
-              any(!duration_ranks %in% seq_along(DURATION_LEVELS))) {
-            stop("RQ3 ordered requirement ranks fall outside the frozen display lattice", call. = FALSE)
-          }
+          # The precomputed unordered coverage CSV is no longer used: Fig.4c is
+          # reconstructed directly from the versioned unordered epsilon entries.
+          t = t.replace('COVERAGE_CSV <- file.path("results", "rq3", "rq3_unordered_coverage_curves.csv")\n', '')
+          t = t.replace(
+              'ms_plot_require_files(c(RQ1_SUMMARY_CSV, OBSERVED_RDS, SUFFICIENCY_CSV, REQUIREMENT_CSV,\n                        UNORDERED_CSV, COVERAGE_CSV, CONVERGENCE_CSV, JOINT_CSV),',
+              'ms_plot_require_files(c(RQ1_SUMMARY_CSV, OBSERVED_RDS, SUFFICIENCY_CSV, REQUIREMENT_CSV,\n                        UNORDERED_CSV, CONVERGENCE_CSV, JOINT_CSV),'
+          )
+          t = t.replace('coverage <- readr::read_csv(COVERAGE_CSV, show_col_types = FALSE, progress = FALSE)\n', '')
+          cov_check = '''ms_plot_require_columns(coverage,
+            c("dimension", "comparison_pair_id", "epsilon", "fraction_metrics_substitutable"),
+            "rq3_unordered_coverage_curves.csv")
           '''
-          new = '''joint_resolutions <- sort(unique(as.integer(joint$resolution_s[is.finite(joint$resolution_s)])))
+          t = t.replace(cov_check, '')
+
+          t = replace_or_assert(
+              t,
+              'ms_plot_require_columns(rq1_summary, c("metric", "metric_class", "dimension", "A_mean_absolute"),',
+              'ms_plot_require_columns(rq1_summary, c("core_artifact_version", "rq1_analysis_version", "metric", "metric_class", "dimension", "A_mean_absolute"),',
+              'RQ3 RQ1-summary provenance schema'
+          )
+          t = replace_or_assert(
+              t,
+              '''ms_plot_require_columns(sufficiency,
+            c("dimension", "metric", "metric_class", "epsilon", "sufficient", "status"),''',
+              '''ms_plot_require_columns(sufficiency,
+            c("core_artifact_version", "rq1_analysis_version", "rq3_analysis_version",
+              "dimension", "metric", "metric_class", "epsilon", "sufficient", "status"),''',
+              'RQ3 sufficiency provenance schema'
+          )
+          t = replace_or_assert(
+              t,
+              '''ms_plot_require_columns(requirement,
+            c("dimension", "metric", "epsilon", "sufficient_states", "sufficient_set_threshold_like"),''',
+              '''ms_plot_require_columns(requirement,
+            c("dimension", "metric", "epsilon", "sufficient_states", "sufficient_set_threshold_like",
+              "least_demanding_sufficient_state"),''',
+              'RQ3 requirement schema'
+          )
+          t = replace_or_assert(
+              t,
+              '''ms_plot_require_columns(unordered,
+            c("dimension", "comparison_pair_id", "config_a_label", "config_b_label", "metric", "metric_class",
+              "orientation_type", "epsilon_entry", "A", "B"),''',
+              '''ms_plot_require_columns(unordered,
+            c("core_artifact_version", "rq1_analysis_version", "rq3_analysis_version",
+              "dimension", "comparison_pair_id", "config_a_label", "config_b_label", "metric", "metric_class",
+              "orientation_type", "epsilon_entry", "A", "B"),''',
+              'RQ3 unordered provenance schema'
+          )
+          t = replace_or_assert(
+              t,
+              '''ms_plot_require_columns(convergence,
+            c("dimension", "metric", "metric_class", "G", "requirement_position", "boundary_proximity"),''',
+              '''ms_plot_require_columns(convergence,
+            c("core_artifact_version", "rq1_analysis_version", "rq3_analysis_version",
+              "dimension", "metric", "metric_class", "G", "requirement_position", "boundary_proximity"),''',
+              'RQ3 convergence provenance schema'
+          )
+          t = replace_or_assert(
+              t,
+              'c("core_artifact_version", "rq1_analysis_version", "rq3_analysis_version", "dimension",\n    "metric", "metric_class", "state_label", "requirement_rank", "R_obs", "status"),',
+              'c("core_artifact_version", "rq1_analysis_version", "rq3_analysis_version", "dimension",\n    "metric", "metric_class", "state_id", "state_label", "requirement_rank", "R_obs", "status"),',
+              'RQ3 observed state-id schema'
+          )
+
+          vstart = t.index('RQ1_VERSION <- ms_plot_one_version(')
+          vend = t.index('if (!grepl(ms_analysis_design_id(), RQ3_VERSION, fixed = TRUE))', vstart)
+          new_vblock = '''RQ1_VERSION <- ms_plot_one_version(c(
+            rq1_summary$rq1_analysis_version, observed$rq1_analysis_version,
+            sufficiency$rq1_analysis_version, unordered$rq1_analysis_version,
+            convergence$rq1_analysis_version, joint$rq1_analysis_version
+          ), "rq1_analysis_version")
+          RQ3_VERSION <- ms_plot_one_version(c(
+            observed$rq3_analysis_version, sufficiency$rq3_analysis_version,
+            unordered$rq3_analysis_version, convergence$rq3_analysis_version,
+            joint$rq3_analysis_version
+          ), "rq3_analysis_version")
+          CORE_VERSION <- ms_plot_assert_core(c(
+            rq1_summary$core_artifact_version, observed$core_artifact_version,
+            sufficiency$core_artifact_version, unordered$core_artifact_version,
+            convergence$core_artifact_version, joint$core_artifact_version
+          ))
+          ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
+          ms_plot_assert_prefix(RQ3_VERSION, "rq3_v5_", "rq3_analysis_version")
+          '''
+          t = t[:vstart] + new_vblock + t[vend:]
+
+          gstart = t.index('if (!all(sort(unique(joint$resolution_s))') if 'if (!all(sort(unique(joint$resolution_s))' in t else -1
+          if gstart >= 0:
+              gend = t.index('metric_order <- ms_metric_order(rq1_summary)', gstart)
+              new_guards = '''joint_resolutions <- sort(unique(as.integer(joint$resolution_s[is.finite(joint$resolution_s)])))
           joint_days <- sort(unique(as.integer(joint$n_days[is.finite(joint$n_days)])))
           if (!identical(joint_resolutions, sort(as.integer(ms_primary_temporal_s())))) {
             stop("RQ3 joint artifact does not contain exactly the frozen primary temporal states", call. = FALSE)
@@ -94,72 +206,94 @@ jobs:
             stop("RQ3 ordered artifact does not contain exactly the frozen requirement ranks", call. = FALSE)
           }
           '''
-          t = one(t, old, new, 'RQ3 exact lattice guards')
+              t = t[:gstart] + new_guards + t[gend:]
 
-          old = '''    rank_at <- vapply(eps, function(e) {
-              ok <- g$requirement_rank[g$R_obs <= e + NUMERIC_TOL]
-              if (length(ok)) min(ok) else NA_real_
-            }, numeric(1))
-            tibble(
-              dimension = dim, metric = m, metric_class = mc,
-              epsilon = eps, least_rank = rank_at
-            )
+          # Use every target metric represented in the ordered artifact as the
+          # denominator, including metrics with no currently resolved R_obs state.
+          t = t.replace(
+              '  metrics <- d |> distinct(metric, metric_class)',
+              '  metrics <- observed |> filter(dimension == dim) |> distinct(metric, metric_class)'
+          )
+
+          if 'display_threshold_like = threshold_like_at' not in t:
+              rstart = t.index('    rank_at <- vapply(eps, function(e) {')
+              rend = t.index('    tibble(', rstart)
+              new_rank = '''    rank_at <- vapply(eps, function(e) {
+                resolved <- g |> arrange(requirement_rank)
+                ok <- resolved$R_obs <= e + NUMERIC_TOL
+                threshold_like <- length(ok) < 2L || all(diff(as.integer(ok)) >= 0L)
+                if (threshold_like && any(ok)) min(resolved$requirement_rank[ok]) else NA_real_
+              }, numeric(1))
+              threshold_like_at <- vapply(eps, function(e) {
+                resolved <- g |> arrange(requirement_rank)
+                ok <- resolved$R_obs <= e + NUMERIC_TOL
+                length(ok) < 2L || all(diff(as.integer(ok)) >= 0L)
+              }, logical(1))
           '''
-          new = '''    rank_at <- vapply(eps, function(e) {
-              resolved <- g |> arrange(requirement_rank)
-              ok <- resolved$R_obs <= e + NUMERIC_TOL
-              threshold_like <- length(ok) < 2L || all(diff(as.integer(ok)) >= 0L)
-              if (threshold_like && any(ok)) min(resolved$requirement_rank[ok]) else NA_real_
-            }, numeric(1))
-            threshold_like_at <- vapply(eps, function(e) {
-              resolved <- g |> arrange(requirement_rank)
-              ok <- resolved$R_obs <= e + NUMERIC_TOL
-              length(ok) < 2L || all(diff(as.integer(ok)) >= 0L)
-            }, logical(1))
-            tibble(
-              dimension = dim, metric = m, metric_class = mc,
-              epsilon = eps, sufficient_set_threshold_like = threshold_like_at,
-              least_rank = rank_at
-            )
+              t = t[:rstart] + new_rank + t[rend:]
+              t = t.replace(
+                  '      epsilon = eps, least_rank = rank_at',
+                  '      epsilon = eps, display_threshold_like = threshold_like_at, least_rank = rank_at',
+                  1
+              )
+
+          # Validate the display inversion against the canonical RQ3 requirement
+          # product at each metric's native epsilon breakpoints.
+          validation_anchor = '''requirement_summary <- requirement_grid |>
           '''
-          t = one(t, old, new, 'Fig4 threshold-like display inversion')
-          t = one(t,
+          if 'canonical_requirement_check <- requirement |>' not in t:
+              check_block = '''canonical_requirement_check <- requirement |>
+            filter(dimension %in% ORDERED_DIMS) |>
+            left_join(
+              observed |>
+                filter(dimension %in% ORDERED_DIMS) |>
+                distinct(dimension, metric, state_id, requirement_rank),
+              by = c("dimension", "metric", "least_demanding_sufficient_state" = "state_id")
+            ) |>
+            transmute(
+              dimension, metric, epsilon,
+              canonical_threshold_like = sufficient_set_threshold_like,
+              canonical_least_rank = requirement_rank
+            )
+
+          requirement_native_check <- requirement_grid |>
+            inner_join(canonical_requirement_check, by = c("dimension", "metric", "epsilon")) |>
+            mutate(
+              threshold_agrees = display_threshold_like == canonical_threshold_like,
+              rank_agrees = (is.na(least_rank) & is.na(canonical_least_rank)) |
+                (is.finite(least_rank) & is.finite(canonical_least_rank) &
+                   abs(least_rank - canonical_least_rank) <= NUMERIC_TOL)
+            )
+          if (!nrow(requirement_native_check) ||
+              any(!requirement_native_check$threshold_agrees | !requirement_native_check$rank_agrees, na.rm = TRUE)) {
+            stop("Fig. 4 display inversion disagrees with the canonical RQ3 threshold-like requirement", call. = FALSE)
+          }
+
+          '''
+              t = t.replace(validation_anchor, check_block + validation_anchor, 1)
+
+          t = t.replace(
               'subtitle = "thick = class median; thin = IQR · faint vertical guides = Fig. 5 tolerance slices",',
-              'subtitle = "thick = class median; thin = IQR · non-threshold-like sufficient sets remain unresolved",',
-              'Fig4a subtitle')
-          t = one(t,
+              'subtitle = "thick = class median; thin = IQR · non-threshold-like sufficient sets remain unresolved",'
+          )
+          t = t.replace(
               'labs(x = "tolerance ε", y = "metrics with a\\nresolved sufficient state") +',
-              'labs(x = "tolerance ε", y = "metrics with a resolved\\nthreshold-like requirement") +',
-              'Fig4 coverage label')
-          t = one(t,
+              'labs(x = "tolerance ε", y = "metrics with a resolved\\nthreshold-like requirement") +'
+          )
+          t = t.replace(
               'title = "b  Residual instability contracts as measurement burden increases",',
-              'title = "b  Residual instability across increasing measurement burden",',
-              'Fig4b neutral title')
-          t = one(t,
+              'title = "b  Residual instability across increasing measurement burden",'
+          )
+          t = t.replace(
               'subtitle = "fill = confirmed coverage among all targets (unresolved ≠ sufficient); dark outline = coverage-efficient frontier",',
-              'subtitle = "fill = confirmed coverage among joint-analysis targets (unresolved ≠ sufficient); dark outline = coverage-efficient frontier",',
-              'Fig5c target-universe label')
-
-          # Remove two legacy-required inputs that the current plot source no longer uses.
-          t = t.replace('REQUIREMENT_CSV <- file.path("results", "rq3", "rq3_single_dimension_requirement.csv")\n', '')
-          t = t.replace('COVERAGE_CSV <- file.path("results", "rq3", "rq3_unordered_coverage_curves.csv")\n', '')
-          t = t.replace('ms_plot_require_files(c(RQ1_SUMMARY_CSV, OBSERVED_RDS, SUFFICIENCY_CSV, REQUIREMENT_CSV,\n                        UNORDERED_CSV, COVERAGE_CSV, CONVERGENCE_CSV, JOINT_CSV),',
-                        'ms_plot_require_files(c(RQ1_SUMMARY_CSV, OBSERVED_RDS, SUFFICIENCY_CSV,\n                        UNORDERED_CSV, CONVERGENCE_CSV, JOINT_CSV),')
-          t = t.replace('requirement <- readr::read_csv(REQUIREMENT_CSV, show_col_types = FALSE, progress = FALSE)\n', '')
-          t = t.replace('coverage <- readr::read_csv(COVERAGE_CSV, show_col_types = FALSE, progress = FALSE)\n', '')
-          req_check = '''ms_plot_require_columns(requirement,
-            c("dimension", "metric", "epsilon", "sufficient_states", "sufficient_set_threshold_like"),
-            "rq3_single_dimension_requirement.csv")
-          '''
-          cov_check = '''ms_plot_require_columns(coverage,
-            c("dimension", "comparison_pair_id", "epsilon", "fraction_metrics_substitutable"),
-            "rq3_unordered_coverage_curves.csv")
-          '''
-          t = t.replace(req_check, '')
-          t = t.replace(cov_check, '')
+              'subtitle = "fill = confirmed coverage among joint-analysis targets (unresolved ≠ sufficient); dark outline = coverage-efficient frontier",'
+          )
           p.write_text(t, encoding='utf-8')
 
-          # Architecture prose must preserve the estimand qualification and anchor semantics.
+          # ------------------------------------------------------------------
+          # Documentation: retain the scientific qualifications that matter for
+          # interpreting the frozen version.
+          # ------------------------------------------------------------------
           p = Path('docs/FIGURE_ARCHITECTURE.md')
           t = p.read_text(encoding='utf-8')
           anchor = '''The active ordered design is read from `scripts/utils/analysis_design.R`: primary
@@ -167,63 +301,95 @@ jobs:
           complete analysis days. Five minutes is a core sensitivity state only and does not
           enter the primary figures. Main PNG figures are written to `results/figures`.
           '''
-          replacement = anchor + '''
+          qualifier = '''
           High-information states are empirical scale anchors rather than biological ground
           truth. Tolerance `epsilon` is a task-specific admissibility criterion, not a universal
           biological threshold. Placement and optical representation remain target-alignment
           contrasts rather than ordered burden axes.
           '''
-          t = one(t, anchor, replacement, 'Figure architecture anchor semantics')
-          t = one(t,
+          if qualifier.strip() not in t:
+              if anchor not in t:
+                  raise SystemExit('Figure architecture design anchor not found')
+              t = t.replace(anchor, anchor + qualifier, 1)
+          t = t.replace(
               '''- Fig. 4a: tolerance-dependent minimum observed sufficient requirement rank for
-            temporal resolution and monitoring duration, plus resolved-sufficient coverage.
-          ''',
+            temporal resolution and monitoring duration, plus resolved-sufficient coverage.''',
               '''- Fig. 4a: tolerance-dependent minimum observed sufficient requirement rank for
             temporal resolution and monitoring duration only when the sufficient set is
             threshold-like; the coverage strip reports the fraction with a resolved
-            threshold-like requirement.
-          ''', 'Figure architecture Fig4a')
-          t = t.replace('fixed all-target denominator within the joint-analysis metric universe',
-                        'fixed denominator over the joint-analysis target-metric universe')
+            threshold-like requirement.'''
+          )
+          t = t.replace(
+              'right annotations give the fraction of metrics with positive held-out `R^2`.',
+              'right annotations give the fraction of evaluable metrics with positive held-out `R^2`.'
+          )
+          t = t.replace(
+              'fixed all-target denominator within the joint-analysis metric universe',
+              'fixed denominator over the joint-analysis target-metric universe'
+          )
+          p.write_text(t, encoding='utf-8')
+
+          # ------------------------------------------------------------------
+          # Persistent static freeze invariants in ordinary CI.
+          # ------------------------------------------------------------------
+          p = Path('.github/workflows/r-syntax.yml')
+          t = p.read_text(encoding='utf-8')
+          if 'Check frozen plotting semantics' not in t:
+              anchor = '      - name: Check server runner shell syntax\n'
+              if anchor not in t:
+                  raise SystemExit('r-syntax insertion anchor not found')
+              step = '''      - name: Check frozen plotting semantics
+                run: |
+                  python - <<'PY2'
+                  from pathlib import Path
+                  f11 = Path("scripts/11_plot_fig1.R").read_text(encoding="utf-8")
+                  f13 = Path("scripts/13_plot_rq2.R").read_text(encoding="utf-8")
+                  f15 = Path("scripts/15_plot_rq3.R").read_text(encoding="utf-8")
+                  doc = Path("docs/FIGURE_ARCHITECTURE.md").read_text(encoding="utf-8")
+                  assert "metric_class" in f11[f11.index("rank_cache_required"):f11.index("rank_cache_valid")]
+                  assert "rq2_layered_context_model_coefficients.csv" in f13
+                  assert "rq2_layered_context_model_performance.csv" in f13
+                  assert "fraction of evaluable metrics with CV R² > 0" in f13
+                  assert "display_threshold_like = threshold_like_at" in f15
+                  assert "canonical RQ3 threshold-like requirement" in f15
+                  assert "does not contain exactly the frozen primary temporal states" in f15
+                  assert "does not contain exactly the frozen primary duration states" in f15
+                  assert "c(1800, 900, 300, 60, 30, 20, 10)" not in f15
+                  assert f15.count("p4a_main <-") == 1
+                  assert f15.count("fig4 <- cowplot::plot_grid(") == 1
+                  assert f15.count("FIG5_TOLERANCE_SLICES <-") == 1
+                  assert "threshold-like" in doc
+                  assert "joint-analysis target-metric universe" in doc
+                  PY2
+          '''
+              t = t.replace(anchor, step + anchor, 1)
           p.write_text(t, encoding='utf-8')
           PY
 
-      - uses: r-lib/actions/setup-r@v2
-        with:
-          r-version: '4.5.0'
-          use-public-rspm: true
-
-      - name: Validate semantics and syntax
-        shell: bash
+      - name: Check patch consistency
         run: |
-          set -euo pipefail
-          Rscript -e 'for (f in c("scripts/11_plot_fig1.R","scripts/13_plot_rq2.R","scripts/15_plot_rq3.R")) parse(file=f, keep.source=TRUE)'
+          git diff --check
           python - <<'PY'
           from pathlib import Path
           f13 = Path('scripts/13_plot_rq2.R').read_text(encoding='utf-8')
           f15 = Path('scripts/15_plot_rq3.R').read_text(encoding='utf-8')
-          doc = Path('docs/FIGURE_ARCHITECTURE.md').read_text(encoding='utf-8')
           assert 'rq2_layered_context_model_coefficients.csv' in f13
-          assert 'rq2_model_coefficients.csv' not in f13
-          assert 'sufficient_set_threshold_like = threshold_like_at' in f15
-          assert 'contracts as measurement burden increases' not in f15
-          assert 'rq3_single_dimension_requirement.csv' not in f15
-          assert 'rq3_unordered_coverage_curves.csv' not in f15
-          assert 'exactly the frozen primary temporal states' in f15
-          assert 'joint-analysis targets' in f15
-          assert 'threshold-like' in doc and 'empirical scale anchors' in doc
-          assert f15.count('p4a_main <-') == 1 and f15.count('fig4 <- cowplot::plot_grid(') == 1
+          assert 'display_threshold_like = threshold_like_at' in f15
+          assert 'canonical RQ3 threshold-like requirement' in f15
+          assert 'does not contain exactly the frozen primary temporal states' in f15
+          assert f15.count('p4a_main <-') == 1
+          assert f15.count('FIG5_TOLERANCE_SLICES <-') == 1
           PY
-          git diff --check
 
       - name: Commit final semantic fixes
         shell: bash
         run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add scripts/13_plot_rq2.R scripts/15_plot_rq3.R docs/FIGURE_ARCHITECTURE.md
-          if ! git diff --cached --quiet; then
-            git commit -m 'Align figure displays with frozen estimand semantics'
-            git push origin HEAD:${{ github.head_ref }}
+          if git diff --quiet; then
+            echo "No semantic fixes needed"
+            exit 0
           fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/13_plot_rq2.R scripts/15_plot_rq3.R docs/FIGURE_ARCHITECTURE.md .github/workflows/r-syntax.yml
+          git commit -m "Fix final freeze semantic contracts"
+          git push origin HEAD:freeze-validation-20260830
