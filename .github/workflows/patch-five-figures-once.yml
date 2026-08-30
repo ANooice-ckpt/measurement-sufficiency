@@ -1,0 +1,67 @@
+name: One-shot five-figure refinement
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'scripts/11_plot_fig1.R'
+      - 'scripts/13_plot_rq2.R'
+      - 'scripts/15_plot_rq3.R'
+      - 'scripts/utils/patch_five_figures_once.py'
+      - '.github/workflows/patch-five-figures-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - name: Apply figure refinements
+        run: python scripts/utils/patch_five_figures_once.py
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.5.0'
+      - name: Parse canonical plotting sources
+        shell: Rscript {0}
+        run: |
+          parse(file = 'scripts/11_plot_fig1.R')
+          parse(file = 'scripts/13_plot_rq2.R')
+          parse(file = 'scripts/15_plot_rq3.R')
+      - name: Enforce figure invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          f1 = Path('scripts/11_plot_fig1.R').read_text(encoding='utf-8')
+          f23 = Path('scripts/13_plot_rq2.R').read_text(encoding='utf-8')
+          f45 = Path('scripts/15_plot_rq3.R').read_text(encoding='utf-8')
+          assert f1.count('"Fig1_RQ1.png"') == 1 and f1.count('"Fig1_RQ1.pdf"') == 1
+          assert f23.count('"Fig2_RQ2.png"') == 1 and f23.count('"Fig2_RQ2.pdf"') == 1
+          assert f23.count('"Fig3_RQ2.png"') == 1 and f23.count('"Fig3_RQ2.pdf"') == 1
+          assert f45.count('"Fig4_RQ3.png"') == 1 and f45.count('"Fig4_RQ3.pdf"') == 1
+          assert f45.count('"Fig5_RQ3.png"') == 1 and f45.count('"Fig5_RQ3.pdf"') == 1
+          for token in ('rho_A_rank', 'rank_cache_valid', 'equal share across adjacent steps'):
+              assert token in f1
+          for token in ('Micro-environment', 'Behaviour', 'median R / Q', 'fraction of metrics with CV R² > 0'):
+              assert token in f23
+          for token in ('fig5_slice_guides', 'epsilon50', 'class_strip_labels', 'unresolved ≠ sufficient'):
+              assert token in f45
+          PY
+          git diff --check
+      - name: Commit plotting refinements
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add scripts/11_plot_fig1.R scripts/13_plot_rq2.R scripts/15_plot_rq3.R
+          if ! git diff --cached --quiet; then
+            git commit -m 'Refine information density across main figures'
+            git push origin HEAD:${{ github.head_ref }}
+          fi
