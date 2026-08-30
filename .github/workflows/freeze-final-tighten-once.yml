@@ -1,0 +1,88 @@
+name: Tighten final freeze guards
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'scripts/15_plot_rq3.R'
+      - '.github/workflows/freeze-final-tighten-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  tighten:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - name: Tighten guards
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/15_plot_rq3.R')
+          t = p.read_text(encoding='utf-8')
+
+          if 'RQ3 joint artifact is missing one or more frozen temporal-duration configurations' not in t:
+              anchor = '''if (!identical(joint_days, sort(as.integer(DURATION_LEVELS)))) {
+            stop("RQ3 joint artifact does not contain exactly the frozen primary duration states", call. = FALSE)
+          }
+          '''
+              if anchor not in t:
+                  raise SystemExit('joint duration guard anchor not found')
+              addition = anchor + '''joint_configuration_states <- joint |>
+            distinct(resolution_s, n_days) |>
+            mutate(resolution_s = as.integer(resolution_s), n_days = as.integer(n_days))
+          expected_joint_configuration_states <- tidyr::crossing(
+            resolution_s = as.integer(ms_primary_temporal_s()),
+            n_days = as.integer(DURATION_LEVELS)
+          )
+          missing_joint_configuration_states <- dplyr::anti_join(
+            expected_joint_configuration_states, joint_configuration_states,
+            by = c("resolution_s", "n_days")
+          )
+          if (nrow(missing_joint_configuration_states)) {
+            stop("RQ3 joint artifact is missing one or more frozen temporal-duration configurations", call. = FALSE)
+          }
+          '''
+              t = t.replace(anchor, addition, 1)
+
+          old = '''if (!nrow(requirement_native_check) ||
+              any(!requirement_native_check$threshold_agrees | !requirement_native_check$rank_agrees, na.rm = TRUE)) {
+            stop("Fig. 4 display inversion disagrees with the canonical RQ3 threshold-like requirement", call. = FALSE)
+          }'''
+          new = '''if (nrow(requirement_native_check) != nrow(canonical_requirement_check) ||
+              any(is.na(requirement_native_check$threshold_agrees)) ||
+              any(is.na(requirement_native_check$rank_agrees)) ||
+              any(!requirement_native_check$threshold_agrees | !requirement_native_check$rank_agrees)) {
+            stop("Fig. 4 display inversion disagrees with the canonical RQ3 threshold-like requirement", call. = FALSE)
+          }'''
+          if new not in t:
+              if old not in t:
+                  raise SystemExit('native requirement validation block not found')
+              t = t.replace(old, new, 1)
+
+          p.write_text(t, encoding='utf-8')
+          PY
+          git diff --check
+          python - <<'PY'
+          from pathlib import Path
+          t = Path('scripts/15_plot_rq3.R').read_text(encoding='utf-8')
+          assert 'missing one or more frozen temporal-duration configurations' in t
+          assert 'nrow(requirement_native_check) != nrow(canonical_requirement_check)' in t
+          PY
+      - name: Commit guard tightening
+        shell: bash
+        run: |
+          if git diff --quiet -- scripts/15_plot_rq3.R; then
+            echo "No tightening needed"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/15_plot_rq3.R
+          git commit -m "Tighten final RQ3 freeze guards"
+          git push origin HEAD:freeze-validation-20260830
