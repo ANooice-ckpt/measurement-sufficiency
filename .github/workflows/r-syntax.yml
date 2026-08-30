@@ -60,6 +60,8 @@ jobs:
           assert "canonical RQ3 threshold-like requirement" in f15
           assert "does not contain exactly the frozen primary temporal states" in f15
           assert "does not contain exactly the frozen primary duration states" in f15
+          assert "missing one or more frozen temporal-duration configurations" in f15
+          assert "nrow(requirement_native_check) != nrow(canonical_requirement_check)" in f15
           assert "c(1800, 900, 300, 60, 30, 20, 10)" not in f15
           assert f15.count("p4a_main <-") == 1
           assert f15.count("fig4 <- cowplot::plot_grid(") == 1
