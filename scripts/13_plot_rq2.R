@@ -15,6 +15,7 @@ suppressPackageStartupMessages({library(tidyverse); library(cowplot)})
 source("scripts/utils/figure_style.R")
 source("scripts/utils/figure_atlas.R")
 source("scripts/utils/plot_contracts.R")
+source("scripts/utils/analysis_design.R")
 
 RQ1_SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
 CONDITION_RDS <- file.path("results", "rq2", "rq2_condition_long.rds")
@@ -62,7 +63,8 @@ ms_plot_require_columns(performance,
   c("dimension", "comparison_pair_id", "metric", "outcome", "model_family", "validation_scheme",
     "n_test", "rmse", "mae", "r2"), "rq2_model_performance.csv")
 ms_plot_require_columns(model_manifest,
-  c("core_artifact_version", "rq1_analysis_version", "rq2_analysis_version"),
+  c("artifact_type", "core_artifact_version", "rq1_analysis_version", "rq2_analysis_version",
+    "context_model_version"),
   "rq2_model_artifact_manifest.csv")
 ms_plot_require_columns(gamma_summary,
   c("dimension_a", "dimension_b", "comparison_lattice", "transition", "metric", "metric_class", "R", "Q"),
@@ -82,6 +84,26 @@ CORE_VERSION <- ms_plot_assert_core(c(condition_core, conditional$core_artifact_
                                      model_manifest$core_artifact_version, gamma_long$core_artifact_version))
 ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
 ms_plot_assert_prefix(RQ2_VERSION, "rq2_v5_", "rq2_analysis_version")
+if (!grepl(ms_analysis_design_id(), RQ2_VERSION, fixed = TRUE)) {
+  stop("RQ2 plotting inputs do not match the current frozen analysis design", call. = FALSE)
+}
+if (is.list(condition) && !is.null(condition$analysis_design_id) &&
+    !identical(as.character(condition$analysis_design_id[[1]]), ms_analysis_design_id())) {
+  stop("RQ2 condition artifact does not match the current frozen analysis design", call. = FALSE)
+}
+if (any(is.na(model_manifest$artifact_type)) ||
+    any(model_manifest$artifact_type != "rq2_layered_context_model_checkpoint_v1")) {
+  stop("RQ2 plotting requires the layered-context model manifest", call. = FALSE)
+}
+CONTEXT_MODEL_VERSION <- ms_plot_one_version(
+  model_manifest$context_model_version, "context_model_version"
+)
+if (!identical(CONTEXT_MODEL_VERSION, paste0("rq2_layered_context_v1__", RQ2_VERSION))) {
+  stop("RQ2 layered-context model version does not match the frozen RQ2 version", call. = FALSE)
+}
+if (!"joint" %in% coefficients$model_family || !"joint" %in% performance$model_family) {
+  stop("RQ2 plotting requires fitted layered joint-context model outputs", call. = FALSE)
+}
 
 metric_order <- ms_metric_order(rq1_summary)
 metric_class_lookup <- rq1_summary |> distinct(metric, metric_class)
@@ -1117,11 +1139,3 @@ ms_plot_write_manifest(
     rq3_analysis_version = NA_character_
   ))
 message("RQ2 v5 figures complete: Fig. 2 combines state-conditioned geometry, layered contextual effects and held-out predictability; Fig. 3 reports interaction sign, magnitude and coherence.")
-
-source(file.path("scripts", "utils", "analysis_design.R"), local = .GlobalEnv)
-
-# Guard against plotting stale RQ2 artifacts after a measurement-lattice change.
-if (is.list(condition) && !is.null(condition$analysis_design_id) &&
-    !identical(as.character(condition$analysis_design_id[[1]]), ms_analysis_design_id())) {
-  stop("RQ2 plotting inputs do not match the current frozen analysis design", call. = FALSE)
-}

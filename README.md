@@ -72,7 +72,7 @@ Rscript scripts/11_plot_fig1.R
 RQ2_WORKERS=12 RQ2_CV_FOLDS=5 RQ2_RUN_MODELS=1 Rscript scripts/12_rq2_analysis.R
 Rscript scripts/13_plot_rq2.R
 
-# RQ3: observed residual instability, sufficiency and Pareto occupancy
+# RQ3: observed residual instability, sufficiency, joint design geometry and Pareto audit
 Rscript scripts/14_rq3_analysis.R
 Rscript scripts/15_plot_rq3.R
 ```
@@ -83,7 +83,7 @@ On the Linux server, the resumable downstream chain can be launched with `script
 
 The analysis stages emit versioned model/checkpoint and figure provenance tables alongside their primary outputs. Main PNG figures are centralized under `results/figures`; RQ-specific figure manifests remain at the corresponding `results/rqX/` roots.
 
-RQ1's primary upstream artifact is `results/rq1/rq1_pairwise_change_long.rds`, a manifest for versioned canonical parts. RQ2 uses the manifest loader and selects only primary pairwise rows/columns. RQ3 reads the RQ1 pairwise summaries and actual `results/core/duration_metric_cube.rds`. Plot scripts read frozen RQ outputs only; they do not load raw MeLiDos series, call LightLogR metric operators, refit models, bootstrap, construct duration windows or calculate gamma/sufficiency.
+RQ1's primary upstream artifact is `results/rq1/rq1_pairwise_change_long.rds`, a manifest for versioned canonical parts. RQ2 uses the manifest loader and selects only primary pairwise rows/columns. RQ3 reads the RQ1 pairwise summaries and actual `results/core/duration_metric_cube.rds`. Plot scripts read frozen RQ outputs only; they do not load raw MeLiDos series, call LightLogR metric operators, refit models, bootstrap, construct duration windows, or recompute canonical gamma/sufficiency/Pareto estimands. Display-only summaries may be derived from frozen thresholds and never feed back into the analyses. Main Fig. 5 uses joint entry tolerance, class contrasts and fixed-tolerance confirmed-coverage slices; canonical Pareto occupancy remains an audit/supplementary RQ3 output.
 
 Context analyses previously split across `10b`, `10c` and `12b` are no longer separate RQ1 entry points. Their reusable context operators belong in `scripts/utils/` or in the RQ2 checkpointed stages; `12c_rq2_context_models.R` is sourced internally by the canonical RQ2 entrypoint rather than run as a standalone stage.
 
