@@ -410,16 +410,32 @@ transition_spread <- transition_state |>
 # standardized distortion per one-SD predictor change. Transition-specific fits
 # are collapsed within metric only for display.
 PREDICTOR_LEVELS <- c(
-  "external_radiation", "external_direct_fraction", "external_cloud",
-  "solar_noon_elevation_deg", "primary_state_raw", "duration_day_variability"
+  "external_radiation", "external_cloud", "solar_noon_elevation_deg",
+  "micro_outdoor_fraction", "micro_daylight_indoor_fraction",
+  "behaviour_work_fraction", "behaviour_exercise_level",
+  "primary_state_raw", "duration_day_variability"
 )
 PREDICTOR_LABELS <- c(
   external_radiation = "Solar radiation",
-  external_direct_fraction = "Direct fraction",
   external_cloud = "Cloud cover",
   solar_noon_elevation_deg = "Solar-noon elevation",
+  micro_outdoor_fraction = "Outdoor fraction",
+  micro_daylight_indoor_fraction = "Indoor daylight fraction",
+  behaviour_work_fraction = "Work fraction",
+  behaviour_exercise_level = "Exercise level",
   primary_state_raw = "Primary exposure state",
   duration_day_variability = "Day-to-day variability"
+)
+PREDICTOR_FAMILIES <- c(
+  external_radiation = "External opportunity",
+  external_cloud = "External opportunity",
+  solar_noon_elevation_deg = "External opportunity",
+  micro_outdoor_fraction = "Micro-environment",
+  micro_daylight_indoor_fraction = "Micro-environment",
+  behaviour_work_fraction = "Behaviour",
+  behaviour_exercise_level = "Behaviour",
+  primary_state_raw = "Exposure state",
+  duration_day_variability = "Exposure state"
 )
 
 coef_metric <- coefficients |>
@@ -431,8 +447,10 @@ coef_metric <- coefficients |>
     dimension = factor(dimension, levels = DIMENSIONS, labels = unname(DIM_TITLES[DIMENSIONS])),
     predictor = factor(term, levels = rev(PREDICTOR_LEVELS), labels = rev(unname(PREDICTOR_LABELS[PREDICTOR_LEVELS]))),
     predictor_num = as.integer(predictor),
-    predictor_family = if_else(term %in% c("primary_state_raw", "duration_day_variability"),
-                               "Exposure state", "External context"),
+    predictor_family = factor(
+      unname(PREDICTOR_FAMILIES[term]),
+      levels = c("External opportunity", "Micro-environment", "Behaviour", "Exposure state")
+    ),
     outcome_label = recode(outcome, signed = "Signed", magnitude = "Absolute", .default = outcome),
     outcome_label = factor(outcome_label, levels = c("Signed", "Absolute")),
     y_pos = predictor_num + if_else(outcome_label == "Signed", -.11, .11)
@@ -450,7 +468,12 @@ coef_summary <- coef_metric |>
   ) |>
   mutate(y_pos = predictor_num + if_else(outcome_label == "Signed", -.11, .11))
 
-PREDICTOR_COLORS <- c("External context" = MS_PRIMARY, "Exposure state" = MS_SECONDARY)
+PREDICTOR_COLORS <- c(
+  "External opportunity" = MS_PRIMARY,
+  "Micro-environment" = "#5F8F84",
+  "Behaviour" = MS_NEUTRAL,
+  "Exposure state" = MS_SECONDARY
+)
 OUTCOME_SHAPES <- c("Signed" = 16, "Absolute" = 17)
 coef_limit <- robust_symmetric_display_limit(
   coef_metric$estimate,
@@ -499,7 +522,7 @@ if (nrow(coef_metric)) {
     ) +
     labs(
       title = "b  Contextual predictors of distortion",
-      subtitle = "raw points show central 95%; medians and IQRs use all estimates",
+      subtitle = "prespecified representatives span external opportunity, micro-environment, behaviour and exposure state",
       x = "standardized joint-model coefficient", y = NULL
     ) +
     theme_rq2(base_size = 6.1, legend_position = "bottom") +
@@ -628,6 +651,19 @@ joint_cv_summary <- joint_cv_metric |>
     .groups = "drop"
   )
 
+joint_cv_positive <- joint_cv_metric |>
+  group_by(dimension, outcome_label) |>
+  summarise(
+    n_metrics = n_distinct(metric),
+    fraction_positive = mean(r2 > 0, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    dimension_num = as.integer(dimension),
+    y_label = dimension_num + .25,
+    label = paste0(round(100 * fraction_positive), "% > 0")
+  )
+
 if (nrow(joint_cv_metric)) {
   joint_cv_limit <- robust_symmetric_display_limit(
     joint_cv_metric$r2,
@@ -669,6 +705,12 @@ if (nrow(joint_cv_metric)) {
       aes(r2_median, y_pos, color = metric_class),
       inherit.aes = FALSE, shape = 18, size = 1.45
     ) +
+    geom_text(
+      data = joint_cv_positive,
+      aes(x = Inf, y = y_label, label = label),
+      inherit.aes = FALSE, hjust = 1.08, vjust = .5,
+      size = 1.55, color = MS_NEUTRAL
+    ) +
     facet_wrap(~outcome_label, nrow = 1) +
     scale_color_ms_metric(guide = "none") +
     scale_x_continuous(
@@ -682,7 +724,7 @@ if (nrow(joint_cv_metric)) {
     ) +
     labs(
       title = "c  Out-of-sample contextual predictability",
-      subtitle = "raw points show central 95%; class summaries use all joint-model CV results",
+      subtitle = "class summaries use all joint-model CV results; right labels = fraction of metrics with CV R² > 0",
       x = "participant-grouped CV R²", y = NULL
     ) +
     theme_rq2(base_size = 6.05) +
@@ -938,6 +980,7 @@ gamma_transition <- gamma_plot |>
     Q_q25 = quantile(Q, .25, na.rm = TRUE, names = FALSE),
     Q_q75 = quantile(Q, .75, na.rm = TRUE, names = FALSE),
     R_median = median(R, na.rm = TRUE),
+    coherence_median = median(if_else(Q > 1e-12, R / Q, NA_real_), na.rm = TRUE),
     .groups = "drop"
   ) |>
   group_by(dimension_pair) |>
@@ -948,22 +991,23 @@ gamma_transition <- gamma_plot |>
     transition_key = forcats::fct_reorder(transition_key, Q_median)
   )
 
-fill_limit <- max(abs(gamma_transition$R_median), na.rm = TRUE)
-if (!is.finite(fill_limit) || fill_limit <= 0) fill_limit <- 1e-6
-
 p3c <- ggplot(gamma_transition, aes(Q_median, transition_key)) +
   geom_segment(aes(x = Q_q25, xend = Q_q75, yend = transition_key),
                color = "#A8ADB0", linewidth = .90, alpha = .62, lineend = "round") +
-  geom_point(aes(fill = R_median), shape = 21, size = 2.15, color = "#3E4245", stroke = .22) +
+  geom_point(aes(fill = coherence_median), shape = 21, size = 2.15, color = "#3E4245", stroke = .22) +
   facet_grid(. ~ dimension_pair, scales = "free_y", space = "free_x") +
   scale_y_discrete(labels = function(x) stringr::str_wrap(sub("^.*\\|\\|\\|", "", x), width = 24)) +
   scale_x_continuous(breaks = scales::breaks_extended(n = 4)) +
-  scale_fill_ms_diverging(fill_limit, name = "median R") +
-  labs(title = "c  Localization of the strongest cross-dimensional interactions",
-       x = "median Q across metrics", y = NULL) +
+  scale_fill_ms_diverging(1, name = "median R / Q") +
+  labs(
+    title = "c  Strong interactions differ in directional coherence",
+    subtitle = "x = interaction magnitude Q; fill = signed coherence R/Q (0 = cancellation)",
+    x = "median Q across metrics", y = NULL
+  ) +
   theme_rq2(base_size = 6.3, legend_position = "bottom") +
   theme(panel.grid.major.y = element_blank(), axis.line.y = element_blank(), axis.ticks.y = element_blank(),
         axis.text.y = element_text(size = 4.9), strip.text = element_text(size = 5.8),
+        plot.subtitle = element_text(size = 4.35, colour = "#666A6D", margin = margin(t = -1, b = 1.5)),
         legend.title = element_text(size = 5.3), legend.text = element_text(size = 5.0),
         panel.spacing.x = grid::unit(2.4, "mm"))
 
