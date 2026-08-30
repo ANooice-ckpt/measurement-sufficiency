@@ -80,14 +80,10 @@ jobs:
           ''',
           '''    aes(B_mean_signed, A_mean_absolute, label = paste0(metric, " · ", label_role)),
           ''', 'Fig1 semantic point labels')
-          t = one(t,
-          '''    title = "b  Directionality and magnitude of target-aligned distortion",
-            subtitle = "labels mark maximum A and maximum |B|/A · toward |B| = A means more coherent directional change",
-            x = "B: mean signed change", y = "A: mean absolute change"
-          ''',
-          '''    title = "b  Directionality and magnitude of target-aligned distortion",
-            x = "B: mean signed change", y = "A: mean absolute change"
-          ''', 'Fig1b compact header')
+          subtitle_line = '    subtitle = "labels mark maximum A and maximum |B|/A · toward |B| = A means more coherent directional change",\n'
+          if t.count(subtitle_line) != 1:
+              raise SystemExit('Fig1b subtitle line not found exactly once')
+          t = t.replace(subtitle_line, '', 1)
           t = one(t,
           '''    "c  Ordered-axis local response · dotted line = equal share across adjacent steps",
             x = 0, y = .92, hjust = 0, vjust = .5,
