@@ -104,6 +104,20 @@ if (!identical(joint_resolutions, sort(as.integer(ms_primary_temporal_s())))) {
 if (!identical(joint_days, sort(as.integer(DURATION_LEVELS)))) {
   stop("RQ3 joint artifact does not contain exactly the frozen primary duration states", call. = FALSE)
 }
+joint_configuration_states <- joint |>
+  distinct(resolution_s, n_days) |>
+  mutate(resolution_s = as.integer(resolution_s), n_days = as.integer(n_days))
+expected_joint_configuration_states <- tidyr::crossing(
+  resolution_s = as.integer(ms_primary_temporal_s()),
+  n_days = as.integer(DURATION_LEVELS)
+)
+missing_joint_configuration_states <- dplyr::anti_join(
+  expected_joint_configuration_states, joint_configuration_states,
+  by = c("resolution_s", "n_days")
+)
+if (nrow(missing_joint_configuration_states)) {
+  stop("RQ3 joint artifact is missing one or more frozen temporal-duration configurations", call. = FALSE)
+}
 temporal_ranks <- sort(unique(as.integer(observed$requirement_rank[
   observed$dimension == "temporal" & is.finite(observed$requirement_rank)
 ])))
@@ -201,8 +215,10 @@ requirement_native_check <- requirement_grid |>
       (is.finite(least_rank) & is.finite(canonical_least_rank) &
          abs(least_rank - canonical_least_rank) <= NUMERIC_TOL)
   )
-if (!nrow(requirement_native_check) ||
-    any(!requirement_native_check$threshold_agrees | !requirement_native_check$rank_agrees, na.rm = TRUE)) {
+if (nrow(requirement_native_check) != nrow(canonical_requirement_check) ||
+    any(is.na(requirement_native_check$threshold_agrees)) ||
+    any(is.na(requirement_native_check$rank_agrees)) ||
+    any(!requirement_native_check$threshold_agrees | !requirement_native_check$rank_agrees)) {
   stop("Fig. 4 display inversion disagrees with the canonical RQ3 threshold-like requirement", call. = FALSE)
 }
 
