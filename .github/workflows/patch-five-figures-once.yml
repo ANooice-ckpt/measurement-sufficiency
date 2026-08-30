@@ -33,14 +33,17 @@ jobs:
               if n != 1:
                   raise SystemExit(f'{label}: expected exactly one match, found {n}')
               return text.replace(old, new, 1)
-          '''
-          # Normalize indentation exactly as stored in the helper.
-          old = old.replace('          ', '')
+          '''.replace('          ', '')
           new = '''def replace_once(text, old, new, label):
               n = text.count(old)
               if n == 1:
                   return text.replace(old, new, 1)
-              if label == 'Fig4c epsilon50 and guides' and n == 2:
+              final_fig4_labels = {
+                  'Fig4c epsilon50 and guides',
+                  'Fig4c subtitle',
+                  'Fig4c subtitle theme',
+              }
+              if label in final_fig4_labels and n == 2:
                   head, sep, tail = text.rpartition(old)
                   return head + new + tail
               raise SystemExit(f'{label}: expected exactly one match, found {n}')
