@@ -1,0 +1,484 @@
+name: One-shot freeze validation
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'scripts/11_plot_fig1.R'
+      - 'scripts/13_plot_rq2.R'
+      - 'scripts/15_plot_rq3.R'
+      - 'docs/FIGURE_ARCHITECTURE.md'
+      - 'docs/STUDY_SPEC.md'
+      - 'README.md'
+      - '.github/workflows/freeze-validation-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  audit-fix-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Apply freeze-safe fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def one(text, old, new, label):
+              n = text.count(old)
+              if n != 1:
+                  raise SystemExit(f"{label}: expected one match, found {n}")
+              return text.replace(old, new, 1)
+
+          # Fig. 1: cache schema must be checked before cache columns are accessed.
+          p = Path('scripts/11_plot_fig1.R')
+          t = p.read_text(encoding='utf-8')
+          old = '''rank_cache_required <- c(
+            "core_artifact_version", "rq1_analysis_version", "dimension", "metric",
+            "A_mean_absolute", "rank_loss", "rank_preservation_available"
+          )
+          rank_cache_core <- unique(rank_cache$core_artifact_version[!is.na(rank_cache$core_artifact_version)])
+          rank_cache_rq1 <- unique(rank_cache$rq1_analysis_version[!is.na(rank_cache$rq1_analysis_version)])
+          rank_cache_valid <- nrow(rank_cache) > 0 && all(rank_cache_required %in% names(rank_cache)) &&
+            length(rank_cache_core) == 1L && identical(rank_cache_core[[1]], CORE_VERSION) &&
+            length(rank_cache_rq1) == 1L && identical(rank_cache_rq1[[1]], RQ1_VERSION)
+          '''
+          new = '''rank_cache_required <- c(
+            "core_artifact_version", "rq1_analysis_version", "dimension", "metric", "metric_class",
+            "A_mean_absolute", "rank_loss", "rank_preservation_available"
+          )
+          rank_cache_valid <- nrow(rank_cache) > 0 && all(rank_cache_required %in% names(rank_cache))
+          if (rank_cache_valid) {
+            rank_cache_core <- unique(rank_cache$core_artifact_version[!is.na(rank_cache$core_artifact_version)])
+            rank_cache_rq1 <- unique(rank_cache$rq1_analysis_version[!is.na(rank_cache$rq1_analysis_version)])
+            rank_cache_valid <- length(rank_cache_core) == 1L && identical(rank_cache_core[[1]], CORE_VERSION) &&
+              length(rank_cache_rq1) == 1L && identical(rank_cache_rq1[[1]], RQ1_VERSION)
+          }
+          '''
+          t = one(t, old, new, 'Fig1 cache contract')
+          p.write_text(t, encoding='utf-8')
+
+          # Figs. 2-3: provenance/design checks must happen before any plot is written.
+          p = Path('scripts/13_plot_rq2.R')
+          t = p.read_text(encoding='utf-8')
+          t = one(
+              t,
+              'source("scripts/utils/plot_contracts.R")\n',
+              'source("scripts/utils/plot_contracts.R")\nsource("scripts/utils/analysis_design.R")\n',
+              'RQ2 early design source'
+          )
+          t = one(
+              t,
+              '''ms_plot_require_columns(model_manifest,
+            c("core_artifact_version", "rq1_analysis_version", "rq2_analysis_version"),
+            "rq2_model_artifact_manifest.csv")
+          ''',
+              '''ms_plot_require_columns(model_manifest,
+            c("artifact_type", "core_artifact_version", "rq1_analysis_version", "rq2_analysis_version",
+              "context_model_version"),
+            "rq2_model_artifact_manifest.csv")
+          ''',
+              'RQ2 manifest schema'
+          )
+          anchor = '''ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
+          ms_plot_assert_prefix(RQ2_VERSION, "rq2_v5_", "rq2_analysis_version")
+          '''
+          insert = anchor + '''if (!grepl(ms_analysis_design_id(), RQ2_VERSION, fixed = TRUE)) {
+            stop("RQ2 plotting inputs do not match the current frozen analysis design", call. = FALSE)
+          }
+          if (is.list(condition) && !is.null(condition$analysis_design_id) &&
+              !identical(as.character(condition$analysis_design_id[[1]]), ms_analysis_design_id())) {
+            stop("RQ2 condition artifact does not match the current frozen analysis design", call. = FALSE)
+          }
+          if (any(is.na(model_manifest$artifact_type)) ||
+              any(model_manifest$artifact_type != "rq2_layered_context_model_checkpoint_v1")) {
+            stop("RQ2 plotting requires the layered-context model manifest", call. = FALSE)
+          }
+          CONTEXT_MODEL_VERSION <- ms_plot_one_version(
+            model_manifest$context_model_version, "context_model_version"
+          )
+          if (!identical(CONTEXT_MODEL_VERSION, paste0("rq2_layered_context_v1__", RQ2_VERSION))) {
+            stop("RQ2 layered-context model version does not match the frozen RQ2 version", call. = FALSE)
+          }
+          if (!"joint" %in% coefficients$model_family || !"joint" %in% performance$model_family) {
+            stop("RQ2 plotting requires fitted layered joint-context model outputs", call. = FALSE)
+          }
+          '''
+          t = one(t, anchor, insert, 'RQ2 early guards')
+          late_start = t.index('\nsource(file.path("scripts", "utils", "analysis_design.R"), local = .GlobalEnv)')
+          late_end = len(t)
+          t = t[:late_start].rstrip() + '\n'
+          p.write_text(t, encoding='utf-8')
+
+          # Figs. 4-5: one current lattice, one Fig.4 definition, guards before output.
+          p = Path('scripts/15_plot_rq3.R')
+          t = p.read_text(encoding='utf-8')
+
+          late_source = 'source(file.path("scripts", "utils", "analysis_design.R"), local = .GlobalEnv)\n'
+          late_source_start = t.index(late_source, t.index('message("RQ3 v5 figures complete'))
+          late_plot_marker = '# -----------------------------------------------------------------------------\n# Main-text display refinement for Fig. 4.'
+          late_plot_start = t.index(late_plot_marker, late_source_start)
+          final_fig4_block = t[late_plot_start:]
+          t = t[:late_source_start].rstrip() + '\n'
+
+          t = one(
+              t,
+              'source("scripts/utils/plot_contracts.R")\n',
+              'source("scripts/utils/plot_contracts.R")\nsource("scripts/utils/analysis_design.R")\n',
+              'RQ3 early design source'
+          )
+          t = one(
+              t,
+              '''RES_LEVELS <- c(1800, 900, 300, 60, 30, 20, 10)
+          RES_LABELS <- c("30 min", "15 min", "5 min", "1 min", "30 s", "20 s", "10 s")
+          NUMERIC_TOL <- 1e-12
+          ''',
+              '''RES_LEVELS <- rev(ms_primary_temporal_s())
+          RES_LABELS <- ms_temporal_label(RES_LEVELS)
+          DURATION_LEVELS <- ms_primary_duration_days()
+          ORDERED_MAX_RANK <- max(length(RES_LEVELS), length(DURATION_LEVELS))
+          FIG5_TOLERANCE_SLICES <- c(.10, .25, .50, .75)
+          NUMERIC_TOL <- 1e-12
+          ''',
+              'RQ3 current lattice'
+          )
+          anchor = '''ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
+          ms_plot_assert_prefix(RQ3_VERSION, "rq3_v5_", "rq3_analysis_version")
+          '''
+          insert = anchor + '''if (!grepl(ms_analysis_design_id(), RQ3_VERSION, fixed = TRUE)) {
+            stop("RQ3 plotting inputs do not match the current frozen analysis design", call. = FALSE)
+          }
+          if (!all(sort(unique(joint$resolution_s)) %in% sort(ms_primary_temporal_s()))) {
+            stop("RQ3 joint artifact contains temporal states outside the frozen primary design", call. = FALSE)
+          }
+          if (!all(sort(unique(joint$n_days)) %in% DURATION_LEVELS)) {
+            stop("RQ3 joint artifact contains duration states outside the frozen primary design", call. = FALSE)
+          }
+          temporal_ranks <- observed$requirement_rank[
+            observed$dimension == "temporal" & is.finite(observed$requirement_rank)
+          ]
+          duration_ranks <- observed$requirement_rank[
+            observed$dimension == "duration" & is.finite(observed$requirement_rank)
+          ]
+          if (any(!temporal_ranks %in% seq_along(RES_LEVELS)) ||
+              any(!duration_ranks %in% seq_along(DURATION_LEVELS))) {
+            stop("RQ3 ordered requirement ranks fall outside the frozen display lattice", call. = FALSE)
+          }
+          '''
+          t = one(t, anchor, insert, 'RQ3 early guards')
+
+          # Delete historical Fig.4 display objects but retain their data summaries.
+          s = t.index('p4a_main <- ggplot(requirement_summary')
+          e = t.index('# b. Distribution of the empirical entry threshold', s)
+          t = t[:s] + t[e:]
+          s = t.index('p4b <- ggplot() +')
+          e = t.index('# c. Unordered dimensions are empirical substitutability curves', s)
+          t = t[:s] + t[e:]
+          s = t.index('p4c <- ggplot(pair_ecdf,')
+          e = t.index('readr::write_csv(\n  resolved_coverage', s)
+          t = t[:s] + final_fig4_block.rstrip() + '\n\n' + t[e:]
+
+          # The final Fig.4 block carried its old late lattice rebind; remove it.
+          stale = '''# Rebind every display-level ordered axis to the single frozen design definition.
+          # The legacy v5 source is retained for reproducibility, but canonical figures must
+          # never depend on its historical hard-coded 7-state temporal lattice.
+          RES_LEVELS <- rev(ms_primary_temporal_s())
+          RES_LABELS <- ms_temporal_label(RES_LEVELS)
+          DURATION_LEVELS <- ms_primary_duration_days()
+          ORDERED_MAX_RANK <- max(length(RES_LEVELS), length(DURATION_LEVELS))
+
+          if (!all(sort(unique(joint$resolution_s)) %in% sort(ms_primary_temporal_s()))) {
+            stop("RQ3 joint artifact contains temporal states outside the frozen primary design", call. = FALSE)
+          }
+          if (!all(sort(unique(joint$n_days)) %in% DURATION_LEVELS)) {
+            stop("RQ3 joint artifact contains duration states outside the frozen primary design", call. = FALSE)
+          }
+          if (!grepl(ms_analysis_design_id(), RQ3_VERSION, fixed = TRUE)) {
+            stop("RQ3 plotting inputs do not match the current frozen analysis design", call. = FALSE)
+          }
+
+          '''
+          if stale in t:
+              t = t.replace(stale, '', 1)
+
+          # Remove duplicate slice declaration copied with the accepted Fig.4 block.
+          dup = 'FIG5_TOLERANCE_SLICES <- c(.10, .25, .50, .75)\n'
+          while t.count(dup) > 1:
+              pos = t.rfind(dup)
+              t = t[:pos] + t[pos + len(dup):]
+
+          # Fig.5 uses a fixed universe of joint-analysis target metrics. Missing and
+          # boundary-unresolved metric/configuration cells remain NA and therefore are
+          # not silently dropped from confirmed-coverage denominators.
+          s = t.index('entry_metric_surface <- joint_plot_base |>')
+          e = t.index('entry_grid <- tidyr::crossing(', s)
+          replacement = '''joint_target_metrics <- joint_plot_base |>
+            filter(!is.na(metric_class)) |>
+            distinct(metric, metric_class)
+          if (anyDuplicated(joint_target_metrics$metric)) {
+            stop("A joint-analysis metric maps to more than one representation class", call. = FALSE)
+          }
+
+          entry_metric_observed <- joint_plot_base |>
+            filter(!is.na(metric_class)) |>
+            group_by(metric, metric_class, resolution_s, resolution_rank, n_days) |>
+            summarise(
+              n_facets = n(),
+              n_resolved_facets = sum(status == "resolved" & is.finite(epsilon_entry)),
+              epsilon_metric = if (any(status == "resolved" & is.finite(epsilon_entry))) {
+                median(epsilon_entry[status == "resolved" & is.finite(epsilon_entry)], na.rm = TRUE)
+              } else NA_real_,
+              .groups = "drop"
+            )
+
+          entry_metric_surface <- tidyr::crossing(
+            metric = joint_target_metrics$metric,
+            resolution_rank = seq_along(fig5_res_levels),
+            n_days = fig5_days
+          ) |>
+            left_join(joint_target_metrics, by = "metric") |>
+            mutate(resolution_s = fig5_res_levels[resolution_rank]) |>
+            left_join(
+              entry_metric_observed,
+              by = c("metric", "metric_class", "resolution_s", "resolution_rank", "n_days")
+            )
+
+          entry_surface <- entry_metric_surface |>
+            group_by(resolution_s, resolution_rank, n_days) |>
+            summarise(
+              n_metrics = n_distinct(metric),
+              n_resolved = sum(is.finite(epsilon_metric)),
+              resolved_fraction = mean(is.finite(epsilon_metric)),
+              epsilon_entry_median = safe_median(epsilon_metric),
+              epsilon_entry_q25 = safe_q(epsilon_metric, .25),
+              epsilon_entry_q75 = safe_q(epsilon_metric, .75),
+              .groups = "drop"
+            )
+
+          entry_class_surface <- entry_metric_surface |>
+            group_by(metric_class, resolution_s, resolution_rank, n_days) |>
+            summarise(
+              n_metrics = n_distinct(metric),
+              n_resolved = sum(is.finite(epsilon_metric)),
+              resolved_fraction = mean(is.finite(epsilon_metric)),
+              epsilon_entry_median = safe_median(epsilon_metric),
+              .groups = "drop"
+            ) |>
+            left_join(
+              entry_surface |>
+                select(resolution_s, resolution_rank, n_days,
+                       overall_entry_tolerance = epsilon_entry_median),
+              by = c("resolution_s", "resolution_rank", "n_days")
+            ) |>
+            mutate(entry_tolerance_difference = epsilon_entry_median - overall_entry_tolerance)
+
+          '''
+          t = t[:s] + replacement + t[e:]
+
+          # Class summaries must be defined even when a class has no finite cells.
+          s = t.index('entry_class_summary <- entry_class_surface |>')
+          e = t.index('class_strip_labels <-', s)
+          replacement = '''entry_class_summary <- entry_class_surface |>
+            group_by(metric_class) |>
+            summarise(
+              n_cells = sum(is.finite(entry_tolerance_difference)),
+              median_delta = safe_median(entry_tolerance_difference),
+              fraction_positive = if (any(is.finite(entry_tolerance_difference))) {
+                mean(entry_tolerance_difference > 0, na.rm = TRUE)
+              } else NA_real_,
+              .groups = "drop"
+            ) |>
+            mutate(
+              strip_label = paste0(
+                as.character(metric_class), "\\nmed Δε ",
+                if_else(is.finite(median_delta), sprintf("%+.2f", median_delta), "NA"),
+                " · ",
+                if_else(is.finite(fraction_positive), paste0(round(100 * fraction_positive), "% > 0"), "NA")
+              )
+            )
+          '''
+          t = t[:s] + replacement + t[e:]
+          t = one(
+              t,
+              'subtitle = "darker = more permissive tolerance required; grey = unresolved",',
+              'subtitle = "fill = median entry tolerance among resolved targets; grey = no resolved target",',
+              'Fig5a subtitle'
+          )
+          t = one(
+              t,
+              'subtitle = "warm = more permissive tolerance required; cool = stricter tolerance sufficient",',
+              'subtitle = "warm/cool = class median relative to pooled median; grey = unresolved",',
+              'Fig5b subtitle'
+          )
+          s = t.index('joint_metric_status <- joint_plot_base |>')
+          e = t.index('slice_coverage <- tidyr::crossing(', s)
+          t = t[:s] + '''joint_metric_status <- entry_metric_surface |>
+            select(metric, metric_class, resolution_s, resolution_rank, n_days, epsilon_metric)
+
+          ''' + t[e:]
+          p.write_text(t, encoding='utf-8')
+
+          # Documentation: synchronize with the actual figure semantics.
+          fig_doc = """# Current figure architecture
+
+          This document describes the plotting contract for the current frozen core and
+          RQ analysis chain. Plot scripts consume frozen RQ artifacts and may derive
+          display-only summaries from already-frozen thresholds; they do not refit models,
+          reconstruct measurement windows, or redefine the canonical estimands.
+
+          ## Scientific visual grammar
+
+          The 54 published exposure metrics remain the analytical units. Metric classes are
+          descriptive color/order groupings only. Unavailable representations remain
+          unavailable and are never coded as zero distortion.
+
+          The active ordered design is read from `scripts/utils/analysis_design.R`: primary
+          temporal states are 10, 20, 30, 40, 60 and 120 s; monitoring duration is 1–6
+          complete analysis days. Five minutes is a core sensitivity state only and does not
+          enter the primary figures. Main PNG figures are written to `results/figures`.
+
+          ## Figure 1 — RQ1 configuration response
+
+          - Fig. 1a: typical absolute standardized distortion `A` versus Spearman rank loss
+            `1-rho`; facet annotations give the descriptive metric-level association between
+            these two quantities. Circular-time representations do not receive ordinary ranks.
+          - Fig. 1b: target-aligned signed-versus-absolute geometry for placement and optical
+            representation; labels identify maximum `A` and maximum `|B|/A` metrics.
+          - Fig. 1c: adjacent local-response shares over temporal and duration transitions;
+            the dotted line is the equal-share baseline.
+
+          ## Figures 2–3 — RQ2 context dependence and non-separability
+
+          - Fig. 2a: conditional `A` trajectories across Low/Middle/High exposure state with
+            a lower `B/A` coherence strip on the same state axis.
+          - Fig. 2b: standardized joint-model coefficients for a fixed representative set
+            spanning external opportunity, micro-environment, behaviour and exposure state.
+          - Fig. 2c: participant-grouped held-out `R^2` from the joint contextual model;
+            right annotations give the fraction of metrics with positive held-out `R^2`.
+          - Fig. 3a: signed cross-dimensional interaction `R`.
+          - Fig. 3b: interaction magnitude `Q`.
+          - Fig. 3c: strongest local transitions by `Q`, with fill encoding bounded signed
+            coherence `R/Q`; values near zero indicate directional cancellation.
+
+          ## Figures 4–5 — RQ3 sufficiency and joint design geometry
+
+          - Fig. 4a: tolerance-dependent minimum observed sufficient requirement rank for
+            temporal resolution and monitoring duration, plus resolved-sufficient coverage.
+          - Fig. 4b: residual observed instability `R_obs` by burden rank; unresolved upper
+            boundaries are omitted rather than assigned zero.
+          - Fig. 4c: target-aligned placement/optical substitutability; open points mark
+            `epsilon50`, the first observed tolerance reaching at least 50% substitutability.
+          - Fig. 5a: joint temporal-resolution × duration entry-tolerance surface. Fill is the
+            median `epsilon_entry = R_obs` among resolved joint-analysis target metrics.
+          - Fig. 5b: representation-class deviations from the pooled entry-tolerance surface,
+            with compact class summaries in the strips.
+          - Fig. 5c: fixed-tolerance slices of confirmed joint sufficiency. Coverage uses a
+            fixed all-target denominator within the joint-analysis metric universe, so
+            missing/boundary-unresolved targets do not count as sufficient. The dark outline
+            is a display-only coverage-efficient frontier, not the canonical Pareto estimand.
+
+          Fig. 4 uses tolerance as an axis; Fig. 5 uses tolerance only as fixed slices, so the
+          two figures answer different questions. Canonical RQ3 Pareto persistence/occupancy
+          remains available for audit and supplementary use, but is not the main Fig. 5 quantity.
+
+          ## Cross-figure division of labor
+
+          - Fig. 1: what representation is lost when configuration changes?
+          - Fig. 2: how does distortion depend on exposure/context?
+          - Fig. 3: where do dimensions fail to separate additively?
+          - Fig. 4: at tolerance `epsilon`, what one-dimensional burden is observed sufficient?
+          - Fig. 5: what is the topology of joint temporal × duration sufficiency?
+
+          ## Implementation invariants
+
+          Plot wrappers validate artifact/design identity before writing figures. Figure-level
+          inversions, coverage summaries and the Fig. 5c outline are display derivatives of
+          frozen `R_obs`/`epsilon_entry` thresholds and never feed back into RQ1–RQ3.
+
+          Files under `results/legacy/pre_refactor` are audit-only and are not valid inputs to
+          current plotting scripts.
+          """
+          Path('docs/FIGURE_ARCHITECTURE.md').write_text(
+              '\n'.join(line[10:] if line.startswith('          ') else line for line in fig_doc.splitlines()) + '\n',
+              encoding='utf-8'
+          )
+
+          p = Path('docs/STUDY_SPEC.md')
+          t = p.read_text(encoding='utf-8')
+          t = one(
+              t,
+              'Plot scripts read frozen results artifacts only. They do not read raw series, call LightLogR operators, construct duration windows, bootstrap, refit models, calculate gamma or calculate sufficiency.\n',
+              'Plot scripts read frozen results artifacts only. They do not read raw series, call LightLogR operators, construct duration windows, bootstrap, refit models, or recompute the canonical A/B, gamma, R_obs, sufficiency or Pareto estimands. They may derive display-only inversions and coverage summaries from already-frozen R_obs/epsilon_entry thresholds; these derivatives do not feed back into RQ1-RQ3.\n',
+              'Study-spec plot contract'
+          )
+          p.write_text(t, encoding='utf-8')
+
+          p = Path('README.md')
+          t = p.read_text(encoding='utf-8')
+          t = one(
+              t,
+              '# RQ3: observed residual instability, sufficiency and Pareto occupancy',
+              '# RQ3: observed residual instability, sufficiency, joint design geometry and Pareto audit',
+              'README RQ3 label'
+          )
+          old = """RQ1's primary upstream artifact is `results/rq1/rq1_pairwise_change_long.rds`, a manifest for versioned canonical parts. RQ2 uses the manifest loader and selects only primary pairwise rows/columns. RQ3 reads the RQ1 pairwise summaries and actual `results/core/duration_metric_cube.rds`. Plot scripts read frozen RQ outputs only; they do not load raw MeLiDos series, call LightLogR metric operators, refit models, bootstrap, construct duration windows or calculate gamma/sufficiency.
+          """
+          new = """RQ1's primary upstream artifact is `results/rq1/rq1_pairwise_change_long.rds`, a manifest for versioned canonical parts. RQ2 uses the manifest loader and selects only primary pairwise rows/columns. RQ3 reads the RQ1 pairwise summaries and actual `results/core/duration_metric_cube.rds`. Plot scripts read frozen RQ outputs only; they do not load raw MeLiDos series, call LightLogR metric operators, refit models, bootstrap, construct duration windows, or recompute canonical gamma/sufficiency/Pareto estimands. Display-only summaries may be derived from frozen thresholds and never feed back into the analyses. Main Fig. 5 uses joint entry tolerance, class contrasts and fixed-tolerance confirmed-coverage slices; canonical Pareto occupancy remains an audit/supplementary RQ3 output.
+          """
+          t = one(t, old, new, 'README plot contract')
+          p.write_text(t, encoding='utf-8')
+          PY
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.5.0'
+          use-public-rspm: true
+
+      - name: Parse and enforce freeze invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          Rscript -e 'for (f in c("scripts/11_plot_fig1.R","scripts/13_plot_rq2.R","scripts/15_plot_rq3.R")) parse(file=f, keep.source=TRUE)'
+          python - <<'PY'
+          from pathlib import Path
+          f11 = Path('scripts/11_plot_fig1.R').read_text(encoding='utf-8')
+          f13 = Path('scripts/13_plot_rq2.R').read_text(encoding='utf-8')
+          f15 = Path('scripts/15_plot_rq3.R').read_text(encoding='utf-8')
+          doc = Path('docs/FIGURE_ARCHITECTURE.md').read_text(encoding='utf-8')
+          assert f13.index('source("scripts/utils/analysis_design.R")') < f13.index('ms_plot_save(')
+          assert f15.index('source("scripts/utils/analysis_design.R")') < f15.index('ms_plot_save(')
+          assert 'c(1800, 900, 300, 60, 30, 20, 10)' not in f15
+          assert f15.count('p4a_main <-') == 1
+          assert f15.count('p4b <- ggplot() +') == 1
+          assert f15.count('p4c <- ggplot(') == 1
+          assert f15.count('fig4 <- cowplot::plot_grid(') == 1
+          assert f15.count('FIG5_TOLERANCE_SLICES <-') == 1
+          assert f15.index('if (!grepl(ms_analysis_design_id(), RQ3_VERSION') < f15.index('ms_plot_save(')
+          assert f13.index('if (!grepl(ms_analysis_design_id(), RQ2_VERSION') < f13.index('ms_plot_save(')
+          cache = f11[f11.index('rank_cache_required'):f11.index('if (rank_cache_valid)')]
+          assert 'metric_class' in cache
+          assert 'High-minus-Low change in distortion direction' not in doc
+          assert 'overall Pareto occupancy' not in doc
+          assert 'fixed all-target denominator' in doc
+          assert 'joint_target_metrics' in f15 and 'joint_metric_status <- entry_metric_surface' in f15
+          PY
+          git diff --check
+
+      - name: Commit freeze-safe fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add scripts/11_plot_fig1.R scripts/13_plot_rq2.R scripts/15_plot_rq3.R \
+                  docs/FIGURE_ARCHITECTURE.md docs/STUDY_SPEC.md README.md
+          if ! git diff --cached --quiet; then
+            git commit -m 'Harden frozen figure contracts and provenance'
+            git push origin HEAD:${{ github.head_ref }}
+          fi
