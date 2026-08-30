@@ -1,4 +1,4 @@
-name: One-shot five-figure refinement
+name: One-shot final figure polish
 
 on:
   pull_request:
@@ -7,54 +7,148 @@ on:
       - 'scripts/11_plot_fig1.R'
       - 'scripts/13_plot_rq2.R'
       - 'scripts/15_plot_rq3.R'
-      - 'scripts/utils/patch_five_figures_once.py'
       - '.github/workflows/patch-five-figures-once.yml'
 
 permissions:
   contents: write
 
 jobs:
-  apply-and-validate:
+  polish-and-validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
           fetch-depth: 0
-      - name: Harden final Fig4 selector
+      - name: Apply final plotting polish
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
-          p = Path('scripts/utils/patch_five_figures_once.py')
-          t = p.read_text(encoding='utf-8')
-          old = '''def replace_once(text, old, new, label):
+
+          def one(text, old, new, label):
               n = text.count(old)
               if n != 1:
-                  raise SystemExit(f'{label}: expected exactly one match, found {n}')
+                  raise SystemExit(f'{label}: expected one match, found {n}')
               return text.replace(old, new, 1)
-          '''.replace('          ', '')
-          new = '''def replace_once(text, old, new, label):
-              n = text.count(old)
-              if n == 1:
-                  return text.replace(old, new, 1)
-              final_fig4_labels = {
-                  'Fig4c epsilon50 and guides',
-                  'Fig4c subtitle',
-                  'Fig4c subtitle theme',
-                  'Fig4 layout weights',
-              }
-              if label in final_fig4_labels and n == 2:
-                  head, sep, tail = text.rpartition(old)
-                  return head + new + tail
-              raise SystemExit(f'{label}: expected exactly one match, found {n}')
-          '''.replace('          ', '')
-          if old not in t:
-              raise SystemExit('replace_once helper definition not found')
-          p.write_text(t.replace(old, new, 1), encoding='utf-8')
+
+          # Fig. 1: robust cache identity and compact in-panel label semantics.
+          p = Path('scripts/11_plot_fig1.R')
+          t = p.read_text(encoding='utf-8')
+          t = one(t,
+          '''rank_cache_valid <- nrow(rank_cache) > 0 && all(rank_cache_required %in% names(rank_cache)) &&
+            identical(unique(na.omit(rank_cache$core_artifact_version)), CORE_VERSION) &&
+            identical(unique(na.omit(rank_cache$rq1_analysis_version)), RQ1_VERSION)
+          ''',
+          '''rank_cache_core <- unique(rank_cache$core_artifact_version[!is.na(rank_cache$core_artifact_version)])
+          rank_cache_rq1 <- unique(rank_cache$rq1_analysis_version[!is.na(rank_cache$rq1_analysis_version)])
+          rank_cache_valid <- nrow(rank_cache) > 0 && all(rank_cache_required %in% names(rank_cache)) &&
+            length(rank_cache_core) == 1L && identical(rank_cache_core[[1]], CORE_VERSION) &&
+            length(rank_cache_rq1) == 1L && identical(rank_cache_rq1[[1]], RQ1_VERSION)
+          ''', 'Fig1 cache identity')
+          t = one(t,
+          '''  group_by(facet_label) |>
+            slice_max(A_mean_absolute, n = 1, with_ties = FALSE) |>
+            ungroup()
+          target_label_coherent <- target_geometry |>
+          ''',
+          '''  group_by(facet_label) |>
+            slice_max(A_mean_absolute, n = 1, with_ties = FALSE) |>
+            ungroup() |>
+            mutate(label_role = "max A")
+          target_label_coherent <- target_geometry |>
+          ''', 'Fig1 max-A role')
+          t = one(t,
+          '''  group_by(facet_label) |>
+            slice_max(direction_coherence, n = 1, with_ties = FALSE) |>
+            ungroup()
+          target_labels <- bind_rows(target_label_max_a, target_label_coherent) |>
+            distinct(facet_label, metric, .keep_all = TRUE)
+          ''',
+          '''  group_by(facet_label) |>
+            slice_max(direction_coherence, n = 1, with_ties = FALSE) |>
+            ungroup() |>
+            mutate(label_role = "max |B|/A")
+          target_labels <- bind_rows(target_label_max_a, target_label_coherent) |>
+            group_by(facet_label, metric) |>
+            mutate(label_role = paste(unique(label_role), collapse = " + ")) |>
+            slice_head(n = 1) |>
+            ungroup()
+          ''', 'Fig1 coherence role')
+          t = one(t,
+          '''    aes(B_mean_signed, A_mean_absolute, label = metric),
+          ''',
+          '''    aes(B_mean_signed, A_mean_absolute, label = paste0(metric, " · ", label_role)),
+          ''', 'Fig1 semantic point labels')
+          t = one(t,
+          '''    title = "b  Directionality and magnitude of target-aligned distortion",
+            subtitle = "labels mark maximum A and maximum |B|/A · toward |B| = A means more coherent directional change",
+            x = "B: mean signed change", y = "A: mean absolute change"
+          ''',
+          '''    title = "b  Directionality and magnitude of target-aligned distortion",
+            x = "B: mean signed change", y = "A: mean absolute change"
+          ''', 'Fig1b compact header')
+          t = one(t,
+          '''    "c  Ordered-axis local response · dotted line = equal share across adjacent steps",
+            x = 0, y = .92, hjust = 0, vjust = .5,
+            size = FIG1_PANEL_TITLE_SIZE, fontface = "bold",
+            colour = "#151515", fontfamily = MS_FONT
+            )
+          ''',
+          '''    "c  Ordered-axis local response",
+            x = 0, y = .92, hjust = 0, vjust = .5,
+            size = FIG1_PANEL_TITLE_SIZE, fontface = "bold",
+            colour = "#151515", fontfamily = MS_FONT
+            ) +
+            cowplot::draw_label(
+              "dotted = equal-share baseline",
+              x = 0, y = .892, hjust = 0, vjust = .5,
+              size = 4.45, colour = "#777C7F", fontfamily = MS_FONT
+            )
+          ''', 'Fig1 local-response header')
+          p.write_text(t, encoding='utf-8')
+
+          # Fig. 2–3: concise legend labels, current comments, bounded coherence.
+          p = Path('scripts/13_plot_rq2.R')
+          t = p.read_text(encoding='utf-8')
+          t = one(t,
+          '''    scale_color_manual(values = PREDICTOR_COLORS, drop = FALSE) +
+          ''',
+          '''    scale_color_manual(
+              values = PREDICTOR_COLORS, drop = FALSE,
+              labels = c(
+                "External opportunity" = "External",
+                "Micro-environment" = "Micro-env.",
+                "Behaviour" = "Behaviour",
+                "Exposure state" = "Exposure state"
+              )
+            ) +
+          ''', 'Fig2 concise context legend')
+          t = t.replace(
+              '# supplement; the direction shift remains Fig. 2c.',
+              '# supplement; Fig. 2c reports held-out contextual predictability.'
+          )
+          t = t.replace(
+              'message("RQ2 v5 figures complete: Fig. 2 separates exposure-state distributions, predictor-level contextual effects, and direction shifts; Fig. 3 retains cross-dimensional interaction geometry.")',
+              'message("RQ2 v5 figures complete: Fig. 2 combines state-conditioned geometry, layered contextual effects and held-out predictability; Fig. 3 reports interaction sign, magnitude and coherence.")'
+          )
+          t = one(t,
+          '''  ) |>
+            group_by(dimension_pair) |>
+            slice_max(Q_median, n = 4, with_ties = FALSE) |>
+          ''',
+          '''  ) |>
+            mutate(
+              coherence_median = if_else(
+                is.finite(coherence_median),
+                pmax(-1, pmin(1, coherence_median)), NA_real_
+              )
+            ) |>
+            group_by(dimension_pair) |>
+            slice_max(Q_median, n = 4, with_ties = FALSE) |>
+          ''', 'Fig3 bound R/Q coherence')
+          p.write_text(t, encoding='utf-8')
           PY
-      - name: Apply figure refinements
-        run: python scripts/utils/patch_five_figures_once.py
       - uses: r-lib/actions/setup-r@v2
         with:
           r-version: '4.5.0'
@@ -64,7 +158,7 @@ jobs:
           parse(file = 'scripts/11_plot_fig1.R')
           parse(file = 'scripts/13_plot_rq2.R')
           parse(file = 'scripts/15_plot_rq3.R')
-      - name: Enforce figure invariants
+      - name: Enforce final invariants
         shell: bash
         run: |
           set -euo pipefail
@@ -73,20 +167,15 @@ jobs:
           f1 = Path('scripts/11_plot_fig1.R').read_text(encoding='utf-8')
           f23 = Path('scripts/13_plot_rq2.R').read_text(encoding='utf-8')
           f45 = Path('scripts/15_plot_rq3.R').read_text(encoding='utf-8')
-          assert f1.count('"Fig1_RQ1.png"') == 1 and f1.count('"Fig1_RQ1.pdf"') == 1
-          assert f23.count('"Fig2_RQ2.png"') == 1 and f23.count('"Fig2_RQ2.pdf"') == 1
-          assert f23.count('"Fig3_RQ2.png"') == 1 and f23.count('"Fig3_RQ2.pdf"') == 1
-          assert f45.count('"Fig4_RQ3.png"') == 1 and f45.count('"Fig4_RQ3.pdf"') == 1
-          assert f45.count('"Fig5_RQ3.png"') == 1 and f45.count('"Fig5_RQ3.pdf"') == 1
-          for token in ('rho_A_rank', 'rank_cache_valid', 'equal share across adjacent steps'):
-              assert token in f1
-          for token in ('Micro-environment', 'Behaviour', 'median R / Q', 'fraction of metrics with CV R² > 0'):
-              assert token in f23
-          for token in ('fig5_slice_guides', 'epsilon50', 'class_strip_labels', 'unresolved ≠ sufficient'):
-              assert token in f45
+          for text, stem in ((f1,'Fig1_RQ1'), (f23,'Fig2_RQ2'), (f23,'Fig3_RQ2'), (f45,'Fig4_RQ3'), (f45,'Fig5_RQ3')):
+              assert text.count(f'"{stem}.png"') == 1
+              assert text.count(f'"{stem}.pdf"') == 1
+          assert 'rank_cache_core' in f1 and 'max |B|/A' in f1 and 'equal-share baseline' in f1
+          assert 'Micro-env.' in f23 and 'median R / Q' in f23 and 'pmax(-1, pmin(1, coherence_median))' in f23
+          assert 'fig5_slice_guides' in f45 and 'epsilon50' in f45 and 'class_strip_labels' in f45
           PY
           git diff --check
-      - name: Commit plotting refinements
+      - name: Commit final plotting polish
         shell: bash
         run: |
           set -euo pipefail
@@ -94,6 +183,6 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add scripts/11_plot_fig1.R scripts/13_plot_rq2.R scripts/15_plot_rq3.R
           if ! git diff --cached --quiet; then
-            git commit -m 'Refine information density across main figures'
+            git commit -m 'Polish in-place figure annotations'
             git push origin HEAD:${{ github.head_ref }}
           fi
