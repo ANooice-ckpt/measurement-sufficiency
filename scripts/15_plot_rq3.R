@@ -22,12 +22,11 @@ OBSERVED_RDS <- file.path("results", "rq3", "rq3_sufficiency_long.rds")
 SUFFICIENCY_CSV <- file.path("results", "rq3", "rq3_sufficiency_long.csv")
 REQUIREMENT_CSV <- file.path("results", "rq3", "rq3_single_dimension_requirement.csv")
 UNORDERED_CSV <- file.path("results", "rq3", "rq3_unordered_substitutability.csv")
-COVERAGE_CSV <- file.path("results", "rq3", "rq3_unordered_coverage_curves.csv")
 CONVERGENCE_CSV <- file.path("results", "rq3", "rq3_convergence_profile.csv")
 JOINT_CSV <- file.path("results", "rq3", "rq3_joint_summary.csv")
 OUT_DIR <- file.path("results", "rq3", "figures")
 ms_plot_require_files(c(RQ1_SUMMARY_CSV, OBSERVED_RDS, SUFFICIENCY_CSV, REQUIREMENT_CSV,
-                        UNORDERED_CSV, COVERAGE_CSV, CONVERGENCE_CSV, JOINT_CSV),
+                        UNORDERED_CSV, CONVERGENCE_CSV, JOINT_CSV),
                         "RQ3 v5 plotting inputs")
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
@@ -46,62 +45,74 @@ observed <- readRDS(OBSERVED_RDS)
 sufficiency <- readr::read_csv(SUFFICIENCY_CSV, show_col_types = FALSE, progress = FALSE)
 requirement <- readr::read_csv(REQUIREMENT_CSV, show_col_types = FALSE, progress = FALSE)
 unordered <- readr::read_csv(UNORDERED_CSV, show_col_types = FALSE, progress = FALSE)
-coverage <- readr::read_csv(COVERAGE_CSV, show_col_types = FALSE, progress = FALSE)
 convergence <- readr::read_csv(CONVERGENCE_CSV, show_col_types = FALSE, progress = FALSE)
 joint <- readr::read_csv(JOINT_CSV, show_col_types = FALSE, progress = FALSE)
 
-ms_plot_require_columns(rq1_summary, c("metric", "metric_class", "dimension", "A_mean_absolute"),
+ms_plot_require_columns(rq1_summary, c("core_artifact_version", "rq1_analysis_version", "metric", "metric_class", "dimension", "A_mean_absolute"),
                         "rq1_pairwise_summary.csv")
 ms_plot_require_columns(observed,
   c("core_artifact_version", "rq1_analysis_version", "rq3_analysis_version", "dimension",
-    "metric", "metric_class", "state_label", "requirement_rank", "R_obs", "status"),
+    "metric", "metric_class", "state_id", "state_label", "requirement_rank", "R_obs", "status"),
   "rq3_sufficiency_long.rds")
 ms_plot_require_columns(sufficiency,
-  c("dimension", "metric", "metric_class", "epsilon", "sufficient", "status"),
+  c("core_artifact_version", "rq1_analysis_version", "rq3_analysis_version",
+    "dimension", "metric", "metric_class", "epsilon", "sufficient", "status"),
   "rq3_sufficiency_long.csv")
 ms_plot_require_columns(requirement,
-  c("dimension", "metric", "epsilon", "sufficient_states", "sufficient_set_threshold_like"),
+  c("dimension", "metric", "epsilon", "sufficient_states", "sufficient_set_threshold_like",
+    "least_demanding_sufficient_state"),
   "rq3_single_dimension_requirement.csv")
 ms_plot_require_columns(unordered,
-  c("dimension", "comparison_pair_id", "config_a_label", "config_b_label", "metric", "metric_class",
+  c("core_artifact_version", "rq1_analysis_version", "rq3_analysis_version",
+    "dimension", "comparison_pair_id", "config_a_label", "config_b_label", "metric", "metric_class",
     "orientation_type", "epsilon_entry", "A", "B"),
   "rq3_unordered_substitutability.csv")
-ms_plot_require_columns(coverage,
-  c("dimension", "comparison_pair_id", "epsilon", "fraction_metrics_substitutable"),
-  "rq3_unordered_coverage_curves.csv")
 ms_plot_require_columns(convergence,
-  c("dimension", "metric", "metric_class", "G", "requirement_position", "boundary_proximity"),
+  c("core_artifact_version", "rq1_analysis_version", "rq3_analysis_version",
+    "dimension", "metric", "metric_class", "G", "requirement_position", "boundary_proximity"),
   "rq3_convergence_profile.csv")
 ms_plot_require_columns(joint,
   c("core_artifact_version", "rq1_analysis_version", "rq3_analysis_version", "support_id", "placement",
     "optical", "resolution_s", "n_days", "metric", "status", "epsilon_entry"),
   "rq3_joint_summary.csv")
 
-RQ1_VERSION <- ms_plot_one_version(c(observed$rq1_analysis_version, joint$rq1_analysis_version),
-                                   "rq1_analysis_version")
-RQ3_VERSION <- ms_plot_one_version(c(observed$rq3_analysis_version, joint$rq3_analysis_version),
-                                   "rq3_analysis_version")
-CORE_VERSION <- ms_plot_assert_core(c(observed$core_artifact_version, joint$core_artifact_version))
+RQ1_VERSION <- ms_plot_one_version(c(
+  rq1_summary$rq1_analysis_version, observed$rq1_analysis_version,
+  sufficiency$rq1_analysis_version, unordered$rq1_analysis_version,
+  convergence$rq1_analysis_version, joint$rq1_analysis_version
+), "rq1_analysis_version")
+RQ3_VERSION <- ms_plot_one_version(c(
+  observed$rq3_analysis_version, sufficiency$rq3_analysis_version,
+  unordered$rq3_analysis_version, convergence$rq3_analysis_version,
+  joint$rq3_analysis_version
+), "rq3_analysis_version")
+CORE_VERSION <- ms_plot_assert_core(c(
+  rq1_summary$core_artifact_version, observed$core_artifact_version,
+  sufficiency$core_artifact_version, unordered$core_artifact_version,
+  convergence$core_artifact_version, joint$core_artifact_version
+))
 ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
 ms_plot_assert_prefix(RQ3_VERSION, "rq3_v5_", "rq3_analysis_version")
 if (!grepl(ms_analysis_design_id(), RQ3_VERSION, fixed = TRUE)) {
   stop("RQ3 plotting inputs do not match the current frozen analysis design", call. = FALSE)
 }
-if (!all(sort(unique(joint$resolution_s)) %in% sort(ms_primary_temporal_s()))) {
-  stop("RQ3 joint artifact contains temporal states outside the frozen primary design", call. = FALSE)
+joint_resolutions <- sort(unique(as.integer(joint$resolution_s[is.finite(joint$resolution_s)])))
+joint_days <- sort(unique(as.integer(joint$n_days[is.finite(joint$n_days)])))
+if (!identical(joint_resolutions, sort(as.integer(ms_primary_temporal_s())))) {
+  stop("RQ3 joint artifact does not contain exactly the frozen primary temporal states", call. = FALSE)
 }
-if (!all(sort(unique(joint$n_days)) %in% DURATION_LEVELS)) {
-  stop("RQ3 joint artifact contains duration states outside the frozen primary design", call. = FALSE)
+if (!identical(joint_days, sort(as.integer(DURATION_LEVELS)))) {
+  stop("RQ3 joint artifact does not contain exactly the frozen primary duration states", call. = FALSE)
 }
-temporal_ranks <- observed$requirement_rank[
+temporal_ranks <- sort(unique(as.integer(observed$requirement_rank[
   observed$dimension == "temporal" & is.finite(observed$requirement_rank)
-]
-duration_ranks <- observed$requirement_rank[
+])))
+duration_ranks <- sort(unique(as.integer(observed$requirement_rank[
   observed$dimension == "duration" & is.finite(observed$requirement_rank)
-]
-if (any(!temporal_ranks %in% seq_along(RES_LEVELS)) ||
-    any(!duration_ranks %in% seq_along(DURATION_LEVELS))) {
-  stop("RQ3 ordered requirement ranks fall outside the frozen display lattice", call. = FALSE)
+])))
+if (!identical(temporal_ranks, seq_along(RES_LEVELS)) ||
+    !identical(duration_ranks, seq_along(DURATION_LEVELS))) {
+  stop("RQ3 ordered artifact does not contain exactly the frozen requirement ranks", call. = FALSE)
 }
 metric_order <- ms_metric_order(rq1_summary)
 
@@ -144,22 +155,56 @@ requirement_grid <- bind_rows(lapply(ORDERED_DIMS, function(dim) {
   d <- observed |>
     filter(dimension == dim, status == "resolved", is.finite(R_obs), is.finite(requirement_rank))
   eps <- sort(unique(c(0, d$R_obs[is.finite(d$R_obs)])))
-  metrics <- d |> distinct(metric, metric_class)
+  metrics <- observed |> filter(dimension == dim) |> distinct(metric, metric_class)
   bind_rows(lapply(seq_len(nrow(metrics)), function(i) {
     m <- metrics$metric[[i]]
     mc <- metrics$metric_class[[i]]
     g <- d |> filter(metric == m)
     rank_at <- vapply(eps, function(e) {
-      ok <- g$requirement_rank[g$R_obs <= e + NUMERIC_TOL]
-      if (length(ok)) min(ok) else NA_real_
+      resolved <- g |> arrange(requirement_rank)
+      ok <- resolved$R_obs <= e + NUMERIC_TOL
+      threshold_like <- length(ok) < 2L || all(diff(as.integer(ok)) >= 0L)
+      if (threshold_like && any(ok)) min(resolved$requirement_rank[ok]) else NA_real_
     }, numeric(1))
+    threshold_like_at <- vapply(eps, function(e) {
+      resolved <- g |> arrange(requirement_rank)
+      ok <- resolved$R_obs <= e + NUMERIC_TOL
+      length(ok) < 2L || all(diff(as.integer(ok)) >= 0L)
+    }, logical(1))
     tibble(
       dimension = dim, metric = m, metric_class = mc,
-      epsilon = eps, least_rank = rank_at
+      epsilon = eps, display_threshold_like = threshold_like_at, least_rank = rank_at
     )
   }))
 })) |>
   mutate(metric_class = factor(metric_class, levels = METRIC_CLASSES))
+
+canonical_requirement_check <- requirement |>
+  filter(dimension %in% ORDERED_DIMS) |>
+  left_join(
+    observed |>
+      filter(dimension %in% ORDERED_DIMS) |>
+      distinct(dimension, metric, state_id, requirement_rank),
+    by = c("dimension", "metric", "least_demanding_sufficient_state" = "state_id")
+  ) |>
+  transmute(
+    dimension, metric, epsilon,
+    canonical_threshold_like = sufficient_set_threshold_like,
+    canonical_least_rank = requirement_rank
+  )
+
+requirement_native_check <- requirement_grid |>
+  inner_join(canonical_requirement_check, by = c("dimension", "metric", "epsilon")) |>
+  mutate(
+    threshold_agrees = display_threshold_like == canonical_threshold_like,
+    rank_agrees = (is.na(least_rank) & is.na(canonical_least_rank)) |
+      (is.finite(least_rank) & is.finite(canonical_least_rank) &
+         abs(least_rank - canonical_least_rank) <= NUMERIC_TOL)
+  )
+if (!nrow(requirement_native_check) ||
+    any(!requirement_native_check$threshold_agrees | !requirement_native_check$rank_agrees, na.rm = TRUE)) {
+  stop("Fig. 4 display inversion disagrees with the canonical RQ3 threshold-like requirement", call. = FALSE)
+}
 
 requirement_summary <- requirement_grid |>
   group_by(dimension, metric_class, epsilon) |>
@@ -280,7 +325,7 @@ p4a_main <- ggplot(requirement_summary, aes(epsilon, rank_median, color = metric
   ) +
   labs(
     title = "a  Tolerance sets the minimum sufficient measurement burden",
-    subtitle = "thick = class median; thin = IQR · faint vertical guides = Fig. 5 tolerance slices",
+    subtitle = "thick = class median; thin = IQR · non-threshold-like sufficient sets remain unresolved",
     x = NULL, y = "minimum sufficient requirement rank\n(low → high burden)"
   ) +
   theme_rq3(base_size = 6.6) +
@@ -307,7 +352,7 @@ p4a_coverage_refined <- ggplot(resolved_coverage, aes(epsilon, coverage)) +
     limits = c(0, 1), breaks = c(0, .5, 1),
     labels = scales::label_percent(accuracy = 50), expand = expansion(mult = c(0, .02))
   ) +
-  labs(x = "tolerance ε", y = "metrics with a\nresolved sufficient state") +
+  labs(x = "tolerance ε", y = "metrics with a resolved\nthreshold-like requirement") +
   theme_rq3(base_size = 5.65) +
   theme(
     panel.grid.major.x = element_line(colour = "#F0F1F2", linewidth = .18),
@@ -353,7 +398,7 @@ p4b <- ggplot() +
   ) +
   scale_y_continuous(breaks = scales::breaks_extended(n = 5)) +
   labs(
-    title = "b  Residual instability contracts as measurement burden increases",
+    title = "b  Residual instability across increasing measurement burden",
     subtitle = "highest observed boundary is unresolved and omitted",
     x = "requirement rank (low → high burden)", y = "R_obs = max A to higher observed states"
   ) +
@@ -812,7 +857,7 @@ p5c <- ggplot(
   coord_fixed(ratio = .86, clip = "off") +
   labs(
     title = "c  Jointly sufficient regions expand as tolerance relaxes",
-    subtitle = "fill = confirmed coverage among all targets (unresolved ≠ sufficient); dark outline = coverage-efficient frontier",
+    subtitle = "fill = confirmed coverage among joint-analysis targets (unresolved ≠ sufficient); dark outline = coverage-efficient frontier",
     x = "temporal resolution  (low → high burden)", y = "monitoring duration"
   ) +
   theme_rq3(base_size = 5.55, legend_position = "bottom") +

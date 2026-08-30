@@ -16,6 +16,11 @@ temporal states are 10, 20, 30, 40, 60 and 120 s; monitoring duration is 1–6
 complete analysis days. Five minutes is a core sensitivity state only and does not
 enter the primary figures. Main PNG figures are written to `results/figures`.
 
+High-information states are empirical scale anchors rather than biological ground
+truth. Tolerance `epsilon` is a task-specific admissibility criterion, not a universal
+biological threshold. Placement and optical representation remain target-alignment
+contrasts rather than ordered burden axes.
+
 ## Figure 1 — RQ1 configuration response
 
 - Fig. 1a: typical absolute standardized distortion `A` versus Spearman rank loss
@@ -33,7 +38,7 @@ enter the primary figures. Main PNG figures are written to `results/figures`.
 - Fig. 2b: standardized joint-model coefficients for a fixed representative set
   spanning external opportunity, micro-environment, behaviour and exposure state.
 - Fig. 2c: participant-grouped held-out `R^2` from the joint contextual model;
-  right annotations give the fraction of metrics with positive held-out `R^2`.
+  right annotations give the fraction of evaluable metrics with positive held-out `R^2`.
 - Fig. 3a: signed cross-dimensional interaction `R`.
 - Fig. 3b: interaction magnitude `Q`.
 - Fig. 3c: strongest local transitions by `Q`, with fill encoding bounded signed
@@ -42,7 +47,9 @@ enter the primary figures. Main PNG figures are written to `results/figures`.
 ## Figures 4–5 — RQ3 sufficiency and joint design geometry
 
 - Fig. 4a: tolerance-dependent minimum observed sufficient requirement rank for
-  temporal resolution and monitoring duration, plus resolved-sufficient coverage.
+  temporal resolution and monitoring duration only when the sufficient set is
+  threshold-like; the coverage strip reports the fraction with a resolved
+  threshold-like requirement.
 - Fig. 4b: residual observed instability `R_obs` by burden rank; unresolved upper
   boundaries are omitted rather than assigned zero.
 - Fig. 4c: target-aligned placement/optical substitutability; open points mark
@@ -52,7 +59,7 @@ enter the primary figures. Main PNG figures are written to `results/figures`.
 - Fig. 5b: representation-class deviations from the pooled entry-tolerance surface,
   with compact class summaries in the strips.
 - Fig. 5c: fixed-tolerance slices of confirmed joint sufficiency. Coverage uses a
-  fixed all-target denominator within the joint-analysis metric universe, so
+  fixed denominator over the joint-analysis target-metric universe, so
   missing/boundary-unresolved targets do not count as sufficient. The dark outline
   is a display-only coverage-efficient frontier, not the canonical Pareto estimand.
 
