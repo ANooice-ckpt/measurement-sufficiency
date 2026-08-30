@@ -357,7 +357,7 @@ p2a <- cowplot::ggdraw() +
   )
 
 # Transition-resolved state geometry. The transition-spread view remains a
-# supplement; the direction shift remains Fig. 2c.
+# supplement; Fig. 2c reports held-out contextual predictability.
 transition_state <- conditional |>
   mutate(
     metric = as.character(metric),
@@ -503,7 +503,15 @@ if (nrow(coef_metric)) {
       inherit.aes = FALSE, size = 1.50
     ) +
     facet_wrap(~dimension, ncol = 2) +
-    scale_color_manual(values = PREDICTOR_COLORS, drop = FALSE) +
+    scale_color_manual(
+    values = PREDICTOR_COLORS, drop = FALSE,
+    labels = c(
+      "External opportunity" = "External",
+      "Micro-environment" = "Micro-env.",
+      "Behaviour" = "Behaviour",
+      "Exposure state" = "Exposure state"
+    )
+  ) +
     scale_shape_manual(values = OUTCOME_SHAPES, drop = FALSE) +
     scale_y_continuous(
       breaks = seq_along(levels(coef_metric$predictor)),
@@ -983,6 +991,12 @@ gamma_transition <- gamma_plot |>
     coherence_median = median(if_else(Q > 1e-12, R / Q, NA_real_), na.rm = TRUE),
     .groups = "drop"
   ) |>
+  mutate(
+    coherence_median = if_else(
+      is.finite(coherence_median),
+      pmax(-1, pmin(1, coherence_median)), NA_real_
+    )
+  ) |>
   group_by(dimension_pair) |>
   slice_max(Q_median, n = 4, with_ties = FALSE) |>
   ungroup() |>
@@ -1102,7 +1116,7 @@ ms_plot_write_manifest(
     rq2_analysis_version = RQ2_VERSION,
     rq3_analysis_version = NA_character_
   ))
-message("RQ2 v5 figures complete: Fig. 2 separates exposure-state distributions, predictor-level contextual effects, and direction shifts; Fig. 3 retains cross-dimensional interaction geometry.")
+message("RQ2 v5 figures complete: Fig. 2 combines state-conditioned geometry, layered contextual effects and held-out predictability; Fig. 3 reports interaction sign, magnitude and coherence.")
 
 source(file.path("scripts", "utils", "analysis_design.R"), local = .GlobalEnv)
 

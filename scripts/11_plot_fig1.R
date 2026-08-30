@@ -142,9 +142,11 @@ rank_cache_required <- c(
   "core_artifact_version", "rq1_analysis_version", "dimension", "metric",
   "A_mean_absolute", "rank_loss", "rank_preservation_available"
 )
+rank_cache_core <- unique(rank_cache$core_artifact_version[!is.na(rank_cache$core_artifact_version)])
+rank_cache_rq1 <- unique(rank_cache$rq1_analysis_version[!is.na(rank_cache$rq1_analysis_version)])
 rank_cache_valid <- nrow(rank_cache) > 0 && all(rank_cache_required %in% names(rank_cache)) &&
-  identical(unique(na.omit(rank_cache$core_artifact_version)), CORE_VERSION) &&
-  identical(unique(na.omit(rank_cache$rq1_analysis_version)), RQ1_VERSION)
+  length(rank_cache_core) == 1L && identical(rank_cache_core[[1]], CORE_VERSION) &&
+  length(rank_cache_rq1) == 1L && identical(rank_cache_rq1[[1]], RQ1_VERSION)
 
 if (rank_cache_valid) {
   rank_base <- rank_cache
@@ -431,7 +433,8 @@ target_label_max_a <- target_geometry |>
   ungroup() |>
   group_by(facet_label) |>
   slice_max(A_mean_absolute, n = 1, with_ties = FALSE) |>
-  ungroup()
+  ungroup() |>
+  mutate(label_role = "max A")
 target_label_coherent <- target_geometry |>
   mutate(direction_coherence = if_else(
     is.finite(A_mean_absolute) & A_mean_absolute > 0,
@@ -443,9 +446,13 @@ target_label_coherent <- target_geometry |>
   ungroup() |>
   group_by(facet_label) |>
   slice_max(direction_coherence, n = 1, with_ties = FALSE) |>
-  ungroup()
+  ungroup() |>
+  mutate(label_role = "max |B|/A")
 target_labels <- bind_rows(target_label_max_a, target_label_coherent) |>
-  distinct(facet_label, metric, .keep_all = TRUE)
+  group_by(facet_label, metric) |>
+  mutate(label_role = paste(unique(label_role), collapse = " + ")) |>
+  slice_head(n = 1) |>
+  ungroup()
 target_limit <- ms_symmetric_limit(
   target_geometry$A_mean_absolute, target_geometry$B_mean_signed,
   target_ci$A_boot_q025, target_ci$A_boot_q975,
@@ -478,7 +485,7 @@ p1b <- ggplot(target_geometry, aes(B_mean_signed, A_mean_absolute, color = metri
   geom_point(aes(shape = transition), size = 1.28, alpha = .84) +
   geom_text(
     data = target_labels,
-    aes(B_mean_signed, A_mean_absolute, label = metric),
+    aes(B_mean_signed, A_mean_absolute, label = paste0(metric, " · ", label_role)),
     inherit.aes = FALSE, size = 1.70, color = "#303030",
     check_overlap = TRUE, vjust = -.60
   ) +
@@ -497,7 +504,6 @@ p1b <- ggplot(target_geometry, aes(B_mean_signed, A_mean_absolute, color = metri
   coord_fixed(ratio = 1, clip = "off") +
   labs(
     title = "b  Directionality and magnitude of target-aligned distortion",
-    subtitle = "labels mark maximum A and maximum |B|/A · toward |B| = A means more coherent directional change",
     x = "B: mean signed change", y = "A: mean absolute change"
   ) +
   theme_fig1(base_size = 6.7) +
@@ -673,7 +679,7 @@ right_column <- cowplot::ggdraw() +
   # between the c-top/d-bottom frames and panel b's corresponding edges.
   cowplot::draw_plot(right_column_core, x = 0, y = -.004, width = 1, height = 1) +
   cowplot::draw_label(
-    "c  Ordered-axis local response · dotted line = equal share across adjacent steps",
+    "c  Ordered-axis local response · dotted = equal share",
     x = 0, y = .92, hjust = 0, vjust = .5,
     size = FIG1_PANEL_TITLE_SIZE, fontface = "bold",
     colour = "#151515", fontfamily = MS_FONT
