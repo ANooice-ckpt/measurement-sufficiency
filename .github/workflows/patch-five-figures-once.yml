@@ -32,7 +32,6 @@ jobs:
                   raise SystemExit(f'{label}: expected one match, found {n}')
               return text.replace(old, new, 1)
 
-          # Fig. 1: robust cache identity and compact in-panel label semantics.
           p = Path('scripts/11_plot_fig1.R')
           t = p.read_text(encoding='utf-8')
           t = one(t,
@@ -76,40 +75,24 @@ jobs:
             ungroup()
           ''', 'Fig1 coherence role')
           t = one(t,
-          '''    aes(B_mean_signed, A_mean_absolute, label = metric),
-          ''',
-          '''    aes(B_mean_signed, A_mean_absolute, label = paste0(metric, " · ", label_role)),
-          ''', 'Fig1 semantic point labels')
+          '    aes(B_mean_signed, A_mean_absolute, label = metric),\n',
+          '    aes(B_mean_signed, A_mean_absolute, label = paste0(metric, " · ", label_role)),\n',
+          'Fig1 semantic point labels')
           subtitle_line = '    subtitle = "labels mark maximum A and maximum |B|/A · toward |B| = A means more coherent directional change",\n'
           if t.count(subtitle_line) != 1:
               raise SystemExit('Fig1b subtitle line not found exactly once')
           t = t.replace(subtitle_line, '', 1)
-          t = one(t,
-          '''    "c  Ordered-axis local response · dotted line = equal share across adjacent steps",
-            x = 0, y = .92, hjust = 0, vjust = .5,
-            size = FIG1_PANEL_TITLE_SIZE, fontface = "bold",
-            colour = "#151515", fontfamily = MS_FONT
-            )
-          ''',
-          '''    "c  Ordered-axis local response",
-            x = 0, y = .92, hjust = 0, vjust = .5,
-            size = FIG1_PANEL_TITLE_SIZE, fontface = "bold",
-            colour = "#151515", fontfamily = MS_FONT
-            ) +
-            cowplot::draw_label(
-              "dotted = equal-share baseline",
-              x = 0, y = .892, hjust = 0, vjust = .5,
-              size = 4.45, colour = "#777C7F", fontfamily = MS_FONT
-            )
-          ''', 'Fig1 local-response header')
+          long_title = '    "c  Ordered-axis local response · dotted line = equal share across adjacent steps",\n'
+          short_title = '    "c  Ordered-axis local response · dotted = equal share",\n'
+          if t.count(long_title) != 1:
+              raise SystemExit('Fig1 local-response title not found exactly once')
+          t = t.replace(long_title, short_title, 1)
           p.write_text(t, encoding='utf-8')
 
-          # Fig. 2–3: concise legend labels, current comments, bounded coherence.
           p = Path('scripts/13_plot_rq2.R')
           t = p.read_text(encoding='utf-8')
           t = one(t,
-          '''    scale_color_manual(values = PREDICTOR_COLORS, drop = FALSE) +
-          ''',
+          '    scale_color_manual(values = PREDICTOR_COLORS, drop = FALSE) +\n',
           '''    scale_color_manual(
               values = PREDICTOR_COLORS, drop = FALSE,
               labels = c(
@@ -166,7 +149,7 @@ jobs:
           for text, stem in ((f1,'Fig1_RQ1'), (f23,'Fig2_RQ2'), (f23,'Fig3_RQ2'), (f45,'Fig4_RQ3'), (f45,'Fig5_RQ3')):
               assert text.count(f'"{stem}.png"') == 1
               assert text.count(f'"{stem}.pdf"') == 1
-          assert 'rank_cache_core' in f1 and 'max |B|/A' in f1 and 'equal-share baseline' in f1
+          assert 'rank_cache_core' in f1 and 'max |B|/A' in f1 and 'dotted = equal share' in f1
           assert 'Micro-env.' in f23 and 'median R / Q' in f23 and 'pmax(-1, pmin(1, coherence_median))' in f23
           assert 'fig5_slice_guides' in f45 and 'epsilon50' in f45 and 'class_strip_labels' in f45
           PY
