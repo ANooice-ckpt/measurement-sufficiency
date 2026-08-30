@@ -135,110 +135,128 @@ availability_plot <- availability |> mutate(dimension = as.character(dimension))
 # audit CSV. Spearman rank preservation is not defined for circular-time
 # representations because ordinary ranks do not respect circular geometry.
 RANK_CSV <- file.path("results", "rq1", "fig1_rank_preservation.csv")
-rank_part_paths <- rq1_pairwise_part_paths(pairwise_artifact)
-if (!length(rank_part_paths) || any(!file.exists(rank_part_paths))) {
-  stop("Fig. 1 rank-preservation diagnostic requires all frozen RQ1 pairwise parts", call. = FALSE)
-}
-
-rank_group_vars <- c(
-  "dimension", "comparison_lattice", "comparison_pair_id", "config_a_id", "config_b_id",
-  "config_a_label", "config_b_label", "orientation_type", "orientation_basis", "base_config_id",
-  "metric", "metric_class", "metric_geometry"
+rank_cache <- if (file.exists(RANK_CSV)) {
+  readr::read_csv(RANK_CSV, show_col_types = FALSE, progress = FALSE)
+} else tibble()
+rank_cache_required <- c(
+  "core_artifact_version", "rq1_analysis_version", "dimension", "metric",
+  "A_mean_absolute", "rank_loss", "rank_preservation_available"
 )
+rank_cache_core <- unique(rank_cache$core_artifact_version[!is.na(rank_cache$core_artifact_version)])
+rank_cache_rq1 <- unique(rank_cache$rq1_analysis_version[!is.na(rank_cache$rq1_analysis_version)])
+rank_cache_valid <- nrow(rank_cache) > 0 && all(rank_cache_required %in% names(rank_cache)) &&
+  length(rank_cache_core) == 1L && identical(rank_cache_core[[1]], CORE_VERSION) &&
+  length(rank_cache_rq1) == 1L && identical(rank_cache_rq1[[1]], RQ1_VERSION)
 
-rank_fragment <- function(part_path) {
-  x <- readRDS(part_path) |>
-    filter(
-      available, is.finite(z), is.finite(value_a), is.finite(value_b),
-      dimension %in% DIMENSIONS,
-      dimension %in% c("placement", "optical") | coalesce(anchor_projection, FALSE)
-    ) |>
-    mutate(
-      dimension = as.character(dimension),
-      base_config_id = if_else(
-        dimension == "duration",
-        sub("^(.*)__([^|]+\\|.*)$", "\\1", as.character(config_a_id)),
-        NA_character_
-      ),
-      comparison_pair_id = if_else(
-        dimension == "duration", paste0(n_days_a, "d_vs_", n_days_b, "d"),
-        as.character(comparison_pair_id)
-      ),
-      config_a_id = if_else(
-        dimension == "duration", paste0("duration_", n_days_a, "d"), as.character(config_a_id)
-      ),
-      config_b_id = if_else(
-        dimension == "duration", paste0("duration_", n_days_b, "d"), as.character(config_b_id)
-      ),
-      config_a_label = if_else(
-        dimension == "duration", paste0(n_days_a, " d"), as.character(config_a_label)
-      ),
-      config_b_label = if_else(
-        dimension == "duration", paste0(n_days_b, " d"), as.character(config_b_label)
+if (rank_cache_valid) {
+  rank_base <- rank_cache
+} else {
+  rank_part_paths <- rq1_pairwise_part_paths(pairwise_artifact)
+  if (!length(rank_part_paths) || any(!file.exists(rank_part_paths))) {
+    stop("Fig. 1 rank-preservation diagnostic requires all frozen RQ1 pairwise parts", call. = FALSE)
+  }
+
+  rank_group_vars <- c(
+    "dimension", "comparison_lattice", "comparison_pair_id", "config_a_id", "config_b_id",
+    "config_a_label", "config_b_label", "orientation_type", "orientation_basis", "base_config_id",
+    "metric", "metric_class", "metric_geometry"
+  )
+
+  rank_fragment <- function(part_path) {
+    x <- readRDS(part_path) |>
+      filter(
+        available, is.finite(z), is.finite(value_a), is.finite(value_b),
+        dimension %in% DIMENSIONS,
+        dimension %in% c("placement", "optical") | coalesce(anchor_projection, FALSE)
+      ) |>
+      mutate(
+        dimension = as.character(dimension),
+        base_config_id = if_else(
+          dimension == "duration",
+          sub("^(.*)__([^|]+\\|.*)$", "\\1", as.character(config_a_id)),
+          NA_character_
+        ),
+        comparison_pair_id = if_else(
+          dimension == "duration", paste0(n_days_a, "d_vs_", n_days_b, "d"),
+          as.character(comparison_pair_id)
+        ),
+        config_a_id = if_else(
+          dimension == "duration", paste0("duration_", n_days_a, "d"), as.character(config_a_id)
+        ),
+        config_b_id = if_else(
+          dimension == "duration", paste0("duration_", n_days_b, "d"), as.character(config_b_id)
+        ),
+        config_a_label = if_else(
+          dimension == "duration", paste0(n_days_a, " d"), as.character(config_a_label)
+        ),
+        config_b_label = if_else(
+          dimension == "duration", paste0(n_days_b, " d"), as.character(config_b_label)
+        )
       )
-    )
-  if (!nrow(x)) return(tibble())
-  x |>
+    if (!nrow(x)) return(tibble())
+    x |>
+      group_by(across(all_of(rank_group_vars))) |>
+      summarise(
+        n_units = n(),
+        A_sum = sum(abs(z)),
+        participant_keys = list(unique(paste(site, Id, sep = "|"))),
+        value_a_values = list(as.numeric(value_a)),
+        value_b_values = list(as.numeric(value_b)),
+        .groups = "drop"
+      )
+  }
+
+  rank_fragments <- map(rank_part_paths, rank_fragment)
+  rank_rows <- bind_rows(rank_fragments)
+  if (!nrow(rank_rows)) stop("No rows available for Fig. 1 rank-preservation diagnostic", call. = FALSE)
+
+  rank_base <- rank_rows |>
     group_by(across(all_of(rank_group_vars))) |>
     summarise(
-      n_units = n(),
-      A_sum = sum(abs(z)),
-      participant_keys = list(unique(paste(site, Id, sep = "|"))),
-      value_a_values = list(as.numeric(value_a)),
-      value_b_values = list(as.numeric(value_b)),
+      n_units = sum(n_units),
+      A_sum = sum(A_sum),
+      participant_keys = list(unique(unlist(participant_keys, use.names = FALSE))),
+      value_a_values = list(unlist(value_a_values, use.names = FALSE)),
+      value_b_values = list(unlist(value_b_values, use.names = FALSE)),
       .groups = "drop"
+    ) |>
+    mutate(
+      n_participants = map_int(participant_keys, length),
+      n_unique_a = map_int(value_a_values, ~n_distinct(.x[is.finite(.x)])),
+      n_unique_b = map_int(value_b_values, ~n_distinct(.x[is.finite(.x)])),
+      rho_spearman = pmap_dbl(
+        list(value_a_values, value_b_values, metric_geometry, n_units, n_unique_a, n_unique_b),
+        function(a, b, geometry, n, ua, ub) {
+          if (identical(geometry, "circular_time") || n < 3L || ua < 2L || ub < 2L) return(NA_real_)
+          r <- suppressWarnings(stats::cor(a, b, method = "spearman", use = "complete.obs"))
+          if (is.finite(r)) max(-1, min(1, r)) else NA_real_
+        }
+      ),
+      A_mean_absolute = if_else(n_units > 0, A_sum / n_units, NA_real_),
+      rank_loss = if_else(is.finite(rho_spearman), 1 - rho_spearman, NA_real_),
+      rank_preservation_available = is.finite(rho_spearman),
+      rank_unavailable_reason = case_when(
+        metric_geometry == "circular_time" ~ "not applicable to circular-time geometry",
+        n_units < 3L ~ "fewer than 3 paired analysis units",
+        n_unique_a < 2L | n_unique_b < 2L ~ "constant or degenerate values",
+        !is.finite(rho_spearman) ~ "Spearman correlation undefined",
+        TRUE ~ NA_character_
+      ),
+      pair_label = paste(config_a_label, "to", config_b_label),
+      core_artifact_version = CORE_VERSION,
+      rq1_analysis_version = RQ1_VERSION,
+      rank_estimand = "Spearman correlation across paired RQ1 analysis units within comparison/base configuration"
+    ) |>
+    select(
+      all_of(rank_group_vars), pair_label, n_participants, n_units, n_unique_a, n_unique_b,
+      A_mean_absolute, rho_spearman, rank_loss, rank_preservation_available,
+      rank_unavailable_reason, rank_estimand, core_artifact_version, rq1_analysis_version
     )
+  readr::write_csv(rank_base, RANK_CSV, na = "")
+  rm(rank_fragments, rank_rows)
+  invisible(gc(FALSE))
+
 }
-
-rank_fragments <- map(rank_part_paths, rank_fragment)
-rank_rows <- bind_rows(rank_fragments)
-if (!nrow(rank_rows)) stop("No rows available for Fig. 1 rank-preservation diagnostic", call. = FALSE)
-
-rank_base <- rank_rows |>
-  group_by(across(all_of(rank_group_vars))) |>
-  summarise(
-    n_units = sum(n_units),
-    A_sum = sum(A_sum),
-    participant_keys = list(unique(unlist(participant_keys, use.names = FALSE))),
-    value_a_values = list(unlist(value_a_values, use.names = FALSE)),
-    value_b_values = list(unlist(value_b_values, use.names = FALSE)),
-    .groups = "drop"
-  ) |>
-  mutate(
-    n_participants = map_int(participant_keys, length),
-    n_unique_a = map_int(value_a_values, ~n_distinct(.x[is.finite(.x)])),
-    n_unique_b = map_int(value_b_values, ~n_distinct(.x[is.finite(.x)])),
-    rho_spearman = pmap_dbl(
-      list(value_a_values, value_b_values, metric_geometry, n_units, n_unique_a, n_unique_b),
-      function(a, b, geometry, n, ua, ub) {
-        if (identical(geometry, "circular_time") || n < 3L || ua < 2L || ub < 2L) return(NA_real_)
-        r <- suppressWarnings(stats::cor(a, b, method = "spearman", use = "complete.obs"))
-        if (is.finite(r)) max(-1, min(1, r)) else NA_real_
-      }
-    ),
-    A_mean_absolute = if_else(n_units > 0, A_sum / n_units, NA_real_),
-    rank_loss = if_else(is.finite(rho_spearman), 1 - rho_spearman, NA_real_),
-    rank_preservation_available = is.finite(rho_spearman),
-    rank_unavailable_reason = case_when(
-      metric_geometry == "circular_time" ~ "not applicable to circular-time geometry",
-      n_units < 3L ~ "fewer than 3 paired analysis units",
-      n_unique_a < 2L | n_unique_b < 2L ~ "constant or degenerate values",
-      !is.finite(rho_spearman) ~ "Spearman correlation undefined",
-      TRUE ~ NA_character_
-    ),
-    pair_label = paste(config_a_label, "to", config_b_label),
-    core_artifact_version = CORE_VERSION,
-    rq1_analysis_version = RQ1_VERSION,
-    rank_estimand = "Spearman correlation across paired RQ1 analysis units within comparison/base configuration"
-  ) |>
-  select(
-    all_of(rank_group_vars), pair_label, n_participants, n_units, n_unique_a, n_unique_b,
-    A_mean_absolute, rho_spearman, rank_loss, rank_preservation_available,
-    rank_unavailable_reason, rank_estimand, core_artifact_version, rq1_analysis_version
-  )
-readr::write_csv(rank_base, RANK_CSV, na = "")
-rm(rank_fragments, rank_rows)
-invisible(gc(FALSE))
 
 # -----------------------------------------------------------------------------
 # a. Absolute versus relational preservation across measurement dimensions
@@ -274,6 +292,18 @@ dimension_summary <- dimension_metric |>
     rank_loss_q75 = quantile(rank_loss_typical, .75, na.rm = TRUE, names = FALSE),
     .groups = "drop"
   )
+
+dimension_assoc <- dimension_metric |>
+  group_by(dimension) |>
+  summarise(
+    n_metrics = n_distinct(metric),
+    rho_A_rank = if (n_metrics >= 3L && n_distinct(A_typical) >= 2L &&
+                     n_distinct(rank_loss_typical) >= 2L) {
+      suppressWarnings(cor(A_typical, rank_loss_typical, method = "spearman", use = "complete.obs"))
+    } else NA_real_,
+    .groups = "drop"
+  ) |>
+  mutate(label = if_else(is.finite(rho_A_rank), sprintf("ρ = %.2f", rho_A_rank), "ρ = NA"))
 if (!nrow(dimension_summary)) stop("No non-circular RQ1 rows available for Fig. 1a")
 
 readr::write_csv(
@@ -301,6 +331,12 @@ p1a <- ggplot(dimension_metric, aes(A_typical, rank_loss_typical, color = metric
     aes(A_median, rank_loss_median, color = metric_class),
     inherit.aes = FALSE, shape = 18, size = 1.85, alpha = .98
   ) +
+  geom_text(
+    data = dimension_assoc,
+    aes(x = Inf, y = Inf, label = label),
+    inherit.aes = FALSE, hjust = 1.08, vjust = 1.25,
+    size = 1.75, colour = "#666A6D"
+  ) +
   facet_grid(. ~ dimension) +
   scale_color_ms_metric(guide = "none") +
   scale_x_continuous(
@@ -313,7 +349,7 @@ p1a <- ggplot(dimension_metric, aes(A_typical, rank_loss_typical, color = metric
   ) +
   labs(
     title = "a  Absolute and relational preservation under configuration change",
-    subtitle = "metric points; diamonds = class medians; bars = IQR · lower left = stronger preservation",
+    subtitle = "metric points; diamonds = class medians; bars = IQR · facet ρ = metric-level A–rank-loss association",
     x = "typical absolute distortion A", y = "typical rank loss  1 − Spearman ρ"
   ) +
   theme_fig1(base_size = 6.65) +
@@ -391,12 +427,31 @@ target_ci <- target_geometry |>
     is.finite(A_boot_q025), is.finite(A_boot_q975),
     is.finite(B_boot_q025), is.finite(B_boot_q975)
   )
-target_labels <- target_geometry |>
+target_label_max_a <- target_geometry |>
   group_by(facet_label, metric) |>
   slice_max(A_mean_absolute, n = 1, with_ties = FALSE) |>
   ungroup() |>
   group_by(facet_label) |>
-  slice_max(A_mean_absolute, n = 2, with_ties = FALSE) |>
+  slice_max(A_mean_absolute, n = 1, with_ties = FALSE) |>
+  ungroup() |>
+  mutate(label_role = "max A")
+target_label_coherent <- target_geometry |>
+  mutate(direction_coherence = if_else(
+    is.finite(A_mean_absolute) & A_mean_absolute > 0,
+    abs(B_mean_signed) / A_mean_absolute, NA_real_
+  )) |>
+  filter(is.finite(direction_coherence)) |>
+  group_by(facet_label, metric) |>
+  slice_max(direction_coherence, n = 1, with_ties = FALSE) |>
+  ungroup() |>
+  group_by(facet_label) |>
+  slice_max(direction_coherence, n = 1, with_ties = FALSE) |>
+  ungroup() |>
+  mutate(label_role = "max |B|/A")
+target_labels <- bind_rows(target_label_max_a, target_label_coherent) |>
+  group_by(facet_label, metric) |>
+  mutate(label_role = paste(unique(label_role), collapse = " + ")) |>
+  slice_head(n = 1) |>
   ungroup()
 target_limit <- ms_symmetric_limit(
   target_geometry$A_mean_absolute, target_geometry$B_mean_signed,
@@ -430,7 +485,7 @@ p1b <- ggplot(target_geometry, aes(B_mean_signed, A_mean_absolute, color = metri
   geom_point(aes(shape = transition), size = 1.28, alpha = .84) +
   geom_text(
     data = target_labels,
-    aes(B_mean_signed, A_mean_absolute, label = metric),
+    aes(B_mean_signed, A_mean_absolute, label = paste0(metric, " · ", label_role)),
     inherit.aes = FALSE, size = 1.70, color = "#303030",
     check_overlap = TRUE, vjust = -.60
   ) +
@@ -539,10 +594,15 @@ local_distribution_panel <- function(dim, subpanel_title = DIM_TITLES[[dim]]) {
   if (!nrow(d) || !nrow(ds)) stop("No local response rows for Fig. 1 dimension: ", dim)
 
   labels <- d |> distinct(step_order, transition) |> arrange(step_order)
+  equal_share <- 1 / n_distinct(labels$transition)
   xmax <- max(ds$share_q75, ds$share_median, na.rm = TRUE) * 1.18
   xmax <- min(1, max(.32, xmax))
 
   ggplot() +
+    geom_vline(
+      xintercept = equal_share, linetype = 3,
+      linewidth = .28, color = "#A9AEB1"
+    ) +
     geom_point(
       data = d,
       aes(G_share, y_point, color = metric_class),
@@ -619,7 +679,7 @@ right_column <- cowplot::ggdraw() +
   # between the c-top/d-bottom frames and panel b's corresponding edges.
   cowplot::draw_plot(right_column_core, x = 0, y = -.004, width = 1, height = 1) +
   cowplot::draw_label(
-    "c  Ordered-axis local response",
+    "c  Ordered-axis local response · dotted = equal share",
     x = 0, y = .92, hjust = 0, vjust = .5,
     size = FIG1_PANEL_TITLE_SIZE, fontface = "bold",
     colour = "#151515", fontfamily = MS_FONT

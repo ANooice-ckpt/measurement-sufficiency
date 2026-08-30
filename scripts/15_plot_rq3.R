@@ -489,6 +489,22 @@ entry_class_grid <- tidyr::crossing(
     by = c("metric_class", "resolution_rank", "n_days")
   )
 
+entry_class_summary <- entry_class_surface |>
+  group_by(metric_class) |>
+  summarise(
+    n_cells = sum(is.finite(entry_tolerance_difference)),
+    median_delta = median(entry_tolerance_difference, na.rm = TRUE),
+    fraction_positive = mean(entry_tolerance_difference > 0, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    strip_label = paste0(
+      as.character(metric_class), "\nmed Δε ", sprintf("%+.2f", median_delta),
+      " · ", round(100 * fraction_positive), "% > 0"
+    )
+  )
+class_strip_labels <- setNames(entry_class_summary$strip_label, as.character(entry_class_summary$metric_class))
+
 contrast_limit <- max(abs(entry_class_grid$entry_tolerance_difference), na.rm = TRUE)
 if (!is.finite(contrast_limit) || contrast_limit <= 0) contrast_limit <- .01
 
@@ -539,7 +555,7 @@ p5b <- ggplot(
   aes(resolution_rank, n_days, fill = entry_tolerance_difference)
 ) +
   geom_tile(width = .92, height = .92, color = "white", linewidth = .23) +
-  facet_wrap(~metric_class, ncol = 3) +
+  facet_wrap(~metric_class, ncol = 3, labeller = as_labeller(class_strip_labels)) +
   scale_x_continuous(
     breaks = seq_along(fig5_res_levels), labels = fig5_res_labels,
     expand = expansion(add = .25)
@@ -674,7 +690,7 @@ p5c <- ggplot(
   coord_fixed(ratio = .86, clip = "off") +
   labs(
     title = "c  Jointly sufficient regions expand as tolerance relaxes",
-    subtitle = "fill = confirmed metric coverage; dark outline = coverage-efficient frontier",
+    subtitle = "fill = confirmed coverage among all targets (unresolved ≠ sufficient); dark outline = coverage-efficient frontier",
     x = "temporal resolution  (low → high burden)", y = "monitoring duration"
   ) +
   theme_rq3(base_size = 5.55, legend_position = "bottom") +
@@ -714,6 +730,10 @@ readr::write_csv(
   entry_class_grid |>
     mutate(metric_class = as.character(metric_class)),
   file.path("results", "rq3", "fig5_entry_tolerance_class_contrast.csv"), na = ""
+)
+readr::write_csv(
+  entry_class_summary |> mutate(metric_class = as.character(metric_class)),
+  file.path("results", "rq3", "fig5_entry_tolerance_class_summary.csv"), na = ""
 )
 readr::write_csv(
   slice_plot |>
@@ -780,11 +800,18 @@ epsilon_tick_keep <- epsilon_tick_candidates <= epsilon_limit + NUMERIC_TOL
 epsilon_ticks <- epsilon_tick_candidates[epsilon_tick_keep]
 epsilon_labels <- epsilon_tick_labels[epsilon_tick_keep]
 
-p4a <- ggplot(requirement_summary, aes(epsilon, rank_median, color = metric_class)) +
+FIG4_DIM_LABELS <- c(
+  "Temporal resolution" = paste0("Temporal resolution · ", RES_LABELS[[1]], " → ", tail(RES_LABELS, 1)),
+  "Monitoring duration" = paste0("Monitoring duration · ", min(DURATION_LEVELS), " d → ", max(DURATION_LEVELS), " d")
+)
+fig5_slice_guides <- FIG5_TOLERANCE_SLICES[FIG5_TOLERANCE_SLICES <= epsilon_limit + NUMERIC_TOL]
+
+p4a_main <- ggplot(requirement_summary, aes(epsilon, rank_median, color = metric_class)) +
+  geom_vline(xintercept = fig5_slice_guides, linewidth = .22, linetype = 3, color = "#C5C9CC") +
   geom_step(aes(y = rank_q25, group = metric_class), linewidth = .34, alpha = .24) +
   geom_step(aes(y = rank_q75, group = metric_class), linewidth = .34, alpha = .24) +
   geom_step(aes(group = metric_class), linewidth = .82, alpha = .96) +
-  facet_wrap(~dimension, nrow = 1) +
+  facet_wrap(~dimension, nrow = 1, labeller = as_labeller(FIG4_DIM_LABELS)) +
   scale_color_ms_metric(guide = "none") +
   scale_x_continuous(
     trans = epsilon_log1p,
@@ -799,15 +826,49 @@ p4a <- ggplot(requirement_summary, aes(epsilon, rank_median, color = metric_clas
   ) +
   labs(
     title = "a  Tolerance sets the minimum sufficient measurement burden",
-    subtitle = "thick line = class median; thin lines = interquartile range",
-    x = "tolerance ε", y = "minimum sufficient requirement rank\n(low → high burden)"
+    subtitle = "thick = class median; thin = IQR · faint vertical guides = Fig. 5 tolerance slices",
+    x = NULL, y = "minimum sufficient requirement rank\n(low → high burden)"
   ) +
   theme_rq3(base_size = 6.6) +
   theme(
     panel.grid.major.x = element_line(colour = "#ECEFF0", linewidth = .20),
-    strip.text = element_text(size = 6.2),
-    plot.subtitle = element_text(size = 5.0, colour = "#666A6D", margin = margin(t = -1, b = 2))
+    axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+    strip.text = element_text(size = 6.0),
+    plot.subtitle = element_text(size = 4.8, colour = "#666A6D", margin = margin(t = -1, b = 2)),
+    plot.margin = margin(2, 3, 0, 3)
   )
+
+p4a_coverage_refined <- ggplot(resolved_coverage, aes(epsilon, coverage)) +
+  geom_vline(xintercept = fig5_slice_guides, linewidth = .20, linetype = 3, color = "#D0D3D5") +
+  geom_step(linewidth = .48, color = "#5D6265") +
+  facet_wrap(~dimension, nrow = 1, labeller = as_labeller(FIG4_DIM_LABELS)) +
+  scale_x_continuous(
+    trans = epsilon_log1p,
+    breaks = epsilon_ticks,
+    labels = epsilon_labels,
+    expand = expansion(mult = c(0, .01))
+  ) +
+  coord_cartesian(xlim = c(0, epsilon_limit), clip = "on") +
+  scale_y_continuous(
+    limits = c(0, 1), breaks = c(0, .5, 1),
+    labels = scales::label_percent(accuracy = 50), expand = expansion(mult = c(0, .02))
+  ) +
+  labs(x = "tolerance ε", y = "metrics with a\nresolved sufficient state") +
+  theme_rq3(base_size = 5.65) +
+  theme(
+    panel.grid.major.x = element_line(colour = "#F0F1F2", linewidth = .18),
+    panel.grid.minor = element_blank(),
+    strip.text = element_blank(), strip.background = element_blank(),
+    axis.text.x = element_text(size = 4.9), axis.text.y = element_text(size = 4.55),
+    axis.title.x = element_text(size = 5.3), axis.title.y = element_text(size = 4.8),
+    plot.margin = margin(0, 3, 1, 3)
+  )
+
+p4a <- cowplot::plot_grid(
+  p4a_main, p4a_coverage_refined,
+  ncol = 1, rel_heights = c(1, .22),
+  align = "v", axis = "lr", greedy = TRUE
+)
 
 # R_obs stays on its original linear scale; only the background raw points carry
 # the long tail. Rank limits are derived from the frozen design rather than a
@@ -829,7 +890,7 @@ p4b <- ggplot() +
     aes(x_pos, R_median, color = metric_class),
     shape = 18, size = 1.6
   ) +
-  facet_wrap(~dimension, nrow = 1) +
+  facet_wrap(~dimension, nrow = 1, labeller = as_labeller(FIG4_DIM_LABELS)) +
   scale_color_ms_metric(guide = "none") +
   scale_x_continuous(
     breaks = seq_len(ORDERED_MAX_RANK),
@@ -848,6 +909,16 @@ p4b <- ggplot() +
     plot.subtitle = element_text(size = 4.8, colour = "#666A6D", margin = margin(t = -1, b = 2))
   )
 
+pair_e50 <- pair_ecdf |>
+  group_by(dimension, comparison_pair_id, pair) |>
+  summarise(
+    epsilon50 = if (any(fraction_metrics_substitutable >= .5)) {
+      min(epsilon[fraction_metrics_substitutable >= .5], na.rm = TRUE)
+    } else NA_real_,
+    .groups = "drop"
+  ) |>
+  filter(is.finite(epsilon50))
+
 p4c <- ggplot(
   pair_ecdf,
   aes(
@@ -856,7 +927,13 @@ p4c <- ggplot(
     group = interaction(dimension, comparison_pair_id, drop = TRUE)
   )
 ) +
+  geom_vline(xintercept = fig5_slice_guides, linewidth = .22, linetype = 3, color = "#C5C9CC") +
+  geom_hline(yintercept = .5, linewidth = .24, linetype = 3, color = "#B4B8BB") +
   geom_step(linewidth = .76, alpha = .94) +
+  geom_point(
+    data = pair_e50, aes(epsilon50, .5, color = pair),
+    inherit.aes = FALSE, shape = 21, fill = "white", size = 1.35, stroke = .45
+  ) +
   facet_wrap(~dimension, nrow = 1) +
   scale_color_manual(values = pair_palette, breaks = pair_levels, name = NULL) +
   scale_x_continuous(
@@ -869,12 +946,14 @@ p4c <- ggplot(
   scale_y_continuous(limits = c(0, 1), labels = scales::label_percent(accuracy = 25)) +
   labs(
     title = "c  Target-aligned alternatives become substitutable as tolerance relaxes",
+    subtitle = "open points = ε50; faint vertical guides = Fig. 5 tolerance slices",
     x = "tolerance ε", y = "fraction of metrics substitutable"
   ) +
   theme_rq3(base_size = 6.3, legend_position = "bottom") +
   theme(
     panel.grid.major.x = element_line(colour = "#ECEFF0", linewidth = .20),
     strip.text = element_text(size = 5.8),
+    plot.subtitle = element_text(size = 4.45, colour = "#666A6D", margin = margin(t = -1, b = 1.5)),
     legend.text = element_text(size = 5.0),
     legend.key.width = grid::unit(5.0, "mm")
   )
@@ -884,14 +963,15 @@ fig4_bottom <- cowplot::plot_grid(
   align = "hv", axis = "tblr", greedy = TRUE
 )
 fig4_body <- cowplot::plot_grid(
-  p4a, fig4_bottom, ncol = 1, rel_heights = c(1.14, .86),
+  p4a, fig4_bottom, ncol = 1, rel_heights = c(1.20, .80),
   align = "v", axis = "l", greedy = TRUE
 )
 fig4 <- cowplot::plot_grid(
   metric_legend, fig4_body, ncol = 1,
   rel_heights = c(.042, 1), align = "v", axis = "l", greedy = TRUE
 )
-ms_plot_save(fig4, file.path(OUT_DIR, "Fig4_RQ3.pdf"), 9.0, 6.1)
-ms_plot_save(fig4, file.path(OUT_DIR, "Fig4_RQ3.png"), 9.0, 6.1)
+ms_plot_save(fig4, file.path(OUT_DIR, "Fig4_RQ3.pdf"), 9.0, 6.2)
+ms_plot_save(fig4, file.path(OUT_DIR, "Fig4_RQ3.png"), 9.0, 6.2)
+readr::write_csv(pair_e50, file.path("results", "rq3", "fig4_unordered_epsilon50.csv"), na = "")
 
 # -----------------------------------------------------------------------------
