@@ -6,7 +6,7 @@ on:
     branches: [master]
 
 jobs:
-  parse-r-scripts:
+  parse-sources:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,38 +14,17 @@ jobs:
         with:
           r-version: '4.5.0'
           use-public-rspm: true
-      - name: Parse manuscript analysis and plotting scripts
+      - name: Parse every R source
         shell: Rscript {0}
         run: |
-          files <- c(
-            "scripts/utils/analysis_design.R",
-            "scripts/utils/core_artifacts.R",
-            "scripts/utils/duration_artifacts.R",
-            "scripts/utils/figure_style.R",
-            "scripts/utils/figure_atlas.R",
-            "scripts/utils/rq_context.R",
-            "scripts/utils/rq2_context_features.R",
-            "scripts/09_build_core_artifacts.R",
-            "scripts/09b_validate_core_design.R",
-            "scripts/10_rq1_analysis.R",
-            "scripts/11_plot_fig1.R",
-            "scripts/12_rq2_analysis.R",
-            "scripts/12c_rq2_context_models.R",
-            "scripts/13_plot_rq2.R",
-            "scripts/14_rq3_analysis.R",
-            "scripts/15_plot_rq3.R",
-            "scripts/resume_rq3_after_joint.R"
-          )
-          missing <- files[!file.exists(files)]
-          if (length(missing)) stop("Missing scripts: ", paste(missing, collapse = ", "))
-          for (f in files) {
-            message("Parsing ", f)
-            parse(file = f, keep.source = TRUE)
-          }
-          message("All R scripts parsed successfully.")
-      - name: Check server runner shell syntax
+          files <- sort(list.files("scripts", pattern = "\\.R$", recursive = TRUE, full.names = TRUE))
+          if (!length(files)) stop("No R scripts found")
+          invisible(lapply(files, parse))
+          message("All ", length(files), " R scripts parsed successfully.")
+      - name: Check every shell script
+        shell: bash
         run: |
-          bash -n \
-            scripts/run_core_artifacts.sh \
-            scripts/run_downstream_server.sh \
-            scripts/run_full_server.sh
+          while IFS= read -r -d '' file; do
+            echo "Checking ${file}"
+            bash -n "${file}"
+          done < <(find scripts -type f -name '*.sh' -print0)
