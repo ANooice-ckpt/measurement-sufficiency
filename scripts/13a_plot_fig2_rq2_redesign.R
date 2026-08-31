@@ -122,6 +122,26 @@ robust_bounded_display_range <- function(x, summary_values = numeric(), probs = 
   c(max(lower, lo - span * pad_fraction), min(upper, hi + span * pad_fraction))
 }
 
+robust_symmetric_display_window <- function(x, summary_values = numeric(), probs = c(.08, .92),
+                                            min_half = .02, pad = 1.06, hard_cap = NULL) {
+  x <- as.numeric(x); x <- x[is.finite(x)]
+  s <- as.numeric(summary_values); s <- s[is.finite(s)]
+  vals <- c(x, s)
+  if (!length(vals)) return(c(-min_half, min_half))
+  q <- as.numeric(stats::quantile(vals, probs, na.rm = TRUE, names = FALSE, type = 8))
+  half <- max(abs(q), na.rm = TRUE)
+  if (length(s)) half <- max(half, min(abs(stats::median(s, na.rm = TRUE)) * 3, max(abs(s), na.rm = TRUE) / 2), na.rm = TRUE)
+  if (!is.finite(half) || half <= 0) half <- min_half
+  half <- max(half, min_half)
+  if (length(hard_cap) && is.finite(hard_cap)) half <- min(half, hard_cap)
+  half <- half * pad
+  c(-half, half)
+}
+
+squish_to_limits <- function(x, limits) {
+  pmax(limits[[1]], pmin(limits[[2]], x))
+}
+
 # =============================================================================
 # a. Full contextual-predictor atlas
 # =============================================================================
@@ -216,15 +236,22 @@ family_boundaries <- predictor_order |>
   slice_head(n = length(FAMILY_LEVELS) - 1L) |>
   pull(boundary)
 
-coef_limit <- robust_symmetric_display_limit(
+coef_window_global <- robust_symmetric_display_window(
   coef_metric$estimate,
   c(coef_summary$estimate_median, coef_summary$estimate_q25, coef_summary$estimate_q75),
-  prob = .97, pad = 1.06, fallback = .25
+  probs = c(.08, .92), min_half = .02, pad = 1.06
 )
+coef_metric_global <- coef_metric |>
+  mutate(estimate_plot = squish_to_limits(estimate, coef_window_global))
 overall_limit <- robust_upper_display_limit(
   predictor_order$overall_abs, predictor_order$overall_abs,
-  prob = 1, pad = 1.08, fallback = .10
+  prob = .90, pad = 1.08, fallback = .02
 )
+predictor_order <- predictor_order |>
+  mutate(
+    overall_abs_plot = pmin(overall_abs, overall_limit),
+    overall_clipped = is.finite(overall_abs) & overall_abs > overall_limit
+  )
 
 add_row_guides <- function(p) {
   if (length(family_boundaries)) {
@@ -234,9 +261,14 @@ add_row_guides <- function(p) {
 
 p_overall <- ggplot(
   predictor_order,
-  aes(overall_abs, y, fill = predictor_family)
+  aes(overall_abs_plot, y, fill = predictor_family)
 ) +
   geom_col(width = .58, alpha = .90, na.rm = TRUE) +
+  geom_point(
+    data = predictor_order |> filter(overall_clipped),
+    aes(x = overall_limit, y = y), inherit.aes = FALSE,
+    shape = 17, size = .70, color = "#4E5559"
+  ) +
   geom_point(
     data = predictor_order |> filter(!is.finite(overall_abs)),
     aes(x = 0, y = y), inherit.aes = FALSE,
@@ -266,7 +298,7 @@ p_overall <- ggplot(
   )
 p_overall <- add_row_guides(p_overall)
 
-p_spread <- ggplot(coef_metric, aes(estimate, y, color = predictor_family)) +
+p_spread <- ggplot(coef_metric_global, aes(estimate_plot, y, color = predictor_family)) +
   geom_vline(xintercept = 0, linewidth = .28, color = "#A1A6A9") +
   geom_point(
     position = position_jitter(width = 0, height = .075, seed = 59),
@@ -274,7 +306,7 @@ p_spread <- ggplot(coef_metric, aes(estimate, y, color = predictor_family)) +
   ) +
   scale_color_manual(values = PREDICTOR_COLORS, drop = FALSE, guide = "none") +
   scale_x_continuous(
-    limits = c(-coef_limit, coef_limit),
+    limits = coef_window_global,
     breaks = scales::breaks_extended(n = 3)
   ) +
   scale_y_continuous(limits = c(.5, nrow(predictor_order) + .5), expand = expansion(mult = c(0, 0))) +
@@ -313,23 +345,35 @@ make_coef_dimension <- function(dim_name) {
   raw <- coef_metric |> filter(dimension == dim_name, is.finite(estimate))
   sm <- coef_summary |> filter(dimension == dim_name, is.finite(estimate_median))
   miss <- status_grid |> filter(dimension == dim_name, !is.na(status_label))
+  dim_window <- robust_symmetric_display_window(
+    raw$estimate,
+    c(sm$estimate_median, sm$estimate_q25, sm$estimate_q75),
+    probs = c(.08, .92), min_half = .015, pad = 1.05
+  )
+  raw <- raw |> mutate(estimate_plot = squish_to_limits(estimate, dim_window))
+  sm <- sm |>
+    mutate(
+      estimate_median_plot = squish_to_limits(estimate_median, dim_window),
+      estimate_q25_plot = squish_to_limits(estimate_q25, dim_window),
+      estimate_q75_plot = squish_to_limits(estimate_q75, dim_window)
+    )
 
   p <- ggplot() +
     geom_vline(xintercept = 0, linewidth = .28, color = "#A1A6A9") +
     geom_point(
       data = raw,
-      aes(estimate, y_pos, color = predictor_family, shape = outcome_label),
+      aes(estimate_plot, y_pos, color = predictor_family, shape = outcome_label),
       position = position_jitter(width = 0, height = .035, seed = 61),
       size = .34, alpha = .12
     ) +
     geom_segment(
       data = sm,
-      aes(x = estimate_q25, xend = estimate_q75, y = y_pos, yend = y_pos, color = predictor_family),
+      aes(x = estimate_q25_plot, xend = estimate_q75_plot, y = y_pos, yend = y_pos, color = predictor_family),
       linewidth = .72, alpha = .58, lineend = "round"
     ) +
     geom_point(
       data = sm,
-      aes(estimate_median, y_pos, color = predictor_family, shape = outcome_label),
+      aes(estimate_median_plot, y_pos, color = predictor_family, shape = outcome_label),
       size = 1.12, alpha = .98
     ) +
     geom_text(
@@ -340,7 +384,7 @@ make_coef_dimension <- function(dim_name) {
     scale_color_manual(values = PREDICTOR_COLORS, drop = FALSE, guide = "none") +
     scale_shape_manual(values = OUTCOME_SHAPES, drop = FALSE, guide = "none") +
     scale_x_continuous(
-      limits = c(-coef_limit, coef_limit),
+      limits = dim_window,
       breaks = scales::breaks_extended(n = 3)
     ) +
     scale_y_continuous(limits = c(.5, nrow(predictor_order) + .5), expand = expansion(mult = c(0, 0))) +
@@ -678,13 +722,21 @@ joint_cv_positive <- joint_cv_metric |>
     label = paste0(round(100 * fraction_positive), "%")
   )
 
-joint_cv_limit <- robust_symmetric_display_limit(
+joint_cv_window <- robust_bounded_display_range(
   joint_cv_metric$r2,
   c(joint_cv_summary$r2_median, joint_cv_summary$r2_q25, joint_cv_summary$r2_q75),
-  prob = .97, pad = 1.06, fallback = .50
+  probs = c(.08, .92), lower = -0.5, upper = 0.5, min_span = .12, pad_fraction = .08
 )
+joint_cv_metric <- joint_cv_metric |>
+  mutate(r2_plot = squish_to_limits(r2, joint_cv_window))
+joint_cv_summary <- joint_cv_summary |>
+  mutate(
+    r2_median_plot = squish_to_limits(r2_median, joint_cv_window),
+    r2_q25_plot = squish_to_limits(r2_q25, joint_cv_window),
+    r2_q75_plot = squish_to_limits(r2_q75, joint_cv_window)
+  )
 
-p_cv <- ggplot(joint_cv_metric, aes(r2, y_pos, color = metric_class)) +
+p_cv <- ggplot(joint_cv_metric, aes(r2_plot, y_pos, color = metric_class)) +
   geom_vline(xintercept = 0, linewidth = .27, color = "#A1A6A9") +
   geom_point(
     position = position_jitter(width = 0, height = .014, seed = 63),
@@ -692,18 +744,18 @@ p_cv <- ggplot(joint_cv_metric, aes(r2, y_pos, color = metric_class)) +
   ) +
   geom_segment(
     data = joint_cv_summary,
-    aes(x = r2_q25, xend = r2_q75, y = y_pos, yend = y_pos, color = metric_class),
+    aes(x = r2_q25_plot, xend = r2_q75_plot, y = y_pos, yend = y_pos, color = metric_class),
     inherit.aes = FALSE, linewidth = .58, alpha = .56, lineend = "round"
   ) +
   geom_point(
     data = joint_cv_summary,
-    aes(r2_median, y_pos, color = metric_class),
+    aes(r2_median_plot, y_pos, color = metric_class),
     inherit.aes = FALSE, shape = 18, size = .98
   ) +
   facet_wrap(~outcome_label, nrow = 1) +
   scale_color_ms_metric(guide = "none") +
   scale_x_continuous(
-    limits = c(-joint_cv_limit, joint_cv_limit),
+    limits = joint_cv_window,
     breaks = scales::breaks_extended(n = 3)
   ) +
   scale_y_continuous(
