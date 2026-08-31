@@ -181,17 +181,15 @@ dimension_assoc <- dimension_assoc |>
   )
 if (!nrow(dimension_summary)) stop("No non-circular RQ1 rows available for Fig. 1a")
 
-# The main panel is summary-only. Keep every dimension × representation-class
-# object in one common (A, rank-loss) space so the four measurement dimensions
-# remain directly comparable. Crosshairs show the class-level median and IQR;
-# deterministic leader lines label the dimension groups without adding a second
-# statistical layer. Raw metric observations remain in the supplementary atlas.
-DIM_SHAPES_A <- c(
-  "Placement" = 16,
-  "Optical representation" = 17,
-  "Temporal resolution" = 15,
-  "Monitoring duration" = 18
-)
+# Fig. 1a uses one common bivariate coordinate system. The visual hierarchy is
+# deliberately three-level: four dimension-level summaries form the foreground,
+# metric-class marginal-quantile glyphs form the middle layer, and individual
+# metric points remain visible at low opacity. Hollow lozenges are descriptive
+# marginal-quantile glyphs, not covariance/confidence ellipses: horizontal extent
+# encodes A quantiles and vertical extent encodes rank-loss quantiles.
+dimension_metric_a <- dimension_metric |>
+  filter(is.finite(A_typical), is.finite(rank_loss_typical))
+if (!nrow(dimension_metric_a)) stop("No finite metric-level rows available for Fig. 1a")
 
 dimension_summary_a <- dimension_summary |>
   filter(
@@ -200,122 +198,355 @@ dimension_summary_a <- dimension_summary |>
   )
 if (!nrow(dimension_summary_a)) stop("No finite class summaries available for Fig. 1a")
 
-# Display domains are driven by the foreground summaries rather than raw metric
-# extremes, so the joint structure occupies the plotting field without hiding
-# any median or IQR shown in the main panel.
-a_display_limit <- max(.25, max(dimension_summary_a$A_q75, na.rm = TRUE) * 1.08)
-rank_loss_limit <- max(.05, max(dimension_summary_a$rank_loss_q75, na.rm = TRUE) * 1.08)
+class_outer_a <- dimension_metric_a |>
+  group_by(dimension, metric_class) |>
+  summarise(
+    A_q10 = safe_q(A_typical, .10),
+    A_q90 = safe_q(A_typical, .90),
+    rank_loss_q10 = safe_q(rank_loss_typical, .10),
+    rank_loss_q90 = safe_q(rank_loss_typical, .90),
+    .groups = "drop"
+  )
+
+class_summary_a <- dimension_summary_a |>
+  left_join(class_outer_a, by = c("dimension", "metric_class")) |>
+  filter(
+    is.finite(A_q10), is.finite(A_q90),
+    is.finite(rank_loss_q10), is.finite(rank_loss_q90)
+  )
+
+dimension_overall_a <- dimension_metric_a |>
+  group_by(dimension) |>
+  summarise(
+    n_metrics = n_distinct(metric),
+    A_q10 = safe_q(A_typical, .10),
+    A_q25 = safe_q(A_typical, .25),
+    A_median = safe_q(A_typical, .50),
+    A_q75 = safe_q(A_typical, .75),
+    A_q90 = safe_q(A_typical, .90),
+    rank_loss_q10 = safe_q(rank_loss_typical, .10),
+    rank_loss_q25 = safe_q(rank_loss_typical, .25),
+    rank_loss_median = safe_q(rank_loss_typical, .50),
+    rank_loss_q75 = safe_q(rank_loss_typical, .75),
+    rank_loss_q90 = safe_q(rank_loss_typical, .90),
+    .groups = "drop"
+  )
+
+# Focus + tail display mapping. The dense central field stays linear. Only when a
+# small extreme tail is materially separated from the foreground IQR structure is
+# that tail compressed into a narrow shaded gutter. Relative order within the
+# gutter is retained by a log1p mapping; no metric is discarded.
+make_focus_tail_axis <- function(values, foreground, prob = .95,
+                                 tail_ratio = 1.30, gutter_fraction = .12,
+                                 fallback = 1) {
+  values <- suppressWarnings(as.numeric(values))
+  values <- values[is.finite(values) & values >= 0]
+  foreground <- suppressWarnings(as.numeric(foreground))
+  foreground <- foreground[is.finite(foreground) & foreground >= 0]
+  if (!length(values)) {
+    return(list(
+      use_tail = FALSE, focus = fallback, raw_max = fallback,
+      display_max = fallback, tick_max = fallback,
+      map = function(x) suppressWarnings(as.numeric(x))
+    ))
+  }
+
+  raw_max <- max(values)
+  robust_focus <- safe_q(values, prob)
+  foreground_max <- if (length(foreground)) max(foreground) else 0
+  focus <- max(c(robust_focus, foreground_max, raw_max * .15), na.rm = TRUE)
+  focus <- min(focus, raw_max)
+  use_tail <- raw_max > focus + NUMERIC_TOL &&
+    (focus <= NUMERIC_TOL || raw_max / focus >= tail_ratio)
+
+  if (!use_tail) {
+    display_max <- max(raw_max * 1.06, fallback * .02)
+    mapper <- function(x) {
+      x <- suppressWarnings(as.numeric(x))
+      ifelse(is.finite(x), pmax(0, pmin(x, display_max)), NA_real_)
+    }
+    return(list(
+      use_tail = FALSE, focus = raw_max, raw_max = raw_max,
+      display_max = display_max, tick_max = raw_max, map = mapper
+    ))
+  }
+
+  gutter <- max(focus * gutter_fraction, raw_max * .018, fallback * .015)
+  display_max <- focus + gutter
+  denom <- log1p(raw_max - focus)
+  mapper <- function(x) {
+    x <- suppressWarnings(as.numeric(x))
+    out <- rep(NA_real_, length(x))
+    ok <- is.finite(x)
+    low <- ok & x <= focus
+    high <- ok & x > focus
+    out[low] <- pmax(0, x[low])
+    out[high] <- focus + gutter *
+      log1p(pmin(x[high], raw_max) - focus) / denom
+    out
+  }
+  list(
+    use_tail = TRUE, focus = focus, raw_max = raw_max,
+    display_max = display_max, tick_max = focus, map = mapper
+  )
+}
+
+a_x_axis <- make_focus_tail_axis(
+  dimension_metric_a$A_typical,
+  c(class_summary_a$A_q75, dimension_overall_a$A_q75),
+  prob = .95, tail_ratio = 1.30, gutter_fraction = .12, fallback = .25
+)
+a_y_axis <- make_focus_tail_axis(
+  dimension_metric_a$rank_loss_typical,
+  c(class_summary_a$rank_loss_q75, dimension_overall_a$rank_loss_q75),
+  prob = .95, tail_ratio = 1.30, gutter_fraction = .12, fallback = .05
+)
+
+dimension_metric_plot_a <- dimension_metric_a |>
+  mutate(
+    A_plot = a_x_axis$map(A_typical),
+    rank_loss_plot = a_y_axis$map(rank_loss_typical)
+  )
+
+class_summary_plot_a <- class_summary_a |>
+  mutate(
+    A_q10_plot = a_x_axis$map(A_q10),
+    A_q25_plot = a_x_axis$map(A_q25),
+    A_median_plot = a_x_axis$map(A_median),
+    A_q75_plot = a_x_axis$map(A_q75),
+    A_q90_plot = a_x_axis$map(A_q90),
+    rank_loss_q10_plot = a_y_axis$map(rank_loss_q10),
+    rank_loss_q25_plot = a_y_axis$map(rank_loss_q25),
+    rank_loss_median_plot = a_y_axis$map(rank_loss_median),
+    rank_loss_q75_plot = a_y_axis$map(rank_loss_q75),
+    rank_loss_q90_plot = a_y_axis$map(rank_loss_q90)
+  )
+
+dimension_overall_plot_a <- dimension_overall_a |>
+  mutate(
+    A_q10_plot = a_x_axis$map(A_q10),
+    A_q25_plot = a_x_axis$map(A_q25),
+    A_median_plot = a_x_axis$map(A_median),
+    A_q75_plot = a_x_axis$map(A_q75),
+    A_q90_plot = a_x_axis$map(A_q90),
+    rank_loss_q10_plot = a_y_axis$map(rank_loss_q10),
+    rank_loss_q25_plot = a_y_axis$map(rank_loss_q25),
+    rank_loss_median_plot = a_y_axis$map(rank_loss_median),
+    rank_loss_q75_plot = a_y_axis$map(rank_loss_q75),
+    rank_loss_q90_plot = a_y_axis$map(rank_loss_q90)
+  )
+
+# Nested marginal-quantile lozenges: outer = 10–90%, inner = IQR. Closing the
+# path at the first vertex yields a contour-like glyph without implying a fitted
+# bivariate probability region.
+class_outer_path_a <- bind_rows(
+  class_summary_plot_a |> transmute(dimension, metric_class, vertex = 1L, x = A_q10_plot, y = rank_loss_median_plot),
+  class_summary_plot_a |> transmute(dimension, metric_class, vertex = 2L, x = A_median_plot, y = rank_loss_q90_plot),
+  class_summary_plot_a |> transmute(dimension, metric_class, vertex = 3L, x = A_q90_plot, y = rank_loss_median_plot),
+  class_summary_plot_a |> transmute(dimension, metric_class, vertex = 4L, x = A_median_plot, y = rank_loss_q10_plot),
+  class_summary_plot_a |> transmute(dimension, metric_class, vertex = 5L, x = A_q10_plot, y = rank_loss_median_plot)
+) |>
+  arrange(dimension, metric_class, vertex) |>
+  mutate(glyph = interaction(dimension, metric_class, drop = TRUE))
+
+class_inner_path_a <- bind_rows(
+  class_summary_plot_a |> transmute(dimension, metric_class, vertex = 1L, x = A_q25_plot, y = rank_loss_median_plot),
+  class_summary_plot_a |> transmute(dimension, metric_class, vertex = 2L, x = A_median_plot, y = rank_loss_q75_plot),
+  class_summary_plot_a |> transmute(dimension, metric_class, vertex = 3L, x = A_q75_plot, y = rank_loss_median_plot),
+  class_summary_plot_a |> transmute(dimension, metric_class, vertex = 4L, x = A_median_plot, y = rank_loss_q25_plot),
+  class_summary_plot_a |> transmute(dimension, metric_class, vertex = 5L, x = A_q25_plot, y = rank_loss_median_plot)
+) |>
+  arrange(dimension, metric_class, vertex) |>
+  mutate(glyph = interaction(dimension, metric_class, drop = TRUE))
+
+overall_outer_path_a <- bind_rows(
+  dimension_overall_plot_a |> transmute(dimension, vertex = 1L, x = A_q10_plot, y = rank_loss_median_plot),
+  dimension_overall_plot_a |> transmute(dimension, vertex = 2L, x = A_median_plot, y = rank_loss_q90_plot),
+  dimension_overall_plot_a |> transmute(dimension, vertex = 3L, x = A_q90_plot, y = rank_loss_median_plot),
+  dimension_overall_plot_a |> transmute(dimension, vertex = 4L, x = A_median_plot, y = rank_loss_q10_plot),
+  dimension_overall_plot_a |> transmute(dimension, vertex = 5L, x = A_q10_plot, y = rank_loss_median_plot)
+) |>
+  arrange(dimension, vertex)
+
+overall_inner_path_a <- bind_rows(
+  dimension_overall_plot_a |> transmute(dimension, vertex = 1L, x = A_q25_plot, y = rank_loss_median_plot),
+  dimension_overall_plot_a |> transmute(dimension, vertex = 2L, x = A_median_plot, y = rank_loss_q75_plot),
+  dimension_overall_plot_a |> transmute(dimension, vertex = 3L, x = A_q75_plot, y = rank_loss_median_plot),
+  dimension_overall_plot_a |> transmute(dimension, vertex = 4L, x = A_median_plot, y = rank_loss_q25_plot),
+  dimension_overall_plot_a |> transmute(dimension, vertex = 5L, x = A_q25_plot, y = rank_loss_median_plot)
+) |>
+  arrange(dimension, vertex)
+
+class_spokes_a <- class_summary_plot_a |>
+  select(dimension, metric_class, x = A_median_plot, y = rank_loss_median_plot) |>
+  left_join(
+    dimension_overall_plot_a |>
+      select(dimension, x0 = A_median_plot, y0 = rank_loss_median_plot),
+    by = "dimension"
+  )
+
+dimension_labels_a <- dimension_overall_plot_a |>
+  mutate(
+    short_label = recode(
+      as.character(dimension),
+      "Optical representation" = "Optical",
+      "Temporal resolution" = "Temporal",
+      "Monitoring duration" = "Duration",
+      .default = as.character(dimension)
+    ),
+    hjust = if_else(A_median_plot > .72 * a_x_axis$display_max, 1, 0),
+    vjust = if_else(rank_loss_median_plot > .78 * a_y_axis$display_max, 1, 0),
+    x_label = A_median_plot + if_else(
+      hjust == 1, -.018 * a_x_axis$display_max, .018 * a_x_axis$display_max
+    ),
+    y_label = rank_loss_median_plot + if_else(
+      vjust == 1, -.030 * a_y_axis$display_max, .030 * a_y_axis$display_max
+    )
+  )
 
 assoc_lookup <- setNames(dimension_assoc$rho_A_rank, as.character(dimension_assoc$dimension))
 assoc_text <- sprintf(
-  "A–rank-loss association, rₛ: Placement %.2f · Optical %.2f · Temporal %.2f · Duration %.2f",
+  "tail gutters compress extreme metrics · A–rank-loss rₛ: P %.2f · O %.2f · T %.2f · D %.2f",
   assoc_lookup[["Placement"]], assoc_lookup[["Optical representation"]],
   assoc_lookup[["Temporal resolution"]], assoc_lookup[["Monitoring duration"]]
 )
 assoc_text_compact <- sprintf(
-  "A–rank-loss rₛ\nP %.2f · O %.2f · T %.2f · D %.2f",
+  "tail gutters compress extremes\nrₛ: P %.2f · O %.2f · T %.2f · D %.2f",
   assoc_lookup[["Placement"]], assoc_lookup[["Optical representation"]],
   assoc_lookup[["Temporal resolution"]], assoc_lookup[["Monitoring duration"]]
 )
 
-# Dimension identity is shown with a compact in-panel legend. It uses the same
-# shape grammar as the summaries and occupies the otherwise empty upper-left
-# region, avoiding leader lines that compete with the crosshairs.
-a_dimension_legend <- tibble(
-  dimension = factor(
-    c("Placement", "Optical representation", "Temporal resolution", "Monitoring duration"),
-    levels = levels(dimension_summary_a$dimension)
-  ),
-  label = c("Placement", "Optical", "Temporal", "Duration"),
-  x = .025,
-  x_text = .045,
-  y = rank_loss_limit * c(.78, .65, .52, .39)
-)
-a_dimension_legend_bg <- tibble(
-  xmin = .010, xmax = .155,
-  ymin = rank_loss_limit * .31, ymax = rank_loss_limit * .85
+a_x_breaks_raw <- scales::breaks_extended(n = 5)(c(0, a_x_axis$tick_max))
+a_x_breaks_raw <- sort(unique(c(
+  0, a_x_breaks_raw[is.finite(a_x_breaks_raw) & a_x_breaks_raw >= 0 & a_x_breaks_raw <= a_x_axis$tick_max]
+)))
+a_y_breaks_raw <- scales::breaks_extended(n = 5)(c(0, a_y_axis$tick_max))
+a_y_breaks_raw <- sort(unique(c(
+  0, a_y_breaks_raw[is.finite(a_y_breaks_raw) & a_y_breaks_raw >= 0 & a_y_breaks_raw <= a_y_axis$tick_max]
+)))
+a_x_labels <- scales::label_number(
+  accuracy = if (a_x_axis$tick_max <= .5) .05 else .1
+)(a_x_breaks_raw)
+a_y_labels <- scales::label_number(
+  accuracy = if (a_y_axis$tick_max <= .2) .01 else .05
+)(a_y_breaks_raw)
+
+tail_rects_a <- bind_rows(
+  if (a_x_axis$use_tail) tibble(
+    xmin = a_x_axis$focus, xmax = a_x_axis$display_max,
+    ymin = 0, ymax = a_y_axis$display_max
+  ) else tibble(),
+  if (a_y_axis$use_tail) tibble(
+    xmin = 0, xmax = a_x_axis$display_max,
+    ymin = a_y_axis$focus, ymax = a_y_axis$display_max
+  ) else tibble()
 )
 
 p1a_core <- ggplot() +
-  geom_hline(yintercept = 0, linewidth = .24, color = "#D7DADD") +
-  geom_segment(
-    data = dimension_summary_a,
-    aes(
-      x = A_q25, xend = A_q75,
-      y = rank_loss_median, yend = rank_loss_median,
-      color = metric_class
-    ),
-    inherit.aes = FALSE, linewidth = .72, alpha = .54, lineend = "round"
-  ) +
-  geom_segment(
-    data = dimension_summary_a,
-    aes(
-      x = A_median, xend = A_median,
-      y = rank_loss_q25, yend = rank_loss_q75,
-      color = metric_class
-    ),
-    inherit.aes = FALSE, linewidth = .72, alpha = .54, lineend = "round"
-  ) +
   geom_rect(
-    data = a_dimension_legend_bg,
+    data = tail_rects_a,
     aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-    inherit.aes = FALSE, fill = scales::alpha("white", .88),
-    color = "#D7DADD", linewidth = .24
+    inherit.aes = FALSE, fill = "#F5F6F6", colour = NA
   ) +
-  geom_text(
-    data = tibble(x = .017, y = rank_loss_limit * .825, label = "Dimension"),
-    aes(x, y, label = label),
-    inherit.aes = FALSE, hjust = 0, vjust = .5,
-    size = 1.60, family = MS_FONT, fontface = "bold", color = "#565B5E"
-  ) +
-  geom_point(
-    data = a_dimension_legend,
-    aes(x, y, shape = dimension),
-    inherit.aes = FALSE, size = 1.95, color = "#4E5559", stroke = 0
-  ) +
-  geom_text(
-    data = a_dimension_legend,
-    aes(x_text, y, label = label),
-    inherit.aes = FALSE, hjust = 0, vjust = .5,
-    size = 1.55, family = MS_FONT, color = "#4E5559"
+  {if (a_x_axis$use_tail) geom_vline(
+    xintercept = a_x_axis$focus, colour = "#B9BEC1",
+    linewidth = .28, linetype = "22"
+  ) else NULL} +
+  {if (a_y_axis$use_tail) geom_hline(
+    yintercept = a_y_axis$focus, colour = "#B9BEC1",
+    linewidth = .28, linetype = "22"
+  ) else NULL} +
+  geom_segment(
+    data = class_spokes_a,
+    aes(x = x0, y = y0, xend = x, yend = y),
+    inherit.aes = FALSE, colour = "#AEB4B7", linewidth = .30, alpha = .16
   ) +
   geom_point(
-    data = dimension_summary_a,
-    aes(A_median, rank_loss_median, color = metric_class, shape = dimension),
-    inherit.aes = FALSE, size = 2.35, stroke = 0, alpha = .98
+    data = dimension_metric_plot_a,
+    aes(A_plot, rank_loss_plot, colour = metric_class),
+    size = .48, alpha = .13, shape = 16
   ) +
-  scale_shape_manual(values = DIM_SHAPES_A, guide = "none") +
+  geom_path(
+    data = class_outer_path_a,
+    aes(x, y, group = glyph, colour = metric_class),
+    linewidth = .30, alpha = .28, lineend = "round", linejoin = "round"
+  ) +
+  geom_path(
+    data = class_inner_path_a,
+    aes(x, y, group = glyph, colour = metric_class),
+    linewidth = .70, alpha = .82, lineend = "round", linejoin = "round"
+  ) +
+  geom_point(
+    data = class_summary_plot_a,
+    aes(A_median_plot, rank_loss_median_plot, colour = metric_class),
+    shape = 16, size = 1.28, alpha = .98
+  ) +
+  geom_path(
+    data = overall_outer_path_a,
+    aes(x, y, group = dimension),
+    inherit.aes = FALSE, colour = "#40474B", linewidth = .52,
+    alpha = .46, lineend = "round", linejoin = "round"
+  ) +
+  geom_path(
+    data = overall_inner_path_a,
+    aes(x, y, group = dimension),
+    inherit.aes = FALSE, colour = "#252B2E", linewidth = 1.05,
+    alpha = .92, lineend = "round", linejoin = "round"
+  ) +
+  geom_point(
+    data = dimension_overall_plot_a,
+    aes(A_median_plot, rank_loss_median_plot),
+    inherit.aes = FALSE, shape = 23, size = 2.65,
+    fill = "#252B2E", colour = "white", stroke = .32
+  ) +
+  geom_text(
+    data = dimension_labels_a,
+    aes(x_label, y_label, label = short_label, hjust = hjust, vjust = vjust),
+    inherit.aes = FALSE, family = MS_FONT, fontface = "bold",
+    size = 1.78, colour = "#252B2E"
+  ) +
   scale_color_ms_metric(guide = "none") +
   scale_x_continuous(
-    # A pseudo-log display expands the dense low-distortion region while
-    # retaining a well-defined zero and the original A values in tick labels.
-    trans = scales::transform_pseudo_log(sigma = .02),
-    limits = c(0, a_display_limit),
-    breaks = c(0, .2, .4, .6),
-    labels = scales::label_number(accuracy = .1),
-    expand = expansion(mult = c(0, .02))
+    limits = c(0, a_x_axis$display_max),
+    breaks = a_x_axis$map(a_x_breaks_raw), labels = a_x_labels,
+    expand = expansion(mult = c(0, .012))
   ) +
   scale_y_continuous(
-    # Apply the same monotone zero-preserving display logic to rank loss;
-    # otherwise the many near-zero temporal/optical summaries collapse onto
-    # the baseline while A is already shown on a pseudo-log scale.
-    trans = scales::transform_pseudo_log(sigma = .01),
-    limits = c(0, rank_loss_limit),
-    breaks = c(0, .01, .05, .1, .2, .4),
-    labels = scales::label_number(accuracy = .01),
-    expand = expansion(mult = c(0, .04))
+    limits = c(0, a_y_axis$display_max),
+    breaks = a_y_axis$map(a_y_breaks_raw), labels = a_y_labels,
+    expand = expansion(mult = c(0, .018))
   ) +
   labs(
-    x = "Absolute distortion, A (pseudo-log scale)",
-    y = "Rank loss, 1 − Spearman ρ (pseudo-log scale)"
+    x = "Absolute distortion, A",
+    y = "Rank loss, 1 − Spearman ρ"
   ) +
-  theme_fig1(base_size = 7.15, legend_position = "bottom") +
+  theme_fig1(base_size = 7.15, legend_position = "none") +
   theme(
-    panel.grid.major = element_blank(),
+    panel.grid.major = element_line(colour = "#EFF1F2", linewidth = .20),
+    panel.grid.minor = element_blank(),
     axis.text = element_text(size = 5.7),
     axis.title = element_text(size = 6.65),
     plot.margin = margin(0, 3, 3, 3)
   )
+
+if (a_x_axis$use_tail) {
+  p1a_core <- p1a_core + annotate(
+    "text",
+    x = a_x_axis$focus + .50 * (a_x_axis$display_max - a_x_axis$focus),
+    y = .975 * a_y_axis$display_max,
+    label = "compressed A tail", family = MS_FONT,
+    size = 1.42, colour = "#8A8F92", hjust = .5, vjust = 1
+  )
+}
+if (a_y_axis$use_tail) {
+  p1a_core <- p1a_core + annotate(
+    "text",
+    x = .018 * a_x_axis$display_max,
+    y = a_y_axis$focus + .78 * (a_y_axis$display_max - a_y_axis$focus),
+    label = "compressed rank-loss tail", family = MS_FONT,
+    size = 1.42, colour = "#8A8F92", hjust = 0, vjust = .5
+  )
+}
 
 # The lower b/c block has an intentional left inset for the shared y-axis and
 # its plot frames. Apply the same inset to panel a's inner plot, while keeping
