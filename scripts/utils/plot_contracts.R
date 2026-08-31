@@ -16,22 +16,30 @@ ms_plot_prep_only <- function() {
 
   # The centralized supplementary entrypoint sources main-figure scripts only to
   # reconstruct their frozen display objects. Suppress save/manifest side effects
-  # while those sourced scripts are on the call stack, but not for FigS saves
-  # executed directly by 16_plot_supplementary.R after source() has returned.
+  # only while one of those five explicit main scripts is present on the call
+  # stack. FigS saves executed directly by 16_plot_supplementary.R are unaffected.
   file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
   if (!length(file_arg)) return(FALSE)
   top_script <- basename(sub("^--file=", "", file_arg[[1]]))
   if (!identical(top_script, "16_plot_supplementary.R")) return(FALSE)
 
-  call_heads <- vapply(
+  main_plot_scripts <- c(
+    "11_plot_fig1.R",
+    "13a_plot_fig2.R",
+    "13b_plot_fig3.R",
+    "15a_plot_fig4.R",
+    "15b_plot_fig5.R"
+  )
+  call_text <- vapply(
     sys.calls(),
-    function(cl) {
-      if (!length(cl)) return("")
-      as.character(cl[[1]])[[1]]
-    },
+    function(cl) paste(deparse(cl, width.cutoff = 500L), collapse = " "),
     character(1)
   )
-  any(call_heads %in% c("source", "sys.source"))
+  any(vapply(
+    main_plot_scripts,
+    function(script) any(grepl(script, call_text, fixed = TRUE)),
+    logical(1)
+  ))
 }
 
 ms_plot_require_files <- function(paths, artifact = "plot input") {
