@@ -2,6 +2,14 @@
 # Plot scripts may reshape frozen summaries for display, but must not refit,
 # recompute estimands, or silently fall back to legacy data/derived paths.
 
+# Some compact plotting entry points source plot_contracts.R directly but still
+# rely on shared atlas helpers such as ms_direction_ratio(). Load those helpers
+# here only when they have not already been sourced by the caller.
+if (!exists("ms_direction_ratio", mode = "function") &&
+    file.exists("scripts/utils/figure_atlas.R")) {
+  source("scripts/utils/figure_atlas.R")
+}
+
 ms_plot_require_files <- function(paths, artifact = "plot input") {
   paths <- as.character(paths)
   missing <- paths[!file.exists(paths)]
