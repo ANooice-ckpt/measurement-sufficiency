@@ -11,7 +11,27 @@ if (!exists("ms_direction_ratio", mode = "function") &&
 }
 
 ms_plot_prep_only <- function() {
-  identical(Sys.getenv("MS_PLOT_PREP_ONLY", unset = "0"), "1")
+  # Explicit override remains available for diagnostics.
+  if (identical(Sys.getenv("MS_PLOT_PREP_ONLY", unset = "0"), "1")) return(TRUE)
+
+  # The centralized supplementary entrypoint sources main-figure scripts only to
+  # reconstruct their frozen display objects. Suppress save/manifest side effects
+  # while those sourced scripts are on the call stack, but not for FigS saves
+  # executed directly by 16_plot_supplementary.R after source() has returned.
+  file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+  if (!length(file_arg)) return(FALSE)
+  top_script <- basename(sub("^--file=", "", file_arg[[1]]))
+  if (!identical(top_script, "16_plot_supplementary.R")) return(FALSE)
+
+  call_heads <- vapply(
+    sys.calls(),
+    function(cl) {
+      if (!length(cl)) return("")
+      as.character(cl[[1]])[[1]]
+    },
+    character(1)
+  )
+  any(call_heads %in% c("source", "sys.source"))
 }
 
 ms_plot_require_files <- function(paths, artifact = "plot input") {
@@ -70,9 +90,9 @@ ms_plot_pair_label <- function(data) {
 
 ms_plot_write_manifest <- function(path, figure_rows) {
   # Supplementary plotting may source a main-figure script only to reconstruct
-  # its frozen display objects. In that prep-only mode, do not overwrite the
-  # main figure manifest; the supplementary entrypoint writes the complete
-  # per-RQ manifest after its FigS blocks finish.
+  # its frozen display objects. In prep-only mode, do not overwrite the main
+  # figure manifest; the supplementary entrypoint writes the complete per-RQ
+  # manifest after its FigS blocks finish.
   if (ms_plot_prep_only()) return(invisible(path))
 
   figure_rows <- tibble::as_tibble(figure_rows)
@@ -104,7 +124,7 @@ ms_plot_write_manifest <- function(path, figure_rows) {
 ms_plot_save <- function(plot, path, width, height,
                          dpi = if (exists("MS_RASTER_DPI", inherits = TRUE)) MS_RASTER_DPI else 600) {
   # When a main script is sourced by the supplementary entrypoint for data/object
-  # preparation, reconstruct the plot objects without writing the main figure a
+  # preparation, reconstruct its plot objects without writing the main figure a
   # second time. Standalone main-figure execution is unchanged.
   if (ms_plot_prep_only()) return(invisible(path))
 
