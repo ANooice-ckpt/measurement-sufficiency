@@ -1,0 +1,73 @@
+name: One-shot parallel RQ1 relational preservation
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    if: github.event.head_commit.message == 'Add one-shot relational preservation parallelizer'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Parallelize relational preservation
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('scripts/10_rq1_analysis.R')
+          text = path.read_text()
+          old = '''message("RQ1 relational preservation over ", length(part_paths), " canonical parts")
+          rank_fragments <- map(part_paths, rq1_rank_fragment)
+          rank_rows <- bind_rows(rank_fragments)'''
+          new = '''message("RQ1 relational preservation over ", length(part_paths), " canonical parts; workers=", FRAGMENT_WORKERS)
+          rank_schedule_idx <- order(as.numeric(file.info(part_paths)$size), decreasing = TRUE, na.last = TRUE)
+          rank_fragments_scheduled <- ms_parallel_map(
+            part_paths[rank_schedule_idx], rq1_rank_fragment,
+            workers = FRAGMENT_WORKERS,
+            packages = c("tidyverse"),
+            exports = c("rank_group_vars", "RQ1_DIMENSIONS", "rq1_rank_fragment")
+          )
+          rank_fragments <- rank_fragments_scheduled[order(rank_schedule_idx)]
+          rank_rows <- bind_rows(rank_fragments)'''
+          if text.count(old) != 1:
+              raise SystemExit(f'Expected one relational-preservation block, found {text.count(old)}')
+          path.write_text(text.replace(old, new))
+
+          doc = Path('docs/RQ1_EXECUTION.md')
+          d = doc.read_text()
+          old_d = '`RQ1_STARTUP_WORKERS` parallelizes duration-anchor startup scans, `RQ1_PART_WORKERS` parallelizes immutable canonical-part generation, `RQ1_FRAGMENT_WORKERS` parallelizes summary-fragment checkpoints, and `RQ1_BOOT_WORKERS` controls the participant-cluster/site-stratified bootstrap workers.'
+          new_d = '`RQ1_STARTUP_WORKERS` parallelizes duration-anchor startup scans, `RQ1_PART_WORKERS` parallelizes immutable canonical-part generation, `RQ1_FRAGMENT_WORKERS` parallelizes both summary-fragment checkpoints and the canonical-part relational-preservation scan, and `RQ1_BOOT_WORKERS` controls the participant-cluster/site-stratified bootstrap workers.'
+          if d.count(old_d) != 1:
+              raise SystemExit(f'Expected one documentation sentence, found {d.count(old_d)}')
+          doc.write_text(d.replace(old_d, new_d))
+          PY
+
+      - name: Validate edits
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'RQ1 relational preservation over ' scripts/10_rq1_analysis.R
+          grep -F 'workers=", FRAGMENT_WORKERS' scripts/10_rq1_analysis.R
+          grep -F 'rank_fragments_scheduled <- ms_parallel_map(' scripts/10_rq1_analysis.R
+          grep -F 'part_paths[rank_schedule_idx]' scripts/10_rq1_analysis.R
+          grep -F 'relational-preservation scan' docs/RQ1_EXECUTION.md
+          git diff --check
+
+      - name: Commit and remove updater
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/one-shot-parallel-rq1-relational.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/10_rq1_analysis.R docs/RQ1_EXECUTION.md .github/workflows/one-shot-parallel-rq1-relational.yml
+          git commit -m "Parallelize RQ1 relational preservation scan"
+          git push origin HEAD:master
