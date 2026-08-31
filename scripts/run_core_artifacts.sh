@@ -21,7 +21,7 @@ Rscript --vanilla -e 'files <- c(
   "scripts/utils/analysis_design.R",
   "scripts/utils/melidos_io.R", "scripts/utils/protocol_windows.R",
   "scripts/utils/paths.R", "scripts/utils/duration_artifacts.R", "scripts/utils/parallel_runtime.R",
-  "scripts/utils/core_artifacts.R", "scripts/utils/core_temporal_sampling.R", "scripts/utils/core_context.R",
+  "scripts/utils/core_artifacts.R", "scripts/utils/core_context.R",
   "scripts/utils/figure_style.R", "scripts/utils/rq1_pairwise_artifacts.R",
   "scripts/utils/rq_context.R", "scripts/utils/rq2_context_features.R",
   "scripts/01_download_melidos.R", "scripts/04c_prepare_raw_eye_spans.R",
