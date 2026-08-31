@@ -54,12 +54,13 @@ survive a design change.
   the frozen temporal transitions and 1–6 d duration transitions.
 
 The complete metric-by-pair atlas, pairwise distributions and availability atlas
-are supplementary. Temporal transition ordering is generated from the frozen
-analysis design rather than written manually into the plot source.
+are supplementary. Their drawing code, together with every other FigS block, is centralized in
+`scripts/16_plot_supplementary.R`. Temporal transition ordering is generated from the frozen
+analysis design rather than written manually into the main plot source.
 
 ## Figures 2–3 — RQ2 conditionality and interactions
 
-`13_plot_rq2.R` uses transition-local exposure-state bins frozen by RQ2.
+`13a_plot_fig2.R` and `13b_plot_fig3.R` use transition-local exposure-state bins and interaction outputs frozen by RQ2.
 
 - Fig. 2a shows conditional distortion magnitude across exposure state with
   linear within-dimension y scales;
@@ -78,7 +79,7 @@ RQ1. Duration enters multidimensional stability directly in RQ3.
 
 ## Figures 4–5 — RQ3 sufficiency and joint minimum-burden projections
 
-`15_plot_rq3.R` presents:
+`15a_plot_fig4.R` and `15b_plot_fig5.R` present:
 
 - Fig. 4a: tolerance-dependent minimum sufficient requirement rank for the two
   ordered dimensions, with a thin strip showing the fraction of evaluable metrics
@@ -103,3 +104,8 @@ domain is 10–120 s.
 Files under `results/legacy/pre_refactor` are retained for audit only and are
 not valid inputs to current plotting scripts. Compatibility entrypoints from the
 retired context-specific graph are audit/migration aids only.
+
+
+## Supplementary figures
+
+`scripts/16_plot_supplementary.R` is the single plotting entrypoint for all `FigS_*` outputs across RQ1-RQ3. It reuses the same frozen RQ artifacts and unchanged plotting blocks that previously lived inside the RQ-specific main-figure scripts.

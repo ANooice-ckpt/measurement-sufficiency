@@ -335,38 +335,6 @@ p1a <- cowplot::ggdraw() +
   )
 
 # -----------------------------------------------------------------------------
-# Supplementary complete metric-level atlas
-# -----------------------------------------------------------------------------
-atlas <- summary_plot |> filter(is.finite(A_mean_absolute), is.finite(B_mean_signed))
-atlas_bg <- availability_plot
-p_atlas <- ggplot(atlas, aes(pair_label, metric)) +
-  geom_tile(
-    data = atlas_bg |> filter(representation_available),
-    fill = "#F3F3F3", color = "white", linewidth = .10
-  ) +
-  geom_point(
-    data = atlas_bg |> filter(!representation_available), shape = 4,
-    size = .52, stroke = .24, color = "#B5B5B5"
-  ) +
-  geom_point(
-    aes(size = A_mean_absolute, fill = direction_ratio), shape = 21,
-    color = "#3B3B3B", stroke = .14, alpha = .94
-  ) +
-  facet_grid(metric_class ~ dimension, scales = "free", space = "free", switch = "y") +
-  ms_direction_scale(name = "B / A") +
-  ms_magnitude_size_scale(name = "A = mean |z|", range = c(.25, 3.0)) +
-  labs(
-    title = "Complete oriented configuration-response atlas",
-    x = "scientifically oriented comparison pair", y = NULL
-  ) +
-  ms_atlas_theme(base_size = 6.1, x_angle = 52) +
-  theme(axis.text.x = element_text(size = 5.1))
-readr::write_csv(
-  atlas |> mutate(dimension = as.character(dimension), metric_class = as.character(metric_class)),
-  file.path("results", "rq1", "fig1_pairwise_atlas.csv"), na = ""
-)
-
-# -----------------------------------------------------------------------------
 # b. Target-aligned distortion magnitude and directional coherence
 # -----------------------------------------------------------------------------
 target_geometry <- summary |>
@@ -709,77 +677,17 @@ fig1 <- cowplot::plot_grid(
 ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.pdf"), FIG1_WIDTH_IN, FIG1_HEIGHT_IN)
 ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.png"), FIG1_WIDTH_IN, FIG1_HEIGHT_IN)
 
-# -----------------------------------------------------------------------------
-# Supplementary figures
-# -----------------------------------------------------------------------------
-ms_plot_save(p_atlas, file.path(OUT_DIR, "FigS_RQ1_pairwise_atlas.pdf"), 16, 10)
-ms_plot_save(p_atlas, file.path(OUT_DIR, "FigS_RQ1_pairwise_atlas.png"), 16, 10)
-
-distribution_panel <- function(dim, letter) {
-  d <- summary_plot |>
-    filter(dimension == dim, is.finite(median_z)) |>
-    mutate(metric = forcats::fct_rev(metric))
-  if (!nrow(d)) stop("No RQ1 distribution rows for dimension: ", dim)
-  ggplot(d, aes(y = metric, color = metric_class)) +
-    geom_vline(xintercept = 0, linewidth = .28, color = "#B8B8B8") +
-    geom_segment(aes(x = p025_z, xend = p975_z, yend = metric), alpha = .30, linewidth = .35) +
-    geom_segment(aes(x = q25_z, xend = q75_z, yend = metric), alpha = .72, linewidth = 1.05) +
-    geom_point(aes(x = median_z), size = .72, alpha = .90) +
-    facet_grid(metric_class ~ ., scales = "free_y", space = "free_y", switch = "y") +
-    scale_color_ms_metric() +
-    scale_x_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
-    labs(
-      title = paste0(letter, "  ", DIM_TITLES[[dim]]),
-      x = "standardized representation change, z", y = NULL
-    ) +
-    theme_ms(base_size = 6.0, legend_position = "none") +
-    theme(
-      panel.grid.major.y = element_blank(),
-      axis.text.y = element_text(size = 4.8),
-      axis.ticks.y = element_blank(),
-      strip.text.y.left = element_text(size = 5.1)
-    )
-}
-
-distribution_grid <- cowplot::plot_grid(
-  plotlist = map2(DIMENSIONS, letters[1:4], distribution_panel),
-  ncol = 4, align = "hv", axis = "tblr"
-)
-ms_plot_save(distribution_grid, file.path(OUT_DIR, "FigS_RQ1_pairwise_distributions.pdf"), 16, 9.2)
-ms_plot_save(distribution_grid, file.path(OUT_DIR, "FigS_RQ1_pairwise_distributions.png"), 16, 9.2)
-
-p_availability <- ggplot(availability_plot, aes(pair_label, metric, fill = representation_available)) +
-  geom_tile(color = "white", linewidth = .12) +
-  facet_grid(metric_class ~ dimension, scales = "free", space = "free", switch = "y") +
-  scale_fill_manual(
-    values = c(`TRUE` = MS_PRIMARY, `FALSE` = "#D9D9D9"),
-    labels = c(`TRUE` = "available", `FALSE` = "unavailable"), name = NULL
-  ) +
-  labs(
-    title = "RQ1 representation availability by oriented comparison pair",
-    x = NULL, y = NULL
-  ) +
-  ms_atlas_theme(base_size = 6.1, x_angle = 52)
-ms_plot_save(p_availability, file.path(OUT_DIR, "FigS_RQ1_availability_atlas.pdf"), 16, 10)
-ms_plot_save(p_availability, file.path(OUT_DIR, "FigS_RQ1_availability_atlas.png"), 16, 10)
 
 ms_plot_write_manifest(
   file.path(OUT_DIR, "figure_artifact_manifest.csv"),
   tibble(
-    figure = c(
-      "Fig1_RQ1", "FigS_RQ1_pairwise_atlas",
-      "FigS_RQ1_pairwise_distributions", "FigS_RQ1_availability_atlas"
-    ),
-    input_artifact = c(
-      "rq1_pairwise_change_long (derived Spearman) + rq1_pairwise_summary + rq1_local_transition_summary",
-      "rq1_pairwise_summary + rq1_metric_availability",
-      "rq1_pairwise_summary",
-      "rq1_metric_availability"
-    ),
+    figure = 'Fig1_RQ1',
+    input_artifact = 'rq1_pairwise_change_long (derived Spearman) + rq1_pairwise_summary + rq1_local_transition_summary',
     core_artifact_version = CORE_VERSION,
     rq1_analysis_version = RQ1_VERSION,
     rq2_analysis_version = NA_character_,
     rq3_analysis_version = NA_character_
   )
 )
+
 message("Fig. 1 complete: common preservation landscape, target-aligned magnitude/coherence geometry, and ordered-axis local-response distributions.")

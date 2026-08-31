@@ -14,11 +14,11 @@ The expensive source-to-core layer ends at `scripts/09_build_core_artifacts.R`. 
 
 ```text
 10_rq1_analysis.R -> 11_plot_fig1.R
-12_rq2_analysis.R -> 13_plot_rq2.R
-14_rq3_analysis.R -> 15_plot_rq3.R
+12_rq2_analysis.R -> 13a_plot_fig2.R + 13b_plot_fig3.R
+14_rq3_analysis.R -> 15a_plot_fig4.R + 15b_plot_fig5.R
 ```
 
-Plot scripts read frozen outputs only and must not silently refit/recompute their corresponding analysis.
+Main plot scripts read frozen outputs only and must not silently refit/recompute their corresponding analysis. All supplementary figure drawing blocks live in `scripts/16_plot_supplementary.R`.
 
 ## Frozen scientific rules
 - Scientific object: `configuration -> observed exposure process -> target representation`.

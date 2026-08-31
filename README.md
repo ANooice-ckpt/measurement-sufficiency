@@ -70,11 +70,14 @@ Rscript scripts/11_plot_fig1.R
 
 # RQ2: exposure-state conditionality, layered context models and circular-aware gamma
 RQ2_WORKERS=12 RQ2_CV_FOLDS=5 RQ2_RUN_MODELS=1 Rscript scripts/12_rq2_analysis.R
-Rscript scripts/13_plot_rq2.R
+Rscript scripts/13a_plot_fig2.R
+Rscript scripts/13b_plot_fig3.R
 
 # RQ3: observed residual instability, sufficiency and Pareto occupancy
 Rscript scripts/14_rq3_analysis.R
-Rscript scripts/15_plot_rq3.R
+Rscript scripts/15a_plot_fig4.R
+Rscript scripts/15b_plot_fig5.R
+Rscript scripts/16_plot_supplementary.R
 ```
 
 RQ1-RQ3 are canonical executable sources: all server runners invoke these files directly rather than generating alternate downstream runtimes. RQ1 keeps concrete nested duration-window comparisons in its canonical pairwise artifact but projects them to generic 1–6 day comparison types before pooled summaries and bootstrap inference. The RQ2 entrypoint contains the streamed conditional analysis directly and, in the same R process, adds the layered contextual models. Those models reuse existing ERA5 fields from `unit_context` and harmonized MeLiDos light-exposure, exercise and sleep diaries; they do not introduce an alternate core/weather preprocessing path.

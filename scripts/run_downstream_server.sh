@@ -34,9 +34,12 @@ LOG="results/logs/downstream_v5.log"
       "scripts/utils/rq2_context_features.R",
       "scripts/12_rq2_analysis.R",
       "scripts/12c_rq2_context_models.R",
-      "scripts/13_plot_rq2.R",
+      "scripts/13a_plot_fig2.R",
+      "scripts/13b_plot_fig3.R",
       "scripts/14_rq3_analysis.R",
-      "scripts/15_plot_rq3.R"
+      "scripts/15a_plot_fig4.R",
+      "scripts/15b_plot_fig5.R",
+      "scripts/16_plot_supplementary.R"
     )
     invisible(lapply(fs, parse))
     cat("All canonical downstream analysis and plotting sources parse successfully\n")
@@ -139,14 +142,23 @@ LOG="results/logs/downstream_v5.log"
   # therefore one set of validated canonical transition objects.
   Rscript scripts/12_rq2_analysis.R
 
-  echo "===== RQ2 FIGURES ====="
-  Rscript scripts/13_plot_rq2.R
+  echo "===== FIGURE 2 ====="
+  Rscript scripts/13a_plot_fig2.R
+
+  echo "===== FIGURE 3 ====="
+  Rscript scripts/13b_plot_fig3.R
 
   echo "===== RQ3 ====="
   Rscript scripts/14_rq3_analysis.R
 
-  echo "===== RQ3 FIGURES ====="
-  Rscript scripts/15_plot_rq3.R
+  echo "===== FIGURE 4 ====="
+  Rscript scripts/15a_plot_fig4.R
+
+  echo "===== FIGURE 5 ====="
+  Rscript scripts/15b_plot_fig5.R
+
+  echo "===== SUPPLEMENTARY FIGURES ====="
+  Rscript scripts/16_plot_supplementary.R
 
   echo "===== PROVENANCE ====="
   git rev-parse HEAD > results/logs/git_commit.txt
