@@ -51,12 +51,16 @@ jobs:
             echo "Checking ${file}"
             bash -n "${file}"
           done < <(find scripts -type f -name '*.sh' -print0)
-      - name: Commit only the validated tree
+      - name: Commit only the validated source tree
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm -f Rplots.pdf .github/workflows/one-shot-audit-cleanup.yml .github/workflows/one-shot-audit-retry.yml
+          # GitHub Apps without workflows permission cannot push workflow-file changes.
+          # Keep the validated source edits, but restore workflow files to this run's HEAD;
+          # workflow cleanup/update is performed separately through the repository API.
+          git checkout HEAD -- .github/workflows
+          git rm -f Rplots.pdf
           git add -A
           git commit -m "Finalize canonical audit cleanup"
           git push
