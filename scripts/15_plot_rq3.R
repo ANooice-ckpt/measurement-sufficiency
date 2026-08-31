@@ -197,6 +197,7 @@ observed_summary <- observed_display |>
     class_offset = ms_class_offset(metric_class, span = .50, classes = METRIC_CLASSES),
     x_pos = requirement_rank + class_offset
   )
+FIG4B_MAX_RESOLVED_RANK <- max(observed_summary$requirement_rank, na.rm = TRUE)
 
 # c. Unordered dimensions are empirical substitutability curves. Reconstruct the
 # all-metric ECDF directly from epsilon_entry so metric-class-specific source
@@ -656,9 +657,11 @@ ms_plot_write_manifest(
 # -----------------------------------------------------------------------------
 # Main-text display refinement for Fig. 4.
 # Tolerance spans close to an order of magnitude and includes zero. A log1p axis
-# preserves zero, uses familiar logarithmic compression, and keeps all panels on
-# exactly the same tolerance scale. Breaks are explicit so the decision-relevant
-# low-tolerance region is not left with only a few automatic ticks.
+# preserves zero and uses familiar logarithmic compression. Each tolerance facet
+# uses its own observed x-range so the shorter placement/optical and duration
+# domains do not inherit the temporal long tail. Breaks remain explicit so the
+# decision-relevant low-tolerance region is not left with only a few automatic
+# ticks.
 # -----------------------------------------------------------------------------
 epsilon_log1p <- scales::trans_new(
   name = "log1p",
@@ -680,10 +683,14 @@ fig5_slice_guides <- FIG5_TOLERANCE_SLICES[FIG5_TOLERANCE_SLICES <= epsilon_limi
 
 p4a_main <- ggplot(requirement_summary, aes(epsilon, rank_median, color = metric_class)) +
   geom_vline(xintercept = fig5_slice_guides, linewidth = .22, linetype = 3, color = "#C5C9CC") +
-  geom_step(aes(y = rank_q25, group = metric_class), linewidth = .34, alpha = .24) +
-  geom_step(aes(y = rank_q75, group = metric_class), linewidth = .34, alpha = .24) +
-  geom_step(aes(group = metric_class), linewidth = .82, alpha = .96) +
-  facet_wrap(~dimension, nrow = 1, labeller = as_labeller(FIG4_DIM_LABELS)) +
+  geom_step(aes(y = rank_q25, group = metric_class), linewidth = .34, alpha = .24,
+            lineend = "butt", linejoin = "mitre") +
+  geom_step(aes(y = rank_q75, group = metric_class), linewidth = .34, alpha = .24,
+            lineend = "butt", linejoin = "mitre") +
+  geom_step(aes(group = metric_class), linewidth = .82, alpha = .96,
+            lineend = "butt", linejoin = "mitre") +
+  facet_wrap(~dimension, nrow = 1, scales = "free_x",
+             labeller = as_labeller(FIG4_DIM_LABELS)) +
   scale_color_ms_metric(guide = "none") +
   scale_x_continuous(
     trans = epsilon_log1p,
@@ -691,7 +698,6 @@ p4a_main <- ggplot(requirement_summary, aes(epsilon, rank_median, color = metric
     labels = epsilon_labels,
     expand = expansion(mult = c(0, .01))
   ) +
-  coord_cartesian(xlim = c(0, epsilon_limit), clip = "on") +
   scale_y_continuous(
     breaks = seq_len(ORDERED_MAX_RANK),
     limits = c(.8, ORDERED_MAX_RANK + .2)
@@ -712,15 +718,15 @@ p4a_main <- ggplot(requirement_summary, aes(epsilon, rank_median, color = metric
 
 p4a_coverage_refined <- ggplot(resolved_coverage, aes(epsilon, coverage)) +
   geom_vline(xintercept = fig5_slice_guides, linewidth = .20, linetype = 3, color = "#D0D3D5") +
-  geom_step(linewidth = .48, color = "#5D6265") +
-  facet_wrap(~dimension, nrow = 1, labeller = as_labeller(FIG4_DIM_LABELS)) +
+  geom_step(linewidth = .48, color = "#5D6265", lineend = "butt", linejoin = "mitre") +
+  facet_wrap(~dimension, nrow = 1, scales = "free_x",
+             labeller = as_labeller(FIG4_DIM_LABELS)) +
   scale_x_continuous(
     trans = epsilon_log1p,
     breaks = epsilon_ticks,
     labels = epsilon_labels,
     expand = expansion(mult = c(0, .01))
   ) +
-  coord_cartesian(xlim = c(0, epsilon_limit), clip = "on") +
   scale_y_continuous(
     limits = c(0, 1), breaks = c(0, .5, 1),
     labels = scales::label_percent(accuracy = 50), expand = expansion(mult = c(0, .02))
@@ -743,8 +749,8 @@ p4a <- cowplot::plot_grid(
 )
 
 # R_obs stays on its original linear scale; only the background raw points carry
-# the long tail. Rank limits are derived from the frozen design rather than a
-# historical seven-state temporal lattice.
+# the long tail. The highest observed boundary is unresolved and omitted, so the
+# rank axis ends at the highest resolved observed requirement.
 p4b <- ggplot() +
   geom_point(
     data = observed_display,
@@ -765,9 +771,9 @@ p4b <- ggplot() +
   facet_wrap(~dimension, nrow = 1, labeller = as_labeller(FIG4_DIM_LABELS)) +
   scale_color_ms_metric(guide = "none") +
   scale_x_continuous(
-    breaks = seq_len(ORDERED_MAX_RANK),
-    limits = c(.65, ORDERED_MAX_RANK + .35),
-    labels = as.character(seq_len(ORDERED_MAX_RANK))
+    breaks = seq_len(FIG4B_MAX_RESOLVED_RANK),
+    limits = c(.65, FIG4B_MAX_RESOLVED_RANK + .35),
+    labels = as.character(seq_len(FIG4B_MAX_RESOLVED_RANK))
   ) +
   scale_y_continuous(breaks = scales::breaks_extended(n = 5)) +
   labs(
@@ -801,12 +807,12 @@ p4c <- ggplot(
 ) +
   geom_vline(xintercept = fig5_slice_guides, linewidth = .22, linetype = 3, color = "#C5C9CC") +
   geom_hline(yintercept = .5, linewidth = .24, linetype = 3, color = "#B4B8BB") +
-  geom_step(linewidth = .76, alpha = .94) +
+  geom_step(linewidth = .76, alpha = .94, lineend = "butt", linejoin = "mitre") +
   geom_point(
     data = pair_e50, aes(epsilon50, .5, color = pair),
     inherit.aes = FALSE, shape = 21, fill = "white", size = 1.35, stroke = .45
   ) +
-  facet_wrap(~dimension, nrow = 1) +
+  facet_wrap(~dimension, nrow = 1, scales = "free_x") +
   scale_color_manual(values = pair_palette, breaks = pair_levels, name = NULL) +
   scale_x_continuous(
     trans = epsilon_log1p,
@@ -814,7 +820,6 @@ p4c <- ggplot(
     labels = epsilon_labels,
     expand = expansion(mult = c(0, .01))
   ) +
-  coord_cartesian(xlim = c(0, epsilon_limit), clip = "on") +
   scale_y_continuous(limits = c(0, 1), labels = scales::label_percent(accuracy = 25)) +
   labs(
     title = "c  Target-aligned alternatives become substitutable as tolerance relaxes",
