@@ -43,13 +43,9 @@ jobs:
             parse(file = f, keep.source = TRUE)
           }
           message("All R scripts parsed successfully.")
-      - name: Check runtime builder Python syntax
-        run: python3 -m py_compile scripts/utils/build_runtime_optimized.py
       - name: Check server runner shell syntax
         run: |
           bash -n \
             scripts/run_core_artifacts.sh \
             scripts/run_downstream_server.sh \
-            scripts/run_full_server.sh \
-            scripts/run_full_server_optimized.sh \
-            scripts/run_rq1_memory_safe.sh
+            scripts/run_full_server.sh
