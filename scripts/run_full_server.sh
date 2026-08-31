@@ -74,26 +74,9 @@ export RQ3_PART_WORKERS="${RQ3_PART_WORKERS:-8}"
 
   echo "===== RQ1 ====="
   Rscript scripts/10_rq1_analysis.R
-  echo "===== FIGURE 1 ====="
-  Rscript scripts/11_plot_fig1.R
 
-  echo "===== RQ2 + LAYERED CONTEXT ====="
-  Rscript scripts/12_rq2_analysis.R
-  echo "===== RQ2 FIGURES ====="
-  Rscript scripts/13_plot_rq2.R
+  echo "===== DOWNSTREAM ====="
+  bash scripts/run_downstream_server.sh
 
-  echo "===== RQ3 ====="
-  Rscript scripts/14_rq3_analysis.R
-  echo "===== RQ3 FIGURES ====="
-  Rscript scripts/15_plot_rq3.R
-
-  echo "===== PROVENANCE ====="
-  git rev-parse HEAD > results/logs/git_commit.txt
-  git status --short > results/logs/git_status_after_run.txt
-  Rscript -e 'sessionInfo()' > results/logs/sessionInfo_server.txt
-  lscpu > results/logs/server_lscpu.txt
-  free -h > results/logs/server_memory.txt
-  df -h > results/logs/server_disk.txt
-  echo "Results size: $(du -sh results | cut -f1)"
   echo "===== FULL RUN COMPLETE: $(date --iso-8601=seconds) ====="
 } 2>&1 | tee -a "${LOG}"

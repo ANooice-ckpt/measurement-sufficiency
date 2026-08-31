@@ -21,6 +21,7 @@ logs/*
 !logs/.gitkeep
 
 # R
+Rplots.pdf
 .Rhistory
 .RData
 .Ruserdata

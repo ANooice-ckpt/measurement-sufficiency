@@ -236,6 +236,8 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
     } else {
       part_records_scheduled <- lapply(schedule_idx, build_part)
     }
+    failed <- vapply(part_records_scheduled, inherits, logical(1), "try-error")
+    if (any(failed)) stop("Duration checkpoint worker failed: ", as.character(part_records_scheduled[[which(failed)[1L]]]))
     part_records <- part_records_scheduled[order(schedule_idx)]
     for (rec in part_records) {
       i <- rec$i

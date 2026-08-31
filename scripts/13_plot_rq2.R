@@ -15,6 +15,7 @@ suppressPackageStartupMessages({library(tidyverse); library(cowplot)})
 source("scripts/utils/figure_style.R")
 source("scripts/utils/figure_atlas.R")
 source("scripts/utils/plot_contracts.R")
+source("scripts/utils/analysis_design.R")
 
 RQ1_SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
 CONDITION_RDS <- file.path("results", "rq2", "rq2_condition_long.rds")
@@ -82,6 +83,11 @@ CORE_VERSION <- ms_plot_assert_core(c(condition_core, conditional$core_artifact_
                                      model_manifest$core_artifact_version, gamma_long$core_artifact_version))
 ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
 ms_plot_assert_prefix(RQ2_VERSION, "rq2_v5_", "rq2_analysis_version")
+# Guard against plotting stale RQ2 artifacts after a measurement-lattice change.
+if (is.list(condition) && !is.null(condition$analysis_design_id) &&
+    !identical(as.character(condition$analysis_design_id[[1]]), ms_analysis_design_id())) {
+  stop("RQ2 plotting inputs do not match the current frozen analysis design", call. = FALSE)
+}
 
 metric_order <- ms_metric_order(rq1_summary)
 metric_class_lookup <- rq1_summary |> distinct(metric, metric_class)
@@ -1117,11 +1123,3 @@ ms_plot_write_manifest(
     rq3_analysis_version = NA_character_
   ))
 message("RQ2 v5 figures complete: Fig. 2 combines state-conditioned geometry, layered contextual effects and held-out predictability; Fig. 3 reports interaction sign, magnitude and coherence.")
-
-source(file.path("scripts", "utils", "analysis_design.R"), local = .GlobalEnv)
-
-# Guard against plotting stale RQ2 artifacts after a measurement-lattice change.
-if (is.list(condition) && !is.null(condition$analysis_design_id) &&
-    !identical(as.character(condition$analysis_design_id[[1]]), ms_analysis_design_id())) {
-  stop("RQ2 plotting inputs do not match the current frozen analysis design", call. = FALSE)
-}

@@ -15,6 +15,7 @@ suppressPackageStartupMessages({library(tidyverse); library(cowplot)})
 source("scripts/utils/figure_style.R")
 source("scripts/utils/figure_atlas.R")
 source("scripts/utils/plot_contracts.R")
+source("scripts/utils/analysis_design.R")
 
 RQ1_SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
 OBSERVED_RDS <- file.path("results", "rq3", "rq3_sufficiency_long.rds")
@@ -33,8 +34,10 @@ dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 METRIC_CLASSES <- MS_METRIC_CLASSES
 ORDERED_DIMS <- c("temporal", "duration")
 ORDERED_TITLES <- c(temporal = "Temporal resolution", duration = "Monitoring duration")
-RES_LEVELS <- c(1800, 900, 300, 60, 30, 20, 10)
-RES_LABELS <- c("30 min", "15 min", "5 min", "1 min", "30 s", "20 s", "10 s")
+RES_LEVELS <- rev(ms_primary_temporal_s())
+RES_LABELS <- ms_temporal_label(RES_LEVELS)
+DURATION_LEVELS <- ms_primary_duration_days()
+ORDERED_MAX_RANK <- max(length(RES_LEVELS), length(DURATION_LEVELS))
 NUMERIC_TOL <- 1e-12
 
 rq1_summary <- readr::read_csv(RQ1_SUMMARY_CSV, show_col_types = FALSE, progress = FALSE)
@@ -80,6 +83,15 @@ RQ3_VERSION <- ms_plot_one_version(c(observed$rq3_analysis_version, joint$rq3_an
 CORE_VERSION <- ms_plot_assert_core(c(observed$core_artifact_version, joint$core_artifact_version))
 ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
 ms_plot_assert_prefix(RQ3_VERSION, "rq3_v5_", "rq3_analysis_version")
+if (!all(sort(unique(joint$resolution_s)) %in% sort(ms_primary_temporal_s()))) {
+  stop("RQ3 joint artifact contains temporal states outside the frozen primary design", call. = FALSE)
+}
+if (!all(sort(unique(joint$n_days)) %in% DURATION_LEVELS)) {
+  stop("RQ3 joint artifact contains duration states outside the frozen primary design", call. = FALSE)
+}
+if (!grepl(ms_analysis_design_id(), RQ3_VERSION, fixed = TRUE)) {
+  stop("RQ3 plotting inputs do not match the current frozen analysis design", call. = FALSE)
+}
 metric_order <- ms_metric_order(rq1_summary)
 
 safe_median <- function(x) {
@@ -170,56 +182,6 @@ resolved_coverage <- requirement_grid |>
                        labels = unname(ORDERED_TITLES[ORDERED_DIMS]))
   )
 
-p4a_main <- ggplot(requirement_summary, aes(epsilon, rank_median, color = metric_class)) +
-  geom_step(aes(y = rank_q25, group = metric_class), linewidth = .34, alpha = .24) +
-  geom_step(aes(y = rank_q75, group = metric_class), linewidth = .34, alpha = .24) +
-  geom_step(aes(group = metric_class), linewidth = .82, alpha = .96) +
-  facet_wrap(~dimension, nrow = 1) +
-  scale_color_ms_metric(guide = "none") +
-  scale_x_continuous(
-    trans = scales::transform_asinh(), limits = c(0, epsilon_limit),
-    breaks = scales::breaks_extended(n = 4), expand = expansion(mult = c(0, .01))
-  ) +
-  scale_y_continuous(breaks = 1:7, limits = c(.8, 7.2)) +
-  labs(
-    title = "a  Tolerance sets the minimum sufficient measurement burden",
-    subtitle = "thick line = class median; thin lines = interquartile range",
-    x = NULL, y = "minimum sufficient requirement rank\n(low → high burden)"
-  ) +
-  theme_rq3(base_size = 6.6) +
-  theme(
-    panel.grid.major.x = element_blank(), strip.text = element_text(size = 6.2),
-    axis.text.x = element_blank(), axis.ticks.x = element_blank(),
-    plot.subtitle = element_text(size = 5.0, colour = "#666A6D", margin = margin(t = -1, b = 2)),
-    plot.margin = margin(2, 3, 0, 3)
-  )
-
-p4a_coverage <- ggplot(resolved_coverage, aes(epsilon, coverage)) +
-  geom_step(linewidth = .50, color = "#5D6265") +
-  facet_wrap(~dimension, nrow = 1) +
-  scale_x_continuous(
-    trans = scales::transform_asinh(), limits = c(0, epsilon_limit),
-    breaks = scales::breaks_extended(n = 4), expand = expansion(mult = c(0, .01))
-  ) +
-  scale_y_continuous(
-    limits = c(0, 1), breaks = c(0, .5, 1),
-    labels = scales::label_percent(accuracy = 50), expand = expansion(mult = c(0, .02))
-  ) +
-  labs(x = "tolerance ε", y = "sufficient\ncoverage") +
-  theme_rq3(base_size = 5.75) +
-  theme(
-    panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(),
-    strip.text = element_blank(), strip.background = element_blank(),
-    axis.text.x = element_text(size = 5.0), axis.text.y = element_text(size = 4.7),
-    axis.title.x = element_text(size = 5.5), axis.title.y = element_text(size = 5.0),
-    plot.margin = margin(0, 3, 1, 3)
-  )
-
-p4a <- cowplot::plot_grid(
-  p4a_main, p4a_coverage, ncol = 1, rel_heights = c(1, .22),
-  align = "v", axis = "lr", greedy = TRUE
-)
-
 # b. Distribution of the empirical entry threshold R_obs at each ordered state.
 observed_summary <- observed_display |>
   group_by(dimension, requirement_rank, metric_class) |>
@@ -234,42 +196,6 @@ observed_summary <- observed_display |>
     metric_class = factor(metric_class, levels = METRIC_CLASSES),
     class_offset = ms_class_offset(metric_class, span = .50, classes = METRIC_CLASSES),
     x_pos = requirement_rank + class_offset
-  )
-
-p4b <- ggplot() +
-  geom_point(
-    data = observed_display,
-    aes(x_pos, R_obs, color = metric_class),
-    position = position_jitter(width = .018, height = 0, seed = 91),
-    size = .52, alpha = .16
-  ) +
-  geom_linerange(
-    data = observed_summary,
-    aes(x_pos, ymin = R_q25, ymax = R_q75, color = metric_class),
-    linewidth = .42, alpha = .46
-  ) +
-  geom_point(
-    data = observed_summary,
-    aes(x_pos, R_median, color = metric_class),
-    shape = 18, size = 1.6
-  ) +
-  facet_wrap(~dimension, nrow = 1) +
-  scale_color_ms_metric(guide = "none") +
-  scale_x_continuous(
-    breaks = 1:7,
-    limits = c(.65, 7.35),
-    labels = as.character(1:7)
-  ) +
-  scale_y_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
-  labs(
-    title = "b  Residual instability contracts as measurement burden increases",
-    subtitle = "highest observed boundary is unresolved and omitted",
-    x = "requirement rank (low → high burden)", y = "R_obs = max A to higher observed states"
-  ) +
-  theme_rq3(base_size = 6.35) +
-  theme(
-    panel.grid.major.x = element_blank(), strip.text = element_text(size = 5.9),
-    plot.subtitle = element_text(size = 4.8, colour = "#666A6D", margin = margin(t = -1, b = 2))
   )
 
 # c. Unordered dimensions are empirical substitutability curves. Reconstruct the
@@ -298,38 +224,6 @@ pair_palette <- if (length(pair_levels) <= length(MS_THREE_COLORS)) {
 } else {
   setNames(grDevices::hcl.colors(length(pair_levels), palette = "Dark 3"), pair_levels)
 }
-p4c <- ggplot(pair_ecdf,
-              aes(epsilon, fraction_metrics_substitutable,
-                  color = pair, group = interaction(dimension, comparison_pair_id, drop = TRUE))) +
-  geom_step(linewidth = .76, alpha = .94) +
-  facet_wrap(~dimension, nrow = 1) +
-  scale_color_manual(values = pair_palette, breaks = pair_levels, name = NULL) +
-  scale_x_continuous(
-    trans = scales::transform_asinh(), limits = c(0, epsilon_limit),
-    breaks = scales::breaks_extended(n = 4), expand = expansion(mult = c(0, .01))
-  ) +
-  scale_y_continuous(limits = c(0, 1), labels = scales::label_percent(accuracy = 25)) +
-  labs(
-    title = "c  Target-aligned alternatives become substitutable as tolerance relaxes",
-    x = "tolerance ε", y = "fraction of metrics substitutable"
-  ) +
-  theme_rq3(base_size = 6.3, legend_position = "bottom") +
-  theme(
-    panel.grid.major.x = element_blank(), strip.text = element_text(size = 5.8),
-    legend.text = element_text(size = 5.0), legend.key.width = grid::unit(5.0, "mm")
-  )
-
-fig4_bottom <- cowplot::plot_grid(
-  p4b, p4c, ncol = 2, rel_widths = c(1.08, .92),
-  align = "hv", axis = "tblr", greedy = TRUE
-)
-fig4_body <- cowplot::plot_grid(
-  p4a, fig4_bottom, ncol = 1, rel_heights = c(1.14, .86),
-  align = "v", axis = "l", greedy = TRUE
-)
-fig4 <- cowplot::plot_grid(metric_legend, fig4_body, ncol = 1,
-                           rel_heights = c(.042, 1), align = "v", greedy = TRUE)
-
 readr::write_csv(
   resolved_coverage |>
     mutate(dimension = as.character(dimension)),
@@ -759,28 +653,6 @@ ms_plot_write_manifest(
     rq3_analysis_version = RQ3_VERSION
   )
 )
-message("RQ3 v5 figures complete: single-dimension sufficiency and joint tolerance landscapes")
-
-source(file.path("scripts", "utils", "analysis_design.R"), local = .GlobalEnv)
-
-# Rebind every display-level ordered axis to the single frozen design definition.
-# The legacy v5 source is retained for reproducibility, but canonical figures must
-# never depend on its historical hard-coded 7-state temporal lattice.
-RES_LEVELS <- rev(ms_primary_temporal_s())
-RES_LABELS <- ms_temporal_label(RES_LEVELS)
-DURATION_LEVELS <- ms_primary_duration_days()
-ORDERED_MAX_RANK <- max(length(RES_LEVELS), length(DURATION_LEVELS))
-
-if (!all(sort(unique(joint$resolution_s)) %in% sort(ms_primary_temporal_s()))) {
-  stop("RQ3 joint artifact contains temporal states outside the frozen primary design", call. = FALSE)
-}
-if (!all(sort(unique(joint$n_days)) %in% DURATION_LEVELS)) {
-  stop("RQ3 joint artifact contains duration states outside the frozen primary design", call. = FALSE)
-}
-if (!grepl(ms_analysis_design_id(), RQ3_VERSION, fixed = TRUE)) {
-  stop("RQ3 plotting inputs do not match the current frozen analysis design", call. = FALSE)
-}
-
 # -----------------------------------------------------------------------------
 # Main-text display refinement for Fig. 4.
 # Tolerance spans close to an order of magnitude and includes zero. A log1p axis
@@ -974,4 +846,4 @@ ms_plot_save(fig4, file.path(OUT_DIR, "Fig4_RQ3.pdf"), 9.0, 6.2)
 ms_plot_save(fig4, file.path(OUT_DIR, "Fig4_RQ3.png"), 9.0, 6.2)
 readr::write_csv(pair_e50, file.path("results", "rq3", "fig4_unordered_epsilon50.csv"), na = "")
 
-# -----------------------------------------------------------------------------
+message("RQ3 v5 figures complete: single-dimension sufficiency and joint tolerance landscapes")

@@ -17,22 +17,8 @@ if [[ "${R_VERSION}" != "4.5.0" ]]; then
   exit 1
 fi
 
-echo "[preflight] Parse all scientific and figure entry points before expensive work"
-Rscript --vanilla -e 'files <- c(
-  "scripts/utils/analysis_design.R",
-  "scripts/utils/melidos_io.R", "scripts/utils/protocol_windows.R",
-  "scripts/utils/paths.R", "scripts/utils/duration_artifacts.R", "scripts/utils/parallel_runtime.R",
-  "scripts/utils/core_artifacts.R", "scripts/utils/core_context.R",
-  "scripts/utils/figure_style.R", "scripts/utils/rq1_pairwise_artifacts.R",
-  "scripts/utils/rq_context.R", "scripts/utils/rq2_context_features.R",
-  "scripts/01_download_melidos.R", "scripts/04c_prepare_raw_eye_spans.R",
-  "scripts/09_build_core_artifacts.R", "scripts/09b_validate_core_design.R",
-  "scripts/10_rq1_analysis.R", "scripts/11_plot_fig1.R",
-  "scripts/12_rq2_analysis.R", "scripts/12c_rq2_context_models.R",
-  "scripts/13_plot_rq2.R",
-  "scripts/14_rq3_analysis.R", "scripts/15_plot_rq3.R",
-  "scripts/resume_rq3_after_joint.R"
-); invisible(lapply(files, parse)); cat("R parse preflight passed for", length(files), "files\n")'
+echo "[preflight] Parse all R scripts before expensive work"
+Rscript --vanilla -e 'files <- sort(list.files("scripts", pattern = "\\.R$", recursive = TRUE, full.names = TRUE)); if (!length(files)) stop("No R scripts found"); invisible(lapply(files, parse)); cat("R parse preflight passed for", length(files), "files\n")'
 
 echo "[1/8] Restore/pin R 4.5.0 environment"
 Rscript scripts/00_setup.R

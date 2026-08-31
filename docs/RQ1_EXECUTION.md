@@ -26,7 +26,7 @@ Each row is a smallest-unit pairwise comparison and uses:
 - value_a, value_b, delta, z;
 - dimension, comparison lattice, pair role and requirement relation;
 - support, participant, unit and window identifiers;
-- metric geometry, standardizer, robust standardizer and availability.
+- metric geometry, scale-anchor identifier, standardized `z`/`robust_z` and availability.
 
 For ordered dimensions, state_a is the less demanding state and state_b the more demanding state. **delta = value_b - value_a**. Placement/optical facets have a documented empirical orientation but no burden order. Candidate/reference terminology is retained only in historical compatibility outputs.
 
@@ -35,7 +35,7 @@ For ordered dimensions, state_a is the less demanding state and state_b the more
 - Placement: eye–chest and eye–wrist on separate maximal supports.
 - Optical: LIGHT–MEDI on the eye full support.
 - Temporal: all `choose(6,2)=15` pairs among the frozen primary states **10, 20, 30, 40, 60 and 120 s**; adjacent transitions are flagged separately; 10-s anchor projections are a slice, not the canonical ontology. Five minutes is a core sensitivity state only and does not enter the primary RQ1 pair map.
-- Duration: every nested pair of 1–6 complete-day windows in the core manifest, with adjacent d -> d+1 pairs flagged.
+- Duration: canonical rows retain every nested pair of 1–6 complete-day windows; inferential summaries project them to the 15 generic n-day comparison types, with adjacent d -> d+1 types flagged.
 
 All pairs within a lattice join one standardizer. Primary scaling is SD; IQR/1.349 is sensitivity. The empirical distribution comes before A=mean(abs(z)) and B=mean(z); A >= |B| is checked.
 
@@ -65,7 +65,7 @@ scripts read frozen outputs only.
 
 When RQ1_BOOT is positive, the analysis also computes participant-cluster/site-stratified
 bootstrap intervals for A and B. RQ1_BOOT_WORKERS controls the cross-platform PSOCK worker
-count. RQ1_PART_WORKERS controls parallel canonical-part generation. Both can
+count. RQ1_PART_WORKERS controls parallel canonical-part generation and RQ1_FRAGMENT_WORKERS controls summary checkpoints. These can
 be set manually; a practical server starting point for a 100-GB node is
 `RQ1_PART_WORKERS=16 RQ1_BOOT_WORKERS=8`; raise the part count to 24 only
 after confirming memory headroom.

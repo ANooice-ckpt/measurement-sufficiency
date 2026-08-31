@@ -65,7 +65,7 @@ if (any(!duration_manifest$n_days %in% PRIMARY_DURATION_DAYS)) {
 metric_meta <- cube |> distinct(metric, metric_class, metric_scope, metric_geometry)
 if (n_distinct(metric_meta$metric) != 54L) stop("Expected 54 target metrics")
 RQ1_ANALYSIS_VERSION <- paste0(
-  "rq1_v5_oriented_pairwise_config_keyed__", CORE_VERSION, "__", ANALYSIS_DESIGN_ID
+  "rq1_v5_duration_type_canonical__", CORE_VERSION, "__", ANALYSIS_DESIGN_ID
 )
 
 temporal_label <- ms_temporal_label

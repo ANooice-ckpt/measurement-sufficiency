@@ -22,6 +22,16 @@ rq1_pairwise_version <- function(x) {
   value[[1]]
 }
 
+rq1_assert_summary_version <- function(x, summary) {
+  expected <- rq1_pairwise_version(x)
+  if (!"rq1_analysis_version" %in% names(summary)) stop("RQ1 summary lacks rq1_analysis_version")
+  observed <- unique(na.omit(as.character(summary$rq1_analysis_version)))
+  if (length(observed) != 1L || !identical(observed[[1]], expected)) {
+    stop("RQ1 pairwise manifest and summary versions do not match")
+  }
+  invisible(expected)
+}
+
 rq1_pairwise_load <- function(x, columns = NULL, filter_fn = NULL, parts = NULL) {
   if (!rq1_pairwise_is_partitioned(x)) {
     out <- x

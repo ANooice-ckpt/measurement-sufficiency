@@ -23,6 +23,7 @@ ANALYSIS_DESIGN_ID <- ms_analysis_design_id()
 
 pairwise_artifact <- readRDS(RQ1_LONG)
 pair_summary <- readr::read_csv(RQ1_SUMMARY, show_col_types = FALSE, progress = FALSE)
+rq1_assert_summary_version(pairwise_artifact, pair_summary)
 duration_artifact <- readRDS(DURATION_CUBE)
 if (!duration_cube_is_partitioned(duration_artifact)) stop("RQ3 recovery requires partitioned duration metric cube")
 duration_part_paths <- file.path(duration_artifact$part_dir, duration_artifact$parts)

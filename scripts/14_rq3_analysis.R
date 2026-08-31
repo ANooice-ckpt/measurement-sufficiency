@@ -33,6 +33,7 @@ ANALYSIS_DESIGN_ID <- ms_analysis_design_id()
 
 pairwise_artifact <- readRDS(RQ1_LONG)
 pair_summary <- readr::read_csv(RQ1_SUMMARY, show_col_types = FALSE, progress = FALSE)
+rq1_assert_summary_version(pairwise_artifact, pair_summary)
 local <- readr::read_csv(LOCAL, show_col_types = FALSE, progress = FALSE)
 duration_artifact <- readRDS(DURATION_CUBE)
 if (!duration_cube_is_partitioned(duration_artifact)) stop("RQ3 v5 requires partitioned duration metric cube")
@@ -215,7 +216,7 @@ state_parts <- vector("list", length(duration_part_paths))
 for (i in seq_along(duration_part_paths)) {
   z <- read_duration_primary(duration_part_paths[[i]])
   anchor_parts[[i]] <- z |>
-    filter(placement == "eye", optical == "MEDI", resolution_s == 10L, n_days == 6L, available, is.finite(value)) |>
+    filter(placement == "eye", optical == "MEDI", resolution_s == 10L, n_days == max(PRIMARY_DURATION_DAYS), available, is.finite(value)) |>
     select(support_id, metric, metric_geometry, value)
   state_parts[[i]] <- z |>
     filter(available, is.finite(value)) |>

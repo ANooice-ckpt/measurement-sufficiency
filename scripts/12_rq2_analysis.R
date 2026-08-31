@@ -73,6 +73,7 @@ if (!is.null(rq1_artifact$analysis_design_id) && !identical(as.character(rq1_art
   stop("RQ1 artifact analysis design does not match current frozen design")
 }
 pair_summary <- readr::read_csv(RQ1_SUMMARY, show_col_types = FALSE, progress = FALSE)
+rq1_assert_summary_version(rq1_artifact, pair_summary)
 CORE_VERSION <- unique(na.omit(c(rq1_artifact$core_artifact_version, pair_summary$core_artifact_version)))
 if (length(CORE_VERSION) != 1L) stop("Core version mismatch")
 CORE_VERSION <- CORE_VERSION[[1]]

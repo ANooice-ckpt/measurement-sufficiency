@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
-mkdir -p results/logs results/runtime results/rq2 results/rq3 results/figures
+mkdir -p results/logs results/rq2 results/rq3 results/figures
 
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
@@ -46,6 +46,7 @@ LOG="results/logs/downstream_v5.log"
   Rscript -e '
     suppressPackageStartupMessages(library(tidyverse))
     source("scripts/utils/analysis_design.R")
+    source("scripts/utils/rq1_pairwise_artifacts.R")
     manifest <- readRDS("results/rq1/rq1_pairwise_change_long.rds")
     if (!is.list(manifest) || !identical(manifest$artifact_type, "partitioned_rq1_pairwise_change")) {
       stop("RQ1 pairwise artifact is not the required partitioned manifest")
@@ -57,6 +58,7 @@ LOG="results/logs/downstream_v5.log"
     paths <- file.path(manifest$part_dir, manifest$parts)
     if (!length(paths) || any(!file.exists(paths))) stop("One or more canonical RQ1 parts are missing")
     s <- readr::read_csv("results/rq1/rq1_pairwise_summary.csv", show_col_types = FALSE, progress = FALSE)
+    rq1_assert_summary_version(manifest, s)
     d <- s |> filter(dimension == "duration")
     if (!nrow(d)) stop("RQ1 duration summary missing")
     if (any(grepl("__to__", d$comparison_pair_id, fixed = TRUE))) stop("Concrete duration window ids remain in RQ1 summary")
@@ -133,8 +135,8 @@ LOG="results/logs/downstream_v5.log"
   Rscript scripts/11_plot_fig1.R
 
   echo "===== RQ2 + LAYERED CONTEXT ====="
-  # Use the canonical wrapper so the runtime and layered extension share one R
-  # process and therefore one set of validated canonical transition objects.
+  # The canonical RQ2 entrypoint and layered extension share one R process and
+  # therefore one set of validated canonical transition objects.
   Rscript scripts/12_rq2_analysis.R
 
   echo "===== RQ2 FIGURES ====="
