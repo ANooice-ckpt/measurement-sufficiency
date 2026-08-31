@@ -10,6 +10,10 @@ if (!exists("ms_direction_ratio", mode = "function") &&
   source("scripts/utils/figure_atlas.R")
 }
 
+ms_plot_prep_only <- function() {
+  identical(Sys.getenv("MS_PLOT_PREP_ONLY", unset = "0"), "1")
+}
+
 ms_plot_require_files <- function(paths, artifact = "plot input") {
   paths <- as.character(paths)
   missing <- paths[!file.exists(paths)]
@@ -65,6 +69,12 @@ ms_plot_pair_label <- function(data) {
 }
 
 ms_plot_write_manifest <- function(path, figure_rows) {
+  # Supplementary plotting may source a main-figure script only to reconstruct
+  # its frozen display objects. In that prep-only mode, do not overwrite the
+  # main figure manifest; the supplementary entrypoint writes the complete
+  # per-RQ manifest after its FigS blocks finish.
+  if (ms_plot_prep_only()) return(invisible(path))
+
   figure_rows <- tibble::as_tibble(figure_rows)
   figure_rows$generated_at_utc <- format(Sys.time(), tz = "UTC", usetz = TRUE)
 
@@ -93,6 +103,11 @@ ms_plot_write_manifest <- function(path, figure_rows) {
 
 ms_plot_save <- function(plot, path, width, height,
                          dpi = if (exists("MS_RASTER_DPI", inherits = TRUE)) MS_RASTER_DPI else 600) {
+  # When a main script is sourced by the supplementary entrypoint for data/object
+  # preparation, reconstruct the plot objects without writing the main figure a
+  # second time. Standalone main-figure execution is unchanged.
+  if (ms_plot_prep_only()) return(invisible(path))
+
   ext <- tolower(tools::file_ext(path))
 
   # PDF export is intentionally disabled. Existing plot scripts may retain paired
