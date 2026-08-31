@@ -10,6 +10,14 @@ if (!exists("ms_direction_ratio", mode = "function") &&
   source("scripts/utils/figure_atlas.R")
 }
 
+# The final composition pass is visual only. Main scripts still construct every
+# panel and scientific layer; this helper only regularizes layout immediately
+# before the PNG is written.
+if (!exists("ms_polish_main_figure", mode = "function") &&
+    file.exists("scripts/utils/figure_polish.R")) {
+  source("scripts/utils/figure_polish.R")
+}
+
 ms_plot_prep_only <- function() {
   # Explicit override remains available for diagnostics.
   if (identical(Sys.getenv("MS_PLOT_PREP_ONLY", unset = "0"), "1")) return(TRUE)
@@ -143,6 +151,21 @@ ms_plot_save <- function(plot, path, width, height,
   if (identical(ext, "pdf")) return(invisible(NULL))
   if (!identical(ext, "png")) {
     stop("Figure outputs must be PNG; unsupported path: ", path, call. = FALSE)
+  }
+
+  # Capture the script evaluation environment before entering any further helper
+  # calls. The visual pass can then reuse already-built panel objects without
+  # moving scientific construction out of the RQ-specific main script.
+  caller_env <- parent.frame()
+  if (exists("ms_polish_main_figure", mode = "function")) {
+    polished <- ms_polish_main_figure(plot, path, caller_env, width, height)
+    if (is.list(polished) && !is.null(polished$plot)) plot <- polished$plot
+    if (is.list(polished) && length(polished$width) && is.finite(polished$width[[1]])) {
+      width <- as.numeric(polished$width[[1]])
+    }
+    if (is.list(polished) && length(polished$height) && is.finite(polished$height[[1]])) {
+      height <- as.numeric(polished$height[[1]])
+    }
   }
 
   figure_dir <- file.path("results", "figures")
