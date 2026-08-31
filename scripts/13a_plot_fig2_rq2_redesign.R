@@ -212,7 +212,8 @@ predictor_axis <- predictor_order |> arrange(y)
 family_boundaries <- predictor_order |>
   group_by(predictor_family) |>
   summarise(boundary = min(y) - .5, .groups = "drop") |>
-  slice_head(n = n() - 1L) |>
+  arrange(predictor_family) |>
+  slice_head(n = length(FAMILY_LEVELS) - 1L) |>
   pull(boundary)
 
 coef_limit <- robust_symmetric_display_limit(
@@ -737,7 +738,7 @@ p_frac <- ggplot(joint_cv_positive, aes(fraction_plot, y, fill = outcome_label))
   ) +
   scale_fill_manual(values = FRACTION_COLORS, guide = "none") +
   scale_x_continuous(
-    limits = c(-1.02, 1.02),
+    limits = c(-1.16, 1.16),
     breaks = c(-1, -.5, 0, .5, 1),
     labels = c("100", "50", "0", "50", "100")
   ) +
