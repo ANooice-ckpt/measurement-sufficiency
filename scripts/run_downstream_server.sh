@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
-mkdir -p results/logs results/rq2 results/rq3 results/figures
+mkdir -p results/logs results/rq2 results/rq3
 
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
@@ -32,11 +32,18 @@ LOG="results/logs/downstream_v5.log"
       "scripts/utils/analysis_design.R",
       "scripts/utils/rq_context.R",
       "scripts/utils/rq2_context_features.R",
+      "scripts/utils/plot_rq1_common.R",
+      "scripts/utils/plot_rq2_common.R",
+      "scripts/utils/plot_rq3_common.R",
+      "scripts/11_plot_fig1.R",
       "scripts/12_rq2_analysis.R",
       "scripts/12c_rq2_context_models.R",
-      "scripts/13_plot_rq2.R",
+      "scripts/13a_plot_fig2.R",
+      "scripts/13b_plot_fig3.R",
       "scripts/14_rq3_analysis.R",
-      "scripts/15_plot_rq3.R"
+      "scripts/15a_plot_fig4.R",
+      "scripts/15b_plot_fig5.R",
+      "scripts/16_plot_supplementary.R"
     )
     invisible(lapply(fs, parse))
     cat("All canonical downstream analysis and plotting sources parse successfully\n")
@@ -91,9 +98,10 @@ LOG="results/logs/downstream_v5.log"
     )
   '
 
-  # Main figures are regenerated from frozen results on each run.
-  rm -rf results/figures
-  mkdir -p results/figures
+  # Every figure is regenerated from frozen RQ outputs. Clear the actual
+  # RQ-specific figure directories so retired filenames cannot survive a run.
+  rm -rf results/rq1/figures results/rq2/figures results/rq3/figures
+  mkdir -p results/rq1/figures results/rq2/figures results/rq3/figures
 
   # Remove only stale final products. Versioned v5 checkpoints/shards are kept
   # so an interrupted RQ2 run remains resumable.
@@ -139,14 +147,23 @@ LOG="results/logs/downstream_v5.log"
   # therefore one set of validated canonical transition objects.
   Rscript scripts/12_rq2_analysis.R
 
-  echo "===== RQ2 FIGURES ====="
-  Rscript scripts/13_plot_rq2.R
+  echo "===== FIGURE 2 ====="
+  Rscript scripts/13a_plot_fig2.R
+
+  echo "===== FIGURE 3 ====="
+  Rscript scripts/13b_plot_fig3.R
 
   echo "===== RQ3 ====="
   Rscript scripts/14_rq3_analysis.R
 
-  echo "===== RQ3 FIGURES ====="
-  Rscript scripts/15_plot_rq3.R
+  echo "===== FIGURE 4 ====="
+  Rscript scripts/15a_plot_fig4.R
+
+  echo "===== FIGURE 5 ====="
+  Rscript scripts/15b_plot_fig5.R
+
+  echo "===== SUPPLEMENTARY FIGURES ====="
+  Rscript scripts/16_plot_supplementary.R
 
   echo "===== PROVENANCE ====="
   git rev-parse HEAD > results/logs/git_commit.txt
