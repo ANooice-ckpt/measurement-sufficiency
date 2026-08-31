@@ -29,6 +29,8 @@ rq1_default_part_workers <- function() {
   max(1L, min(24L, as.integer(floor(detected / 2))))
 }
 PART_WORKERS <- ms_resolve_workers("RQ1_PART_WORKERS", default = rq1_default_part_workers(), cap = 48L)
+STARTUP_WORKERS <- ms_resolve_workers("RQ1_STARTUP_WORKERS", default = min(24L, PART_WORKERS), cap = 32L)
+FRAGMENT_WORKERS <- ms_resolve_workers("RQ1_FRAGMENT_WORKERS", default = min(10L, PART_WORKERS), cap = 16L)
 BOOT_SEED <- 20260820L
 PRIMARY_TEMPORAL_S <- ms_primary_temporal_s()
 PRIMARY_DURATION_DAYS <- ms_primary_duration_days()
@@ -41,8 +43,10 @@ NUMERIC_TOL <- 1e-12
 for (p in c(CORE_METRICS, DURATION_CUBE, DURATION_MANIFEST)) if (!file.exists(p)) stop("Missing required core artifact: ", p)
 ensure_result_dirs(OUT, DIAG)
 
+message("RQ1 startup: read core metric cube")
 cube <- readr::read_csv(CORE_METRICS, show_col_types = FALSE, progress = FALSE) |>
   mutate(Date = as.Date(Date))
+message("RQ1 startup: read duration manifests")
 duration_artifact <- readRDS(DURATION_CUBE)
 duration_part_paths <- if (duration_cube_is_partitioned(duration_artifact)) {
   file.path(duration_artifact$part_dir, duration_artifact$parts)
@@ -82,34 +86,6 @@ scale_robust <- function(x, geometry) {
   if (is.finite(s) && s > sqrt(.Machine$double.eps)) s else NA_real_
 }
 safe_q <- function(x, p) { x <- x[is.finite(x)]; if (length(x)) unname(stats::quantile(x, p, names = FALSE)) else NA_real_ }
-
-bootstrap_pair_group <- function(task) {
-  group <- task$group
-  reps <- task$reps
-  participants <- unique(group[c("site", "Id")])
-  if (!reps || !nrow(group) || !nrow(participants)) {
-    return(tibble(A_boot_q025 = NA_real_, A_boot_q975 = NA_real_,
-                  B_boot_q025 = NA_real_, B_boot_q975 = NA_real_,
-                  bootstrap_reps = 0L, bootstrap_sites = n_distinct(group$site),
-                  bootstrap_participants = nrow(participants)))
-  }
-  set.seed(task$seed)
-  a <- b <- rep(NA_real_, reps)
-  for (j in seq_len(reps)) {
-    sampled <- split(participants$Id, participants$site) |>
-      lapply(function(ids) sample(ids, length(ids), replace = TRUE))
-    sampled <- tibble(site = rep(names(sampled), lengths(sampled)), Id = unlist(sampled, use.names = FALSE))
-    boot <- merge(sampled, group, by = c("site", "Id"), all = FALSE, sort = FALSE)
-    z <- boot$z[is.finite(boot$z)]
-    if (length(z)) { a[[j]] <- mean(abs(z)); b[[j]] <- mean(z) }
-  }
-  tibble(
-    A_boot_q025 = safe_q(a, .025), A_boot_q975 = safe_q(a, .975),
-    B_boot_q025 = safe_q(b, .025), B_boot_q975 = safe_q(b, .975),
-    bootstrap_reps = sum(is.finite(a) & is.finite(b)),
-    bootstrap_sites = n_distinct(group$site), bootstrap_participants = nrow(participants)
-  )
-}
 
 choose_metric_support <- function(df, medi_support, full_support) {
   df |> filter((metric %in% DUAL_CHANNEL_METRICS & support_id == full_support) |
@@ -196,20 +172,21 @@ temporal_pairs <- map_dfr(combn(PRIMARY_TEMPORAL_S, 2L, simplify = FALSE), funct
   )
 })
 
+message("RQ1 startup: build nested duration-window pairs")
+window_span_days <- as.integer(duration_manifest$window_end - duration_manifest$window_start) + 1L
+if (any(window_span_days != duration_manifest$n_days)) {
+  stop("Duration-window contiguity invariant failed; cannot use vectorized nesting test")
+}
 duration_window_pairs <- duration_manifest |>
-  rename(window_a = window_id, n_days_a = n_days, start_a = window_start, end_a = window_end,
-         dates_a = member_dates) |>
+  select(-member_dates) |>
+  rename(window_a = window_id, n_days_a = n_days, start_a = window_start, end_a = window_end) |>
   inner_join(
     duration_manifest |>
-      rename(window_b = window_id, n_days_b = n_days, start_b = window_start, end_b = window_end,
-             dates_b = member_dates),
+      select(-member_dates) |>
+      rename(window_b = window_id, n_days_b = n_days, start_b = window_start, end_b = window_end),
     by = c("support_id", "site", "Id", "run_id"), relationship = "many-to-many"
   ) |>
-  filter(n_days_a < n_days_b) |>
-  rowwise() |>
-  mutate(nested = all(dates_a %in% dates_b)) |>
-  ungroup() |>
-  filter(nested) |>
+  filter(n_days_a < n_days_b, start_b <= start_a, end_a <= end_b) |>
   mutate(
     adjacent_transition = n_days_b == n_days_a + 1L,
     pair_id = paste(window_a, window_b, sep = "__to__")
@@ -274,12 +251,24 @@ build_duration_pair_chunk <- function(duration_values, window_pairs) {
 duration_columns <- c("support_id", "site", "Id", "window_id", "config_id", "metric", "metric_class",
                       "metric_scope", "metric_geometry", "placement", "optical", "resolution_s",
                       "analysis_unit_id", "value", "available", "unavailable_reason")
+read_duration_anchor_part <- function(part_path) {
+  readRDS(part_path) |>
+    filter(n_days == MAX_DURATION_DAYS) |>
+    select(metric, metric_geometry, value)
+}
 duration_anchor_values <- if (length(duration_part_paths)) {
-  map_dfr(duration_part_paths, function(part_path) {
-    readRDS(part_path) |>
-      filter(n_days == MAX_DURATION_DAYS) |>
-      select(metric, metric_geometry, value)
-  })
+  message("RQ1 startup: scan ", length(duration_part_paths), " duration anchor parts; workers=", STARTUP_WORKERS)
+  anchor_schedule_idx <- order(as.numeric(file.info(duration_part_paths)$size), decreasing = TRUE, na.last = TRUE)
+  if (.Platform$OS.type != "windows" && STARTUP_WORKERS > 1L) {
+    anchor_parts_scheduled <- parallel::mclapply(
+      duration_part_paths[anchor_schedule_idx], read_duration_anchor_part,
+      mc.cores = min(STARTUP_WORKERS, length(duration_part_paths)),
+      mc.preschedule = FALSE, mc.set.seed = FALSE
+    )
+    bind_rows(anchor_parts_scheduled[order(anchor_schedule_idx)])
+  } else {
+    map_dfr(duration_part_paths, read_duration_anchor_part)
+  }
 } else {
   duration_artifact |>
     filter(n_days == MAX_DURATION_DAYS) |>
@@ -414,6 +403,8 @@ duration_tasks <- if (length(duration_part_paths)) {
 } else list()
 pending_duration <- duration_tasks[!vapply(duration_tasks, function(task) is.finite(rq1_marker_rows(task$part_path)), logical(1))]
 if (length(pending_duration)) {
+  duration_cost <- vapply(pending_duration, function(task) as.numeric(file.info(task$duration_path)$size), numeric(1))
+  pending_duration <- pending_duration[order(duration_cost, decreasing = TRUE, na.last = TRUE)]
   message("RQ1 duration parts pending: ", length(pending_duration), "/", length(duration_tasks), "; workers=", PART_WORKERS)
   rq1_part_results <- ms_parallel_map(
     pending_duration, rq1_process_duration_part, workers = PART_WORKERS, seed = BOOT_SEED,
@@ -453,75 +444,190 @@ pairwise_manifest <- list(
 )
 saveRDS(pairwise_manifest, file.path(OUT, "rq1_pairwise_change_long.rds"), compress = "xz")
 
+# Canonical rows retain concrete nested duration windows for traceability. All
+# RQ1 summaries project those rows to generic monitoring-duration requirement
+# types before pooling, so the inferential unit is 1d_vs_2d, ..., 5d_vs_6d rather
+# than a participant-specific window identity.
+rq1_summary_projection <- function(canonical) {
+  canonical |>
+    mutate(
+      comparison_pair_id = if_else(dimension == "duration", paste0(n_days_a, "d_vs_", n_days_b, "d"), comparison_pair_id),
+      config_a_id = if_else(dimension == "duration", paste0("duration_", n_days_a, "d"), config_a_id),
+      config_b_id = if_else(dimension == "duration", paste0("duration_", n_days_b, "d"), config_b_id),
+      config_a_label = if_else(dimension == "duration", paste0(n_days_a, " d"), config_a_label),
+      config_b_label = if_else(dimension == "duration", paste0(n_days_b, " d"), config_b_label)
+    )
+}
+
 part_paths <- file.path(pairwise_part_dir, all_part_records$part)
-make_rq1_fragments <- function(part_path) {
-  canonical <- readRDS(part_path)
+fragment_dir <- file.path(pairwise_part_dir, "summary_fragments_sufficient_v2_duration_type")
+dir.create(fragment_dir, recursive = TRUE, showWarnings = FALSE)
+fragment_path_for <- function(part_path) {
+  file.path(fragment_dir, paste0(tools::file_path_sans_ext(basename(part_path)), "__summary_fragment.rds"))
+}
+
+make_rq1_fragment_checkpoint <- function(part_path) {
+  fragment_path <- fragment_path_for(part_path)
+  marker_path <- paste0(fragment_path, ".ok")
+  if (file.exists(fragment_path) && file.exists(marker_path)) return(fragment_path)
+
+  canonical <- rq1_summary_projection(readRDS(part_path))
+  if (any(canonical$dimension == "duration" & grepl("__to__", canonical$comparison_pair_id, fixed = TRUE))) {
+    stop("Concrete duration window id leaked into RQ1 summary projection")
+  }
   x <- canonical |> filter(available, is.finite(z))
   summary_fragment <- x |>
     group_by(across(all_of(summary_groups))) |>
-    summarise(z_values = list(as.numeric(z)), site_values = list(as.character(site)), id_values = list(as.character(Id)), .groups = "drop")
+    summarise(z_values = list(as.numeric(z)), .groups = "drop")
   anchor_fragment <- canonical |> filter(anchor_projection) |>
     group_by(across(all_of(summary_groups))) |>
-    summarise(n_total_units = n(), n_available_units = sum(available),
-              participant_keys = list(unique(paste(site, Id, sep = "|"))),
-              A_sum = sum(abs(z[available & is.finite(z)])), B_sum = sum(z[available & is.finite(z)]), .groups = "drop")
+    summarise(
+      n_total_units = n(), n_available_units = sum(available),
+      participant_keys = list(unique(paste(site, Id, sep = "|"))),
+      A_sum = sum(abs(z[available & is.finite(z)])),
+      B_sum = sum(z[available & is.finite(z)]), .groups = "drop"
+    )
   availability_fragment <- canonical |>
     group_by(dimension, comparison_lattice, comparison_pair_id, config_a_id, config_b_id, metric, metric_class) |>
-    summarise(n_total_units = n(), n_available_units = sum(available),
-              participant_keys = list(unique(paste(site, Id, sep = "|"))),
-              available_participant_keys = list(unique(paste(site[available], Id[available], sep = "|"))),
-              representation_available = any(available), unavailable_reasons = list(sort(unique(na.omit(unavailable_reason)))), .groups = "drop")
+    summarise(
+      n_total_units = n(), n_available_units = sum(available),
+      participant_keys = list(unique(paste(site, Id, sep = "|"))),
+      available_participant_keys = list(unique(paste(site[available], Id[available], sep = "|"))),
+      representation_available = any(available),
+      unavailable_reasons = list(sort(unique(na.omit(unavailable_reason)))), .groups = "drop"
+    )
   participant_fragment <- x |>
     group_by(across(all_of(summary_groups)), site, Id) |>
     summarise(n_units = n(), sum_abs = sum(abs(z)), sum_signed = sum(z), .groups = "drop")
   robust_fragment <- canonical |> filter(pair_available, is.finite(robust_z)) |>
     group_by(across(all_of(summary_groups))) |>
     summarise(sum_abs = sum(abs(robust_z)), sum_signed = sum(robust_z), n_units = n(), .groups = "drop")
-  rm(canonical, x)
+
+  out <- list(
+    summary = summary_fragment, anchor = anchor_fragment, availability = availability_fragment,
+    participant = participant_fragment, robust = robust_fragment
+  )
+  tmp_path <- paste0(fragment_path, ".tmp.", Sys.getpid())
+  if (file.exists(tmp_path)) unlink(tmp_path)
+  saveRDS(out, tmp_path, compress = "gzip")
+  if (!file.rename(tmp_path, fragment_path)) stop("Could not atomically install RQ1 summary fragment: ", fragment_path)
+  writeLines("rq1_summary_fragment_sufficient_v2_duration_type", marker_path, useBytes = TRUE)
+  rm(canonical, x, summary_fragment, anchor_fragment, availability_fragment, participant_fragment, robust_fragment, out)
   invisible(gc(FALSE))
-  list(summary = summary_fragment, anchor = anchor_fragment, availability = availability_fragment,
-       participant = participant_fragment, robust = robust_fragment)
+  fragment_path
 }
-message("RQ1 streaming summaries over ", length(part_paths), " immutable parts")
-fragments <- map(part_paths, make_rq1_fragments)
-summary_fragments <- map_dfr(fragments, "summary")
-summary_base <- summary_fragments |>
+
+message("RQ1 duration-type summary checkpoints over ", length(part_paths), " immutable parts; workers=", FRAGMENT_WORKERS)
+fragment_schedule_idx <- order(as.numeric(file.info(part_paths)$size), decreasing = TRUE, na.last = TRUE)
+fragment_paths_scheduled <- ms_parallel_map(
+  part_paths[fragment_schedule_idx], make_rq1_fragment_checkpoint,
+  workers = FRAGMENT_WORKERS,
+  packages = c("tidyverse"),
+  exports = c("summary_groups", "fragment_dir", "fragment_path_for", "rq1_summary_projection", "make_rq1_fragment_checkpoint")
+)
+fragment_paths <- unlist(fragment_paths_scheduled[order(fragment_schedule_idx)], use.names = FALSE)
+read_rq1_fragment_component <- function(component) {
+  map_dfr(fragment_paths, function(path) {
+    z <- readRDS(path)
+    out <- z[[component]]
+    rm(z)
+    out
+  })
+}
+
+summary_chunks <- read_rq1_fragment_component("summary")
+summary_base <- summary_chunks |>
   group_by(across(all_of(summary_groups))) |>
-  summarise(z_values = list(unlist(z_values, use.names = FALSE)),
-            site_values = list(unlist(site_values, use.names = FALSE)),
-            id_values = list(unlist(id_values, use.names = FALSE)), .groups = "drop") |>
+  summarise(z_values = list(unlist(z_values, use.names = FALSE)), .groups = "drop") |>
+  arrange(across(all_of(summary_groups))) |>
   mutate(
-    n_participants = map2_int(site_values, id_values, ~n_distinct(paste(.x, .y, sep = "|"))),
-    n_units = map_int(z_values, length),
+    .summary_index = row_number(), n_units = map_int(z_values, length),
     median_z = map_dbl(z_values, ~safe_q(.x, .5)), q25_z = map_dbl(z_values, ~safe_q(.x, .25)),
     q75_z = map_dbl(z_values, ~safe_q(.x, .75)), p025_z = map_dbl(z_values, ~safe_q(.x, .025)),
     p975_z = map_dbl(z_values, ~safe_q(.x, .975)), B_mean_signed = map_dbl(z_values, mean),
     A_mean_absolute = map_dbl(z_values, ~mean(abs(.x)))
   )
+rm(summary_chunks)
+invisible(gc(FALSE))
+
+participant_fragments <- read_rq1_fragment_component("participant") |>
+  group_by(across(all_of(summary_groups)), site, Id) |>
+  summarise(n_units = sum(n_units), sum_abs = sum(sum_abs), sum_signed = sum(sum_signed), .groups = "drop")
+participant_counts <- participant_fragments |>
+  group_by(across(all_of(summary_groups))) |>
+  summarise(n_participants = n(), .groups = "drop")
+summary_base <- summary_base |> left_join(participant_counts, by = summary_groups)
+
+duration_pair_types <- summary_base |> filter(dimension == "duration") |> distinct(comparison_pair_id)
+expected_duration_types <- choose(length(PRIMARY_DURATION_DAYS), 2L)
+if (nrow(duration_pair_types) != expected_duration_types || any(grepl("__to__", duration_pair_types$comparison_pair_id, fixed = TRUE))) {
+  stop("RQ1 duration summary-level invariant failed: expected ", expected_duration_types, " n-day comparison types")
+}
+
 summary <- summary_base |>
   select(all_of(summary_groups), n_participants, n_units, median_z, q25_z, q75_z, p025_z, p975_z,
          B_mean_signed, A_mean_absolute) |>
   mutate(core_artifact_version = CORE_VERSION, rq1_analysis_version = RQ1_ANALYSIS_VERSION,
          uncertainty_method = if (B_BOOT > 0L) "participant-cluster/site-stratified bootstrap" else "point estimate; bootstrap disabled")
 
-bootstrap_groups <- map(seq_len(nrow(summary_base)), function(i) tibble(
-  site = summary_base$site_values[[i]], Id = summary_base$id_values[[i]], z = summary_base$z_values[[i]]
-))
-bootstrap_tasks <- map(seq_along(bootstrap_groups), function(i) list(group = bootstrap_groups[[i]], reps = B_BOOT, seed = BOOT_SEED + i))
+bootstrap_pair_group_sufficient <- function(task) {
+  participants <- task$group |> select(site, Id, n_units, sum_abs, sum_signed)
+  reps <- task$reps
+  if (!reps || !nrow(participants)) {
+    return(tibble(A_boot_q025 = NA_real_, A_boot_q975 = NA_real_,
+                  B_boot_q025 = NA_real_, B_boot_q975 = NA_real_,
+                  bootstrap_reps = 0L, bootstrap_sites = n_distinct(participants$site),
+                  bootstrap_participants = nrow(participants)))
+  }
+  set.seed(task$seed)
+  a <- b <- rep(NA_real_, reps)
+  for (j in seq_len(reps)) {
+    sampled <- split(participants$Id, participants$site) |>
+      lapply(function(ids) sample(ids, length(ids), replace = TRUE))
+    sampled <- tibble(site = rep(names(sampled), lengths(sampled)), Id = unlist(sampled, use.names = FALSE))
+    boot <- merge(sampled, participants, by = c("site", "Id"), all = FALSE, sort = FALSE)
+    denom <- sum(boot$n_units)
+    if (is.finite(denom) && denom > 0) {
+      a[[j]] <- sum(boot$sum_abs) / denom
+      b[[j]] <- sum(boot$sum_signed) / denom
+    }
+  }
+  tibble(
+    A_boot_q025 = safe_q(a, .025), A_boot_q975 = safe_q(a, .975),
+    B_boot_q025 = safe_q(b, .025), B_boot_q975 = safe_q(b, .975),
+    bootstrap_reps = sum(is.finite(a) & is.finite(b)),
+    bootstrap_sites = n_distinct(participants$site), bootstrap_participants = nrow(participants)
+  )
+}
+
+participant_fragments <- participant_fragments |>
+  inner_join(summary_base |> select(all_of(summary_groups), .summary_index), by = summary_groups)
+split_groups <- split(participant_fragments, participant_fragments$.summary_index)
+bootstrap_tasks <- lapply(summary_base$.summary_index, function(i) {
+  g <- split_groups[[as.character(i)]]
+  if (is.null(g)) g <- participant_fragments[0, , drop = FALSE]
+  list(group = g, reps = B_BOOT, seed = BOOT_SEED + i)
+})
 bootstrap_results <- if (B_BOOT > 0L) {
-  ms_parallel_map(bootstrap_tasks, bootstrap_pair_group, workers = BOOT_WORKERS, seed = BOOT_SEED,
-                  packages = c("tidyverse"), exports = c("bootstrap_pair_group", "safe_q"))
-} else lapply(bootstrap_tasks, bootstrap_pair_group)
-bootstrap_summary <- bind_rows(map(seq_along(bootstrap_groups), function(i) bind_cols(
-  summary_base[i, ] |> select(all_of(summary_groups)), bootstrap_results[[i]]
-)))
+  ms_parallel_map(
+    bootstrap_tasks, bootstrap_pair_group_sufficient,
+    workers = BOOT_WORKERS, seed = BOOT_SEED,
+    packages = c("tidyverse"), exports = c("bootstrap_pair_group_sufficient", "safe_q")
+  )
+} else lapply(bootstrap_tasks, bootstrap_pair_group_sufficient)
+bootstrap_summary <- bind_rows(map(seq_along(bootstrap_results), function(i) {
+  bind_cols(summary_base[i, ] |> select(all_of(summary_groups)), bootstrap_results[[i]])
+}))
 summary <- summary |> left_join(bootstrap_summary, by = summary_groups)
+rm(split_groups, bootstrap_tasks, bootstrap_results, participant_counts)
+invisible(gc(FALSE))
+
 if (any(summary$A_mean_absolute + NUMERIC_TOL < abs(summary$B_mean_signed))) stop("RQ1 A >= |B| invariant failed")
 readr::write_csv(summary, file.path(OUT, "rq1_pairwise_summary.csv"), na = "")
 readr::write_csv(summary, file.path(OUT, "rq1_summary.csv"), na = "")
 readr::write_csv(bootstrap_summary, file.path(OUT, "rq1_pairwise_bootstrap.csv"), na = "")
 
-anchor_projection <- map_dfr(fragments, "anchor") |>
+anchor_projection <- read_rq1_fragment_component("anchor") |>
   group_by(across(all_of(summary_groups))) |>
   summarise(n_participants = n_distinct(unlist(participant_keys)), n_units = sum(n_available_units),
             A = if (sum(n_available_units) > 0) sum(A_sum) / sum(n_available_units) else NA_real_,
@@ -535,7 +641,7 @@ local_summary <- summary |> filter(adjacent_transition) |>
             n_participants, n_units, core_artifact_version, rq1_analysis_version)
 readr::write_csv(local_summary, file.path(OUT, "rq1_local_transition_summary.csv"), na = "")
 
-availability <- map_dfr(fragments, "availability") |>
+availability <- read_rq1_fragment_component("availability") |>
   group_by(dimension, comparison_lattice, comparison_pair_id, config_a_id, config_b_id, metric, metric_class) |>
   summarise(n_total_units = sum(n_total_units), n_available_units = sum(n_available_units),
             n_participants_total = n_distinct(unlist(participant_keys)),
@@ -545,7 +651,7 @@ availability <- map_dfr(fragments, "availability") |>
   mutate(unavailable_reason = na_if(unavailable_reason, ""))
 readr::write_csv(availability, file.path(OUT, "rq1_metric_availability.csv"), na = "")
 
-participant_balanced <- map_dfr(fragments, "participant") |>
+participant_balanced <- read_rq1_fragment_component("participant") |>
   group_by(across(all_of(summary_groups)), site, Id) |>
   summarise(n_units = sum(n_units), sum_abs = sum(sum_abs), sum_signed = sum(sum_signed), .groups = "drop") |>
   mutate(A_participant = sum_abs / n_units, B_participant = sum_signed / n_units) |>
@@ -553,7 +659,7 @@ participant_balanced <- map_dfr(fragments, "participant") |>
   summarise(A_participant_balanced = mean(A_participant), B_participant_balanced = mean(B_participant),
             n_participants = n(), .groups = "drop")
 readr::write_csv(participant_balanced, file.path(OUT, "rq1_participant_balanced_sensitivity.csv"), na = "")
-robust <- map_dfr(fragments, "robust") |>
+robust <- read_rq1_fragment_component("robust") |>
   group_by(across(all_of(summary_groups))) |>
   summarise(A_robust = sum(sum_abs) / sum(n_units), B_robust = sum(sum_signed) / sum(n_units),
             n_units = sum(n_units), .groups = "drop")
@@ -575,15 +681,17 @@ temporal_pair_count <- choose(length(PRIMARY_TEMPORAL_S), 2L)
 writeLines(c(
   "# RQ1 run report", "", paste0("Core artifact version: ", CORE_VERSION), paste0("RQ1 analysis version: ", RQ1_ANALYSIS_VERSION),
   paste0("Analysis design: ", ANALYSIS_DESIGN_ID),
-  paste0("Pairwise change rows: ", sum(all_part_records$rows)), paste0("Finite/available rows: ", sum(summary$n_units)),
+  paste0("Pairwise change rows: ", sum(all_part_records$rows)), paste0("Finite/available summary rows: ", sum(summary$n_units)),
   paste0("Canonical storage: ", normalizePath(file.path(OUT, "rq1_pairwise_change_long.rds"), winslash = "/", mustWork = FALSE)),
-  paste0("Pairwise part count: ", nrow(all_part_records), "; duration part workers: ", PART_WORKERS, "; bootstrap workers: ", BOOT_WORKERS),
+  paste0("Pairwise part count: ", nrow(all_part_records), "; duration part workers: ", PART_WORKERS,
+         "; summary fragment workers: ", FRAGMENT_WORKERS, "; bootstrap workers: ", BOOT_WORKERS),
   "Canonical scientific orientation: config_a -> config_b; delta = value_b - value_a.",
   "Temporal orientation: coarser -> finer sampling. Duration orientation: shorter -> longer monitoring.",
   "Placement orientation: chest/wrist -> eye, based on near-eye target alignment for ocular exposure.",
   "Optical orientation: LIGHT -> MEDI, based on melanopic/non-visual target alignment.",
   paste0("Temporal map: all ", temporal_pair_count, " pair types among ", paste(PRIMARY_TEMPORAL_S, collapse = ", "), " s; adjacent transitions are separately flagged."),
-  paste0("Duration map: all nested windows within consecutive complete-analysis-day runs, limited to ", min(PRIMARY_DURATION_DAYS), "-", max(PRIMARY_DURATION_DAYS), " d; no protocol seven-day reference."),
+  paste0("Duration canonical rows retain concrete nested windows; summaries pool them into ", expected_duration_types,
+         " generic comparison types across ", min(PRIMARY_DURATION_DAYS), "-", max(PRIMARY_DURATION_DAYS), " d."),
   "The 10-s temporal and longest observed duration states are scale anchors only; they are not treated as empirical truth states.",
   "Placement and optical have target-aligned orientations but no complete measurement-burden order."
 ), file.path(OUT, "RQ1_RUN_REPORT.md"))
