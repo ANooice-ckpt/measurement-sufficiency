@@ -62,26 +62,24 @@ export RQ3_PART_WORKERS="${RQ3_PART_WORKERS:-8}"
     cat("Project package preflight passed\n")
   '
 
-  echo "Generate runtime-only optimized core/RQ1 entrypoints; downstream uses canonical sources"
+  echo "Generate runtime-only optimized core entrypoints; RQ1-RQ3 use canonical sources"
   python3 scripts/utils/build_runtime_optimized.py
-  python3 scripts/utils/patch_rq1_memory_safe.py
   Rscript --vanilla -e '
     fs <- c(
       "results/runtime/duration_artifacts.optimized.R",
       "results/runtime/09_build_core_artifacts.optimized.R",
-      "results/runtime/10_rq1_analysis.optimized.R",
       "scripts/utils/rq_context.R",
       "scripts/utils/rq2_context_features.R",
       "scripts/09b_validate_core_design.R",
+      "scripts/10_rq1_analysis.R",
       "scripts/11_plot_fig1.R",
       "scripts/12_rq2_analysis.R",
       "scripts/12c_rq2_context_models.R",
       "scripts/13_plot_rq2.R",
-      "scripts/15_plot_rq3.R",
       "scripts/14_rq3_analysis.R",
       "scripts/15_plot_rq3.R"
     )
-    invisible(lapply(fs, parse)); cat("Optimized/corrected analysis, layered RQ2 and canonical plotting entry points parse successfully\n")
+    invisible(lapply(fs, parse)); cat("Optimized core and canonical downstream entry points parse successfully\n")
   '
   echo
 
@@ -106,13 +104,11 @@ export RQ3_PART_WORKERS="${RQ3_PART_WORKERS:-8}"
   Rscript scripts/09b_validate_core_design.R
 
   echo "===== RQ1 ====="
-  Rscript results/runtime/10_rq1_analysis.optimized.R
+  Rscript scripts/10_rq1_analysis.R
   echo "===== FIGURE 1 ====="
   Rscript scripts/11_plot_fig1.R
 
   echo "===== RQ2 + LAYERED CONTEXT ====="
-  # Canonical RQ2 sources the layered extension in the same R process, so all
-  # context models reuse the same transition objects.
   Rscript scripts/12_rq2_analysis.R
   echo "===== RQ2 FIGURES ====="
   Rscript scripts/13_plot_rq2.R
