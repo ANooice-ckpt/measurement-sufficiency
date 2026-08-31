@@ -1,0 +1,161 @@
+name: One-shot move Fig1 analysis upstream
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.5.0'
+          use-public-rspm: true
+      - name: Move Fig1 statistics into RQ1 analysis
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p10 = Path('scripts/10_rq1_analysis.R')
+          p11 = Path('scripts/11_plot_fig1.R')
+          s10 = p10.read_text(encoding='utf-8')
+          s11 = p11.read_text(encoding='utf-8')
+
+          def replace_once(text, old, new, label):
+              n = text.count(old)
+              if n != 1:
+                  raise RuntimeError(f'{label}: expected exactly one anchor, found {n}')
+              return text.replace(old, new, 1)
+
+          # ------------------------------------------------------------------
+          # RQ1: make the dimension domain explicit for relational preservation.
+          # ------------------------------------------------------------------
+          s10 = replace_once(
+              s10,
+              'NUMERIC_TOL <- 1e-12\n',
+              'NUMERIC_TOL <- 1e-12\nRQ1_DIMENSIONS <- c("placement", "optical", "temporal", "duration")\n',
+              'RQ1 dimension domain'
+          )
+
+          # Version availability as a first-class RQ1 companion artifact so
+          # plotting can validate all inputs without opening the pairwise RDS.
+          s10 = replace_once(
+              s10,
+              '  mutate(unavailable_reason = na_if(unavailable_reason, ""))\nreadr::write_csv(availability, file.path(OUT, "rq1_metric_availability.csv"), na = "")\n\nparticipant_balanced <-',
+              '''  mutate(\n    unavailable_reason = na_if(unavailable_reason, ""),\n    core_artifact_version = CORE_VERSION,\n    rq1_analysis_version = RQ1_ANALYSIS_VERSION\n  )\nreadr::write_csv(availability, file.path(OUT, "rq1_metric_availability.csv"), na = "")\n\n# -----------------------------------------------------------------------------\n# Relational preservation used by Fig. 1a\n# -----------------------------------------------------------------------------\n# This is an RQ1-derived estimand, not a plotting calculation. It consumes the\n# canonical paired RQ1 parts and quantifies preservation of unit ordering with\n# Spearman correlation. Circular-time representations are excluded because\n# ordinary ranks do not respect circular geometry. Temporal and duration use\n# only their anchor projections, matching the Fig. 1 comparison grammar.\nrank_group_vars <- c(\n  "dimension", "comparison_lattice", "comparison_pair_id", "config_a_id", "config_b_id",\n  "config_a_label", "config_b_label", "orientation_type", "orientation_basis", "base_config_id",\n  "metric", "metric_class", "metric_geometry"\n)\n\nrq1_rank_fragment <- function(part_path) {\n  x <- readRDS(part_path) |>\n    filter(\n      available, is.finite(z), is.finite(value_a), is.finite(value_b),\n      dimension %in% RQ1_DIMENSIONS,\n      dimension %in% c("placement", "optical") | coalesce(anchor_projection, FALSE)\n    ) |>\n    mutate(\n      dimension = as.character(dimension),\n      base_config_id = if_else(\n        dimension == "duration",\n        sub("^(.*)__([^|]+\\\\|.*)$", "\\\\1", as.character(config_a_id)),\n        NA_character_\n      ),\n      comparison_pair_id = if_else(\n        dimension == "duration", paste0(n_days_a, "d_vs_", n_days_b, "d"),\n        as.character(comparison_pair_id)\n      ),\n      config_a_id = if_else(\n        dimension == "duration", paste0("duration_", n_days_a, "d"), as.character(config_a_id)\n      ),\n      config_b_id = if_else(\n        dimension == "duration", paste0("duration_", n_days_b, "d"), as.character(config_b_id)\n      ),\n      config_a_label = if_else(\n        dimension == "duration", paste0(n_days_a, " d"), as.character(config_a_label)\n      ),\n      config_b_label = if_else(\n        dimension == "duration", paste0(n_days_b, " d"), as.character(config_b_label)\n      )\n    )\n  if (!nrow(x)) return(tibble())\n  x |>\n    group_by(across(all_of(rank_group_vars))) |>\n    summarise(\n      n_units = n(),\n      A_sum = sum(abs(z)),\n      participant_keys = list(unique(paste(site, Id, sep = "|"))),\n      value_a_values = list(as.numeric(value_a)),\n      value_b_values = list(as.numeric(value_b)),\n      .groups = "drop"\n    )\n}\n\nmessage("RQ1 relational preservation over ", length(part_paths), " canonical parts")\nrank_fragments <- map(part_paths, rq1_rank_fragment)\nrank_rows <- bind_rows(rank_fragments)\nif (!nrow(rank_rows)) stop("No rows available for RQ1 relational-preservation analysis")\n\nrank_base <- rank_rows |>\n  group_by(across(all_of(rank_group_vars))) |>\n  summarise(\n    n_units = sum(n_units),\n    A_sum = sum(A_sum),\n    participant_keys = list(unique(unlist(participant_keys, use.names = FALSE))),\n    value_a_values = list(unlist(value_a_values, use.names = FALSE)),\n    value_b_values = list(unlist(value_b_values, use.names = FALSE)),\n    .groups = "drop"\n  ) |>\n  mutate(\n    n_participants = map_int(participant_keys, length),\n    n_unique_a = map_int(value_a_values, ~n_distinct(.x[is.finite(.x)])),\n    n_unique_b = map_int(value_b_values, ~n_distinct(.x[is.finite(.x)])),\n    rho_spearman = pmap_dbl(\n      list(value_a_values, value_b_values, metric_geometry, n_units, n_unique_a, n_unique_b),\n      function(a, b, geometry, n, ua, ub) {\n        if (identical(geometry, "circular_time") || n < 3L || ua < 2L || ub < 2L) return(NA_real_)\n        r <- suppressWarnings(stats::cor(a, b, method = "spearman", use = "complete.obs"))\n        if (is.finite(r)) max(-1, min(1, r)) else NA_real_\n      }\n    ),\n    A_mean_absolute = if_else(n_units > 0, A_sum / n_units, NA_real_),\n    rank_loss = if_else(is.finite(rho_spearman), 1 - rho_spearman, NA_real_),\n    rank_preservation_available = is.finite(rho_spearman),\n    rank_unavailable_reason = case_when(\n      metric_geometry == "circular_time" ~ "not applicable to circular-time geometry",\n      n_units < 3L ~ "fewer than 3 paired analysis units",\n      n_unique_a < 2L | n_unique_b < 2L ~ "constant or degenerate values",\n      !is.finite(rho_spearman) ~ "Spearman correlation undefined",\n      TRUE ~ NA_character_\n    ),\n    pair_label = paste(config_a_label, "to", config_b_label),\n    core_artifact_version = CORE_VERSION,\n    rq1_analysis_version = RQ1_ANALYSIS_VERSION,\n    rank_estimand = "Spearman correlation across paired RQ1 analysis units within comparison/base configuration"\n  ) |>\n  select(\n    all_of(rank_group_vars), pair_label, n_participants, n_units, n_unique_a, n_unique_b,\n    A_mean_absolute, rho_spearman, rank_loss, rank_preservation_available,\n    rank_unavailable_reason, rank_estimand, core_artifact_version, rq1_analysis_version\n  )\nreadr::write_csv(rank_base, file.path(OUT, "rq1_relational_preservation.csv"), na = "")\n# Compatibility audit name retained, but it is now written by RQ1 rather than the plotter.\nreadr::write_csv(rank_base, file.path(OUT, "fig1_rank_preservation.csv"), na = "")\n\nrank_dimension_metric <- rank_base |>\n  filter(rank_preservation_available, is.finite(A_mean_absolute), is.finite(rank_loss)) |>\n  group_by(dimension, metric, metric_class) |>\n  summarise(\n    n_oriented_pairs = n(),\n    A_typical = median(A_mean_absolute, na.rm = TRUE),\n    rank_loss_typical = median(rank_loss, na.rm = TRUE),\n    .groups = "drop"\n  ) |>\n  mutate(core_artifact_version = CORE_VERSION, rq1_analysis_version = RQ1_ANALYSIS_VERSION)\n\nrank_dimension_summary <- rank_dimension_metric |>\n  group_by(dimension, metric_class) |>\n  summarise(\n    n_metrics = n_distinct(metric),\n    A_median = median(A_typical, na.rm = TRUE),\n    A_q25 = quantile(A_typical, .25, na.rm = TRUE, names = FALSE),\n    A_q75 = quantile(A_typical, .75, na.rm = TRUE, names = FALSE),\n    rank_loss_median = median(rank_loss_typical, na.rm = TRUE),\n    rank_loss_q25 = quantile(rank_loss_typical, .25, na.rm = TRUE, names = FALSE),\n    rank_loss_q75 = quantile(rank_loss_typical, .75, na.rm = TRUE, names = FALSE),\n    .groups = "drop"\n  ) |>\n  mutate(core_artifact_version = CORE_VERSION, rq1_analysis_version = RQ1_ANALYSIS_VERSION)\n\nrank_dimension_assoc <- rank_dimension_metric |>\n  group_by(dimension) |>\n  summarise(\n    n_metrics = n_distinct(metric),\n    rho_A_rank = if (n_metrics >= 3L && n_distinct(A_typical) >= 2L &&\n                     n_distinct(rank_loss_typical) >= 2L) {\n      suppressWarnings(stats::cor(A_typical, rank_loss_typical, method = "spearman", use = "complete.obs"))\n    } else NA_real_,\n    .groups = "drop"\n  ) |>\n  mutate(core_artifact_version = CORE_VERSION, rq1_analysis_version = RQ1_ANALYSIS_VERSION)\n\nif (!nrow(rank_dimension_summary)) stop("No non-circular rows available for RQ1 relational-preservation summary")\nreadr::write_csv(rank_dimension_metric, file.path(OUT, "rq1_relational_preservation_dimension_metric.csv"), na = "")\nreadr::write_csv(rank_dimension_summary, file.path(OUT, "rq1_relational_preservation_dimension_summary.csv"), na = "")\nreadr::write_csv(rank_dimension_assoc, file.path(OUT, "rq1_distortion_rank_association.csv"), na = "")\n# Compatibility audit name retained; no figure code computes this table anymore.\nreadr::write_csv(rank_dimension_summary, file.path(OUT, "fig1_panel_a_aggregated.csv"), na = "")\nrm(rank_fragments, rank_rows)\ninvisible(gc(FALSE))\n\nparticipant_balanced <-''',
+              'insert RQ1 relational-preservation analysis'
+          )
+
+          s10 = replace_once(
+              s10,
+              '  "Placement and optical have target-aligned orientations but no complete measurement-burden order."\n',
+              '  "Placement and optical have target-aligned orientations but no complete measurement-burden order.",\n  "Relational preservation is computed in RQ1 with Spearman correlation over paired analysis units; circular-time metrics are excluded from ordinary-rank analysis."\n',
+              'RQ1 report relational preservation'
+          )
+
+          # ------------------------------------------------------------------
+          # Fig1: remove all RDS access and all statistical correlation work.
+          # ------------------------------------------------------------------
+          s11 = replace_once(
+              s11,
+              'source("scripts/utils/rq1_pairwise_artifacts.R")\n',
+              '',
+              'remove pairwise artifact helper from plotter'
+          )
+
+          s11 = replace_once(
+              s11,
+              'RQ1_LONG <- file.path("results", "rq1", "rq1_pairwise_change_long.rds")\nSUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")\nAVAILABILITY_CSV <- file.path("results", "rq1", "rq1_metric_availability.csv")\nLOCAL_CSV <- file.path("results", "rq1", "rq1_local_transition_summary.csv")\nOUT_DIR <- file.path("results", "rq1", "figures")\nms_plot_require_files(c(RQ1_LONG, SUMMARY_CSV, AVAILABILITY_CSV, LOCAL_CSV), "RQ1 plotting inputs")\n',
+              'SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")\nAVAILABILITY_CSV <- file.path("results", "rq1", "rq1_metric_availability.csv")\nLOCAL_CSV <- file.path("results", "rq1", "rq1_local_transition_summary.csv")\nRANK_METRIC_CSV <- file.path("results", "rq1", "rq1_relational_preservation_dimension_metric.csv")\nRANK_SUMMARY_CSV <- file.path("results", "rq1", "rq1_relational_preservation_dimension_summary.csv")\nRANK_ASSOC_CSV <- file.path("results", "rq1", "rq1_distortion_rank_association.csv")\nOUT_DIR <- file.path("results", "rq1", "figures")\nms_plot_require_files(\n  c(SUMMARY_CSV, AVAILABILITY_CSV, LOCAL_CSV, RANK_METRIC_CSV, RANK_SUMMARY_CSV, RANK_ASSOC_CSV),\n  "RQ1 plotting inputs"\n)\n',
+              'replace Fig1 inputs'
+          )
+
+          s11 = replace_once(
+              s11,
+              'pairwise_artifact <- readRDS(RQ1_LONG)\nsummary <- readr::read_csv(SUMMARY_CSV, show_col_types = FALSE, progress = FALSE)\navailability <- readr::read_csv(AVAILABILITY_CSV, show_col_types = FALSE, progress = FALSE)\nlocal <- readr::read_csv(LOCAL_CSV, show_col_types = FALSE, progress = FALSE)\n',
+              'summary <- readr::read_csv(SUMMARY_CSV, show_col_types = FALSE, progress = FALSE)\navailability <- readr::read_csv(AVAILABILITY_CSV, show_col_types = FALSE, progress = FALSE)\nlocal <- readr::read_csv(LOCAL_CSV, show_col_types = FALSE, progress = FALSE)\ndimension_metric <- readr::read_csv(RANK_METRIC_CSV, show_col_types = FALSE, progress = FALSE)\ndimension_summary <- readr::read_csv(RANK_SUMMARY_CSV, show_col_types = FALSE, progress = FALSE)\ndimension_assoc <- readr::read_csv(RANK_ASSOC_CSV, show_col_types = FALSE, progress = FALSE)\n',
+              'replace Fig1 reads'
+          )
+
+          s11 = replace_once(
+              s11,
+              '  availability,\n  c("dimension", "comparison_pair_id", "metric", "metric_class", "representation_available"),\n  "rq1_metric_availability.csv"\n)\n',
+              '  availability,\n  c("core_artifact_version", "rq1_analysis_version", "dimension", "comparison_pair_id",\n    "metric", "metric_class", "representation_available"),\n  "rq1_metric_availability.csv"\n)\n',
+              'availability version columns'
+          )
+
+          local_columns_anchor = '''ms_plot_require_columns(\n  local,\n  c("dimension", "metric", "metric_class", "lower_level", "higher_level",\n    "orientation_type", "orientation_basis", "G", "A", "B"),\n  "rq1_local_transition_summary.csv"\n)\n\n'''
+          local_columns_new = local_columns_anchor + '''ms_plot_require_columns(\n  dimension_metric,\n  c("core_artifact_version", "rq1_analysis_version", "dimension", "metric", "metric_class",\n    "n_oriented_pairs", "A_typical", "rank_loss_typical"),\n  "rq1_relational_preservation_dimension_metric.csv"\n)\nms_plot_require_columns(\n  dimension_summary,\n  c("core_artifact_version", "rq1_analysis_version", "dimension", "metric_class", "n_metrics",\n    "A_median", "A_q25", "A_q75", "rank_loss_median", "rank_loss_q25", "rank_loss_q75"),\n  "rq1_relational_preservation_dimension_summary.csv"\n)\nms_plot_require_columns(\n  dimension_assoc,\n  c("core_artifact_version", "rq1_analysis_version", "dimension", "n_metrics", "rho_A_rank"),\n  "rq1_distortion_rank_association.csv"\n)\n\n'''
+          s11 = replace_once(s11, local_columns_anchor, local_columns_new, 'Fig1 analysis-table contracts')
+
+          old_version_block = '''RQ1_VERSION <- rq1_pairwise_version(pairwise_artifact)\nCORE_VERSION <- ms_plot_assert_core(c(pairwise_artifact$core_artifact_version, summary$core_artifact_version))\nms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")\nif (!is.null(pairwise_artifact$analysis_design_id) &&\n    !identical(as.character(pairwise_artifact$analysis_design_id[[1]]), ms_analysis_design_id())) {\n  stop("Fig. 1 artifact design does not match current frozen analysis design", call. = FALSE)\n}\nif (any(!is.na(summary$rq1_analysis_version) & summary$rq1_analysis_version != RQ1_VERSION)) {\n  stop("rq1_pairwise_summary contains a different rq1_analysis_version", call. = FALSE)\n}\n'''
+          new_version_block = '''RQ1_VERSION <- ms_plot_one_version(\n  c(summary$rq1_analysis_version, availability$rq1_analysis_version, local$rq1_analysis_version,\n    dimension_metric$rq1_analysis_version, dimension_summary$rq1_analysis_version,\n    dimension_assoc$rq1_analysis_version),\n  "rq1_analysis_version"\n)\nCORE_VERSION <- ms_plot_assert_core(\n  c(summary$core_artifact_version, availability$core_artifact_version, local$core_artifact_version,\n    dimension_metric$core_artifact_version, dimension_summary$core_artifact_version,\n    dimension_assoc$core_artifact_version)\n)\nms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")\nif (!grepl(ms_analysis_design_id(), RQ1_VERSION, fixed = TRUE)) {\n  stop("Fig. 1 inputs do not match the current frozen analysis design", call. = FALSE)\n}\n'''
+          s11 = replace_once(s11, old_version_block, new_version_block, 'Fig1 version contract')
+
+          # Replace the entire former RDS-driven/correlation block with display-only recoding.
+          start_marker = '# -----------------------------------------------------------------------------\n# Fig. 1a derived relational-preservation diagnostic\n'
+          end_marker = 'rank_loss_limit <-'
+          start = s11.find(start_marker)
+          end = s11.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise RuntimeError('Could not locate Fig1 relational-preservation calculation block')
+          display_block = '''# -----------------------------------------------------------------------------\n# a. Absolute versus relational preservation across measurement dimensions\n# -----------------------------------------------------------------------------\n# All statistical quantities below are frozen RQ1 outputs. The plotter only\n# applies display labels/factors and graphical scales.\ndimension_metric <- dimension_metric |>\n  mutate(\n    dimension = factor(dimension, levels = DIMENSIONS, labels = unname(DIM_TITLES[DIMENSIONS])),\n    metric_class = factor(metric_class, levels = METRIC_CLASSES)\n  )\ndimension_summary <- dimension_summary |>\n  mutate(\n    dimension = factor(dimension, levels = DIMENSIONS, labels = unname(DIM_TITLES[DIMENSIONS])),\n    metric_class = factor(metric_class, levels = METRIC_CLASSES)\n  )\ndimension_assoc <- dimension_assoc |>\n  mutate(\n    dimension = factor(dimension, levels = DIMENSIONS, labels = unname(DIM_TITLES[DIMENSIONS])),\n    label = if_else(is.finite(rho_A_rank), sprintf("ρ = %.2f", rho_A_rank), "ρ = NA")\n  )\nif (!nrow(dimension_summary)) stop("No non-circular RQ1 rows available for Fig. 1a")\n\n'''
+          s11 = s11[:start] + display_block + s11[end:]
+
+          # Hard architectural invariants.
+          if 'readRDS(' in s11:
+              raise RuntimeError('Fig1 plotter still contains readRDS()')
+          import re
+          if re.search(r'(?<![A-Za-z])(?:stats::)?cor\s*\(', s11):
+              raise RuntimeError('Fig1 plotter still contains a correlation calculation')
+          if 'rq1_pairwise_artifacts.R' in s11 or 'RQ1_LONG' in s11:
+              raise RuntimeError('Fig1 plotter still depends on the canonical pairwise RDS layer')
+          if s10.count('stats::cor(') < 2:
+              raise RuntimeError('Expected both Spearman calculations to be present in RQ1 analysis')
+          for required in [
+              'rq1_relational_preservation.csv',
+              'rq1_relational_preservation_dimension_metric.csv',
+              'rq1_relational_preservation_dimension_summary.csv',
+              'rq1_distortion_rank_association.csv'
+          ]:
+              if required not in s10 or required not in s11 and required != 'rq1_relational_preservation.csv':
+                  raise RuntimeError(f'Missing relational-preservation artifact contract: {required}')
+
+          p10.write_text(s10, encoding='utf-8')
+          p11.write_text(s11, encoding='utf-8')
+          PY
+      - name: Parse modified R sources
+        shell: Rscript {0}
+        run: |
+          invisible(lapply(c("scripts/10_rq1_analysis.R", "scripts/11_plot_fig1.R"), parse))
+          message("RQ1 and Fig1 sources parse successfully")
+      - name: Verify Fig1 is presentation-only for correlation
+        shell: bash
+        run: |
+          if grep -nF 'readRDS(' scripts/11_plot_fig1.R; then
+            echo 'Fig1 still reads RDS artifacts' >&2
+            exit 1
+          fi
+          if grep -nE '(^|[^[:alpha:]])(stats::)?cor[[:space:]]*\(' scripts/11_plot_fig1.R; then
+            echo 'Fig1 still computes correlation' >&2
+            exit 1
+          fi
+          grep -nF 'rq1_relational_preservation_dimension_metric.csv' scripts/11_plot_fig1.R
+          grep -nF 'rq1_distortion_rank_association.csv' scripts/11_plot_fig1.R
+      - name: Commit validated source changes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/10_rq1_analysis.R scripts/11_plot_fig1.R
+          git commit -m "Move Fig1 correlation analysis into RQ1"
+          git push
