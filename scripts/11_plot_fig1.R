@@ -24,19 +24,23 @@ suppressPackageStartupMessages({
 source("scripts/utils/analysis_design.R")
 source("scripts/utils/figure_style.R")
 source("scripts/utils/figure_atlas.R")
-source("scripts/utils/rq1_pairwise_artifacts.R")
 source("scripts/utils/plot_contracts.R")
 
 # Fig. 1 uses a compact distribution-led grammar. Metric-level observations are
 # visible, but the foreground is always a class-level location/interval summary.
 # The four measurement dimensions are never connected as if they formed one
 # continuous axis; ordered local transitions are shown as distribution strips.
-RQ1_LONG <- file.path("results", "rq1", "rq1_pairwise_change_long.rds")
 SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
 AVAILABILITY_CSV <- file.path("results", "rq1", "rq1_metric_availability.csv")
 LOCAL_CSV <- file.path("results", "rq1", "rq1_local_transition_summary.csv")
+RANK_METRIC_CSV <- file.path("results", "rq1", "rq1_relational_preservation_dimension_metric.csv")
+RANK_SUMMARY_CSV <- file.path("results", "rq1", "rq1_relational_preservation_dimension_summary.csv")
+RANK_ASSOC_CSV <- file.path("results", "rq1", "rq1_distortion_rank_association.csv")
 OUT_DIR <- file.path("results", "rq1", "figures")
-ms_plot_require_files(c(RQ1_LONG, SUMMARY_CSV, AVAILABILITY_CSV, LOCAL_CSV), "RQ1 plotting inputs")
+ms_plot_require_files(
+  c(SUMMARY_CSV, AVAILABILITY_CSV, LOCAL_CSV, RANK_METRIC_CSV, RANK_SUMMARY_CSV, RANK_ASSOC_CSV),
+  "RQ1 plotting inputs"
+)
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
 DIMENSIONS <- c("placement", "optical", "temporal", "duration")
@@ -49,10 +53,12 @@ FIG1_PANEL_TITLE_SIZE <- 7.6
 FIG1_SUBPANEL_TITLE_SIZE <- 6.5
 TEMPORAL_TRANSITION_ORDER <- ms_temporal_transition_labels()
 
-pairwise_artifact <- readRDS(RQ1_LONG)
 summary <- readr::read_csv(SUMMARY_CSV, show_col_types = FALSE, progress = FALSE)
 availability <- readr::read_csv(AVAILABILITY_CSV, show_col_types = FALSE, progress = FALSE)
 local <- readr::read_csv(LOCAL_CSV, show_col_types = FALSE, progress = FALSE)
+dimension_metric <- readr::read_csv(RANK_METRIC_CSV, show_col_types = FALSE, progress = FALSE)
+dimension_summary <- readr::read_csv(RANK_SUMMARY_CSV, show_col_types = FALSE, progress = FALSE)
+dimension_assoc <- readr::read_csv(RANK_ASSOC_CSV, show_col_types = FALSE, progress = FALSE)
 ms_plot_require_columns(
   summary,
   c("core_artifact_version", "rq1_analysis_version", "dimension", "comparison_lattice",
@@ -63,7 +69,8 @@ ms_plot_require_columns(
 )
 ms_plot_require_columns(
   availability,
-  c("dimension", "comparison_pair_id", "metric", "metric_class", "representation_available"),
+  c("core_artifact_version", "rq1_analysis_version", "dimension", "comparison_pair_id",
+    "metric", "metric_class", "representation_available"),
   "rq1_metric_availability.csv"
 )
 ms_plot_require_columns(
@@ -73,15 +80,38 @@ ms_plot_require_columns(
   "rq1_local_transition_summary.csv"
 )
 
-RQ1_VERSION <- rq1_pairwise_version(pairwise_artifact)
-CORE_VERSION <- ms_plot_assert_core(c(pairwise_artifact$core_artifact_version, summary$core_artifact_version))
+ms_plot_require_columns(
+  dimension_metric,
+  c("core_artifact_version", "rq1_analysis_version", "dimension", "metric", "metric_class",
+    "n_oriented_pairs", "A_typical", "rank_loss_typical"),
+  "rq1_relational_preservation_dimension_metric.csv"
+)
+ms_plot_require_columns(
+  dimension_summary,
+  c("core_artifact_version", "rq1_analysis_version", "dimension", "metric_class", "n_metrics",
+    "A_median", "A_q25", "A_q75", "rank_loss_median", "rank_loss_q25", "rank_loss_q75"),
+  "rq1_relational_preservation_dimension_summary.csv"
+)
+ms_plot_require_columns(
+  dimension_assoc,
+  c("core_artifact_version", "rq1_analysis_version", "dimension", "n_metrics", "rho_A_rank"),
+  "rq1_distortion_rank_association.csv"
+)
+
+RQ1_VERSION <- ms_plot_one_version(
+  c(summary$rq1_analysis_version, availability$rq1_analysis_version, local$rq1_analysis_version,
+    dimension_metric$rq1_analysis_version, dimension_summary$rq1_analysis_version,
+    dimension_assoc$rq1_analysis_version),
+  "rq1_analysis_version"
+)
+CORE_VERSION <- ms_plot_assert_core(
+  c(summary$core_artifact_version, availability$core_artifact_version, local$core_artifact_version,
+    dimension_metric$core_artifact_version, dimension_summary$core_artifact_version,
+    dimension_assoc$core_artifact_version)
+)
 ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
-if (!is.null(pairwise_artifact$analysis_design_id) &&
-    !identical(as.character(pairwise_artifact$analysis_design_id[[1]]), ms_analysis_design_id())) {
-  stop("Fig. 1 artifact design does not match current frozen analysis design", call. = FALSE)
-}
-if (any(!is.na(summary$rq1_analysis_version) & summary$rq1_analysis_version != RQ1_VERSION)) {
-  stop("rq1_pairwise_summary contains a different rq1_analysis_version", call. = FALSE)
+if (!grepl(ms_analysis_design_id(), RQ1_VERSION, fixed = TRUE)) {
+  stop("Fig. 1 inputs do not match the current frozen analysis design", call. = FALSE)
 }
 
 pretty_transition <- function(x) {
@@ -127,190 +157,26 @@ summary_plot <- summary |> mutate(dimension = as.character(dimension)) |> ms_add
 availability_plot <- availability |> mutate(dimension = as.character(dimension)) |> ms_add_metric_order(metric_order)
 
 # -----------------------------------------------------------------------------
-# Fig. 1a derived relational-preservation diagnostic
-# -----------------------------------------------------------------------------
-# This is intentionally a figure-level derived summary rather than a change to
-# the canonical RQ1 estimand. It consumes the frozen paired RQ1 artifact, uses
-# exactly the rows on which standardized A is defined, and writes a separate
-# audit CSV. Spearman rank preservation is not defined for circular-time
-# representations because ordinary ranks do not respect circular geometry.
-RANK_CSV <- file.path("results", "rq1", "fig1_rank_preservation.csv")
-rank_cache <- if (file.exists(RANK_CSV)) {
-  readr::read_csv(RANK_CSV, show_col_types = FALSE, progress = FALSE)
-} else tibble()
-rank_cache_required <- c(
-  "core_artifact_version", "rq1_analysis_version", "dimension", "metric",
-  "A_mean_absolute", "rank_loss", "rank_preservation_available"
-)
-rank_cache_core <- unique(rank_cache$core_artifact_version[!is.na(rank_cache$core_artifact_version)])
-rank_cache_rq1 <- unique(rank_cache$rq1_analysis_version[!is.na(rank_cache$rq1_analysis_version)])
-rank_cache_valid <- nrow(rank_cache) > 0 && all(rank_cache_required %in% names(rank_cache)) &&
-  length(rank_cache_core) == 1L && identical(rank_cache_core[[1]], CORE_VERSION) &&
-  length(rank_cache_rq1) == 1L && identical(rank_cache_rq1[[1]], RQ1_VERSION)
-
-if (rank_cache_valid) {
-  rank_base <- rank_cache
-} else {
-  rank_part_paths <- rq1_pairwise_part_paths(pairwise_artifact)
-  if (!length(rank_part_paths) || any(!file.exists(rank_part_paths))) {
-    stop("Fig. 1 rank-preservation diagnostic requires all frozen RQ1 pairwise parts", call. = FALSE)
-  }
-
-  rank_group_vars <- c(
-    "dimension", "comparison_lattice", "comparison_pair_id", "config_a_id", "config_b_id",
-    "config_a_label", "config_b_label", "orientation_type", "orientation_basis", "base_config_id",
-    "metric", "metric_class", "metric_geometry"
-  )
-
-  rank_fragment <- function(part_path) {
-    x <- readRDS(part_path) |>
-      filter(
-        available, is.finite(z), is.finite(value_a), is.finite(value_b),
-        dimension %in% DIMENSIONS,
-        dimension %in% c("placement", "optical") | coalesce(anchor_projection, FALSE)
-      ) |>
-      mutate(
-        dimension = as.character(dimension),
-        base_config_id = if_else(
-          dimension == "duration",
-          sub("^(.*)__([^|]+\\|.*)$", "\\1", as.character(config_a_id)),
-          NA_character_
-        ),
-        comparison_pair_id = if_else(
-          dimension == "duration", paste0(n_days_a, "d_vs_", n_days_b, "d"),
-          as.character(comparison_pair_id)
-        ),
-        config_a_id = if_else(
-          dimension == "duration", paste0("duration_", n_days_a, "d"), as.character(config_a_id)
-        ),
-        config_b_id = if_else(
-          dimension == "duration", paste0("duration_", n_days_b, "d"), as.character(config_b_id)
-        ),
-        config_a_label = if_else(
-          dimension == "duration", paste0(n_days_a, " d"), as.character(config_a_label)
-        ),
-        config_b_label = if_else(
-          dimension == "duration", paste0(n_days_b, " d"), as.character(config_b_label)
-        )
-      )
-    if (!nrow(x)) return(tibble())
-    x |>
-      group_by(across(all_of(rank_group_vars))) |>
-      summarise(
-        n_units = n(),
-        A_sum = sum(abs(z)),
-        participant_keys = list(unique(paste(site, Id, sep = "|"))),
-        value_a_values = list(as.numeric(value_a)),
-        value_b_values = list(as.numeric(value_b)),
-        .groups = "drop"
-      )
-  }
-
-  rank_fragments <- map(rank_part_paths, rank_fragment)
-  rank_rows <- bind_rows(rank_fragments)
-  if (!nrow(rank_rows)) stop("No rows available for Fig. 1 rank-preservation diagnostic", call. = FALSE)
-
-  rank_base <- rank_rows |>
-    group_by(across(all_of(rank_group_vars))) |>
-    summarise(
-      n_units = sum(n_units),
-      A_sum = sum(A_sum),
-      participant_keys = list(unique(unlist(participant_keys, use.names = FALSE))),
-      value_a_values = list(unlist(value_a_values, use.names = FALSE)),
-      value_b_values = list(unlist(value_b_values, use.names = FALSE)),
-      .groups = "drop"
-    ) |>
-    mutate(
-      n_participants = map_int(participant_keys, length),
-      n_unique_a = map_int(value_a_values, ~n_distinct(.x[is.finite(.x)])),
-      n_unique_b = map_int(value_b_values, ~n_distinct(.x[is.finite(.x)])),
-      rho_spearman = pmap_dbl(
-        list(value_a_values, value_b_values, metric_geometry, n_units, n_unique_a, n_unique_b),
-        function(a, b, geometry, n, ua, ub) {
-          if (identical(geometry, "circular_time") || n < 3L || ua < 2L || ub < 2L) return(NA_real_)
-          r <- suppressWarnings(stats::cor(a, b, method = "spearman", use = "complete.obs"))
-          if (is.finite(r)) max(-1, min(1, r)) else NA_real_
-        }
-      ),
-      A_mean_absolute = if_else(n_units > 0, A_sum / n_units, NA_real_),
-      rank_loss = if_else(is.finite(rho_spearman), 1 - rho_spearman, NA_real_),
-      rank_preservation_available = is.finite(rho_spearman),
-      rank_unavailable_reason = case_when(
-        metric_geometry == "circular_time" ~ "not applicable to circular-time geometry",
-        n_units < 3L ~ "fewer than 3 paired analysis units",
-        n_unique_a < 2L | n_unique_b < 2L ~ "constant or degenerate values",
-        !is.finite(rho_spearman) ~ "Spearman correlation undefined",
-        TRUE ~ NA_character_
-      ),
-      pair_label = paste(config_a_label, "to", config_b_label),
-      core_artifact_version = CORE_VERSION,
-      rq1_analysis_version = RQ1_VERSION,
-      rank_estimand = "Spearman correlation across paired RQ1 analysis units within comparison/base configuration"
-    ) |>
-    select(
-      all_of(rank_group_vars), pair_label, n_participants, n_units, n_unique_a, n_unique_b,
-      A_mean_absolute, rho_spearman, rank_loss, rank_preservation_available,
-      rank_unavailable_reason, rank_estimand, core_artifact_version, rq1_analysis_version
-    )
-  readr::write_csv(rank_base, RANK_CSV, na = "")
-  rm(rank_fragments, rank_rows)
-  invisible(gc(FALSE))
-
-}
-
-# -----------------------------------------------------------------------------
 # a. Absolute versus relational preservation across measurement dimensions
 # -----------------------------------------------------------------------------
-# Each metric is collapsed within a dimension over the target-aligned contrasts
-# (placement/optical) or refinement-to-anchor contrasts (temporal/duration).
-# A and rank loss remain separate estimands: the first quantifies standardized
-# level distortion and the second quantifies loss of ordering across paired
-# analysis units. Circular-time representations are omitted from the rank axis.
-dimension_metric <- rank_base |>
-  filter(rank_preservation_available, is.finite(A_mean_absolute), is.finite(rank_loss)) |>
-  group_by(dimension, metric, metric_class) |>
-  summarise(
-    n_oriented_pairs = n(),
-    A_typical = median(A_mean_absolute, na.rm = TRUE),
-    rank_loss_typical = median(rank_loss, na.rm = TRUE),
-    .groups = "drop"
-  ) |>
+# All statistical quantities below are frozen RQ1 outputs. The plotter only
+# applies display labels/factors and graphical scales.
+dimension_metric <- dimension_metric |>
   mutate(
     dimension = factor(dimension, levels = DIMENSIONS, labels = unname(DIM_TITLES[DIMENSIONS])),
     metric_class = factor(metric_class, levels = METRIC_CLASSES)
   )
-
-dimension_summary <- dimension_metric |>
-  group_by(dimension, metric_class) |>
-  summarise(
-    n_metrics = n_distinct(metric),
-    A_median = median(A_typical, na.rm = TRUE),
-    A_q25 = quantile(A_typical, .25, na.rm = TRUE, names = FALSE),
-    A_q75 = quantile(A_typical, .75, na.rm = TRUE, names = FALSE),
-    rank_loss_median = median(rank_loss_typical, na.rm = TRUE),
-    rank_loss_q25 = quantile(rank_loss_typical, .25, na.rm = TRUE, names = FALSE),
-    rank_loss_q75 = quantile(rank_loss_typical, .75, na.rm = TRUE, names = FALSE),
-    .groups = "drop"
+dimension_summary <- dimension_summary |>
+  mutate(
+    dimension = factor(dimension, levels = DIMENSIONS, labels = unname(DIM_TITLES[DIMENSIONS])),
+    metric_class = factor(metric_class, levels = METRIC_CLASSES)
   )
-
-dimension_assoc <- dimension_metric |>
-  group_by(dimension) |>
-  summarise(
-    n_metrics = n_distinct(metric),
-    rho_A_rank = if (n_metrics >= 3L && n_distinct(A_typical) >= 2L &&
-                     n_distinct(rank_loss_typical) >= 2L) {
-      suppressWarnings(cor(A_typical, rank_loss_typical, method = "spearman", use = "complete.obs"))
-    } else NA_real_,
-    .groups = "drop"
-  ) |>
-  mutate(label = if_else(is.finite(rho_A_rank), sprintf("ρ = %.2f", rho_A_rank), "ρ = NA"))
+dimension_assoc <- dimension_assoc |>
+  mutate(
+    dimension = factor(dimension, levels = DIMENSIONS, labels = unname(DIM_TITLES[DIMENSIONS])),
+    label = if_else(is.finite(rho_A_rank), sprintf("ρ = %.2f", rho_A_rank), "ρ = NA")
+  )
 if (!nrow(dimension_summary)) stop("No non-circular RQ1 rows available for Fig. 1a")
-
-readr::write_csv(
-  dimension_summary |>
-    mutate(dimension = as.character(dimension), metric_class = as.character(metric_class)),
-  file.path("results", "rq1", "fig1_panel_a_aggregated.csv"), na = ""
-)
 
 rank_loss_limit <- max(.05, max(dimension_metric$rank_loss_typical, na.rm = TRUE) * 1.06)
 p1a <- ggplot(dimension_metric, aes(A_typical, rank_loss_typical, color = metric_class)) +
