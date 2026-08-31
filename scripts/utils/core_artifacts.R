@@ -199,10 +199,21 @@ core_config_grid <- function(support_id) {
     )
 }
 
-# A lower temporal resolution represents a logger that samples intermittently,
-# not a logger that averages every hidden 10-s value inside a wider bin. Every
-# candidate cadence is therefore a deterministic clock-anchored subset of the
-# harmonized 10-s grid. Missing scheduled observations remain missing.
+# Sparse temporal sampling is anchored to each participant's native phase on
+# the harmonized 10-s grid. Coarser states drop scheduled observations only;
+# retained timestamps and values remain exact source rows.
+core_source_grid_phase <- function(site, Id, sec_round) {
+  group_key <- paste(site, Id, sep = "|")
+  first <- !duplicated(group_key)
+  phase_by_group <- sec_round[first] %% 10L
+  names(phase_by_group) <- group_key[first]
+  phase <- unname(phase_by_group[group_key])
+  if (anyNA(phase) || any(((sec_round - phase) %% 10L) != 0L)) {
+    stop("Core source timestamps do not share a stable 10-s grid phase within participant")
+  }
+  phase
+}
+
 core_make_series <- function(support, placement, optical, resolution_s) {
   resolution_s <- as.integer(resolution_s)
   if (!resolution_s %in% core_all_resolutions()) stop("Unsupported resolution: ", resolution_s)
@@ -224,18 +235,16 @@ core_make_series <- function(support, placement, optical, resolution_s) {
   if (any(!is.finite(sec))) stop("Non-finite timestamp in core support")
   sec_round <- round(sec)
   if (any(abs(sec - sec_round) > 1e-6)) stop("Core source timestamps are not on integer seconds")
-  if (any((sec_round %% 10L) != 0L)) stop("Core source timestamps are not on the harmonized 10-s grid")
+  phase10 <- core_source_grid_phase(x$site, x$Id, sec_round)
   if (anyDuplicated(paste(x$site, x$Id, sec_round, sep = "|"))) {
     stop("Duplicate source timestamps in core_make_series")
   }
   if (resolution_s == 10L) return(x)
 
-  keep <- (sec_round %% resolution_s) == 0L
+  keep <- ((sec_round - phase10) %% resolution_s) == 0L
   out <- x[keep, , drop = FALSE]
   if (!nrow(out)) stop("Sparse sampling produced no rows at ", resolution_s, " s")
 
-  # Defensive invariant: sparse sampling may drop rows only. It must never alter
-  # a retained timestamp or measurement value.
   src_idx <- match(
     paste(out$site, out$Id, as.numeric(out$Datetime), sep = "|"),
     paste(x$site, x$Id, as.numeric(x$Datetime), sep = "|")
