@@ -29,8 +29,10 @@ rq1_default_part_workers <- function() {
   max(1L, min(24L, as.integer(floor(detected / 2))))
 }
 PART_WORKERS <- ms_resolve_workers("RQ1_PART_WORKERS", default = rq1_default_part_workers(), cap = 48L)
-STARTUP_WORKERS <- ms_resolve_workers("RQ1_STARTUP_WORKERS", default = min(24L, PART_WORKERS), cap = 32L)
-FRAGMENT_WORKERS <- ms_resolve_workers("RQ1_FRAGMENT_WORKERS", default = min(10L, PART_WORKERS), cap = 16L)
+# Production defaults target the validated 48-vCPU / 192-GiB ECS deployment.
+# Override only for a different machine or a diagnostic run.
+STARTUP_WORKERS <- ms_resolve_workers("RQ1_STARTUP_WORKERS", default = 36L, cap = 48L)
+FRAGMENT_WORKERS <- ms_resolve_workers("RQ1_FRAGMENT_WORKERS", default = 36L, cap = 48L)
 BOOT_SEED <- 20260820L
 PRIMARY_TEMPORAL_S <- ms_primary_temporal_s()
 PRIMARY_DURATION_DAYS <- ms_primary_duration_days()

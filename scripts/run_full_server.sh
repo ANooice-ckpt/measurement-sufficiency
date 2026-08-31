@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Full Linux server entry point: raw validation -> core artifacts -> RQ1/RQ2/RQ3
-# -> figures -> provenance. Defaults target the 48-physical-core / 192-GiB ECS
-# node; every worker count remains environment-overridable.
+# -> figures -> provenance. Production defaults target the validated 48-vCPU / 192-GiB ECS
+# node used for subsequent full reruns; environment overrides are reserved for different hardware or diagnostics.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
 
@@ -27,9 +27,9 @@ export CORE_WORKERS="${CORE_WORKERS:-48}"
 export CORE_DURATION_WORKERS="${CORE_DURATION_WORKERS:-32}"
 export CORE_FORCE="${CORE_FORCE:-0}"
 export RQ1_BOOT="${RQ1_BOOT:-1000}"
-export RQ1_STARTUP_WORKERS="${RQ1_STARTUP_WORKERS:-24}"
+export RQ1_STARTUP_WORKERS="${RQ1_STARTUP_WORKERS:-36}"
 export RQ1_PART_WORKERS="${RQ1_PART_WORKERS:-44}"
-export RQ1_FRAGMENT_WORKERS="${RQ1_FRAGMENT_WORKERS:-12}"
+export RQ1_FRAGMENT_WORKERS="${RQ1_FRAGMENT_WORKERS:-36}"
 export RQ1_BOOT_WORKERS="${RQ1_BOOT_WORKERS:-40}"
 export RQ1_PART_COMPRESSION="${RQ1_PART_COMPRESSION:-gzip}"
 export RQ2_WORKERS="${RQ2_WORKERS:-40}"
@@ -45,7 +45,7 @@ export RQ3_PART_WORKERS="${RQ3_PART_WORKERS:-8}"
   echo "Host: $(hostname)"
   echo "Commit: $(git rev-parse HEAD)"
   echo "Physical/logical cores reported by R: $(Rscript -e 'cat(parallel::detectCores(logical=FALSE), "/", parallel::detectCores(logical=TRUE))')"
-  echo "Workers: core=${CORE_WORKERS}; duration=${CORE_DURATION_WORKERS}; rq1_parts=${RQ1_PART_WORKERS}; rq1_fragments=${RQ1_FRAGMENT_WORKERS}; rq1_boot=${RQ1_BOOT_WORKERS}; rq2=${RQ2_WORKERS}; rq3=${RQ3_WORKERS}; rq3_parts=${RQ3_PART_WORKERS}"
+  echo "Workers: core=${CORE_WORKERS}; duration=${CORE_DURATION_WORKERS}; rq1_startup=${RQ1_STARTUP_WORKERS}; rq1_parts=${RQ1_PART_WORKERS}; rq1_fragments=${RQ1_FRAGMENT_WORKERS}; rq1_boot=${RQ1_BOOT_WORKERS}; rq2=${RQ2_WORKERS}; rq3=${RQ3_WORKERS}; rq3_parts=${RQ3_PART_WORKERS}"
   echo
 
   echo "===== PREFLIGHT: PROJECT R ENVIRONMENT ====="

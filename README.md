@@ -65,7 +65,7 @@ results/core/
 
 ```bash
 # RQ1: general pairwise representation-change map
-RQ1_BOOT=1000 RQ1_PART_WORKERS=24 RQ1_BOOT_WORKERS=8 RQ1_PART_COMPRESSION=gzip Rscript scripts/10_rq1_analysis.R
+RQ1_BOOT=1000 RQ1_STARTUP_WORKERS=36 RQ1_PART_WORKERS=44 RQ1_FRAGMENT_WORKERS=36 RQ1_BOOT_WORKERS=40 RQ1_PART_COMPRESSION=gzip Rscript scripts/10_rq1_analysis.R
 Rscript scripts/11_plot_fig1.R
 
 # RQ2: exposure-state conditionality, layered context models and circular-aware gamma
@@ -79,7 +79,7 @@ Rscript scripts/15_plot_rq3.R
 
 RQ1-RQ3 are canonical executable sources: all server runners invoke these files directly rather than generating alternate downstream runtimes. RQ1 keeps concrete nested duration-window comparisons in its canonical pairwise artifact but projects them to generic 1–6 day comparison types before pooled summaries and bootstrap inference. The RQ2 entrypoint contains the streamed conditional analysis directly and, in the same R process, adds the layered contextual models. Those models reuse existing ERA5 fields from `unit_context` and harmonized MeLiDos light-exposure, exercise and sleep diaries; they do not introduce an alternate core/weather preprocessing path.
 
-Linux execution has three maintained entrypoints: `scripts/run_core_artifacts.sh` for the expensive source-to-core build, `scripts/run_downstream_server.sh` for resumable RQ1-output-to-final-results execution, and `scripts/run_full_server.sh` for the complete pipeline. Worker counts remain environment-overridable; the full runner defaults target the 48-physical-core / 192-GiB ECS node.
+Linux execution has three maintained entrypoints: `scripts/run_core_artifacts.sh` for the expensive source-to-core build, `scripts/run_downstream_server.sh` for resumable RQ1-output-to-final-results execution, and `scripts/run_full_server.sh` for the complete pipeline. Production reruns are expected to use the validated 48-vCPU / 192-GiB ECS class. The repository defaults therefore target that machine directly; worker environment variables remain available only when hardware changes or for explicit diagnostic runs.
 
 The analysis stages emit versioned model/checkpoint and figure provenance tables alongside their primary outputs. Main PNG figures are centralized under `results/figures`; RQ-specific figure manifests remain at the corresponding `results/rqX/` roots.
 

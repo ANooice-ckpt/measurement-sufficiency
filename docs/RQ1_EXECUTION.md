@@ -63,11 +63,19 @@ loads only selected primary pairwise columns/rows through the manifest loader;
 RQ3 uses the frozen summary/local projections and manifest version. Plot
 scripts read frozen outputs only.
 
-When RQ1_BOOT is positive, the analysis also computes participant-cluster/site-stratified
-bootstrap intervals for A and B. RQ1_BOOT_WORKERS controls the cross-platform PSOCK worker
-count. RQ1_PART_WORKERS controls parallel canonical-part generation and RQ1_FRAGMENT_WORKERS controls summary checkpoints. These can
-be set manually; a practical server starting point for a 100-GB node is
-`RQ1_PART_WORKERS=16 RQ1_BOOT_WORKERS=8`; raise the part count to 24 only
-after confirming memory headroom.
-`RQ1_PART_COMPRESSION=gzip` is the speed-oriented default; `xz` remains
-available when storage is more constrained.
+## Production server defaults
+
+Production reruns are expected to use the same validated **48-vCPU / 192-GiB ECS** class used for the full analysis. The repository therefore treats that machine as the default deployment target rather than a conservative generic server. Unless the hardware changes or a diagnostic run deliberately requires lower parallelism, use the checked-in defaults unchanged:
+
+```text
+RQ1_STARTUP_WORKERS=36
+RQ1_PART_WORKERS=44
+RQ1_FRAGMENT_WORKERS=36
+RQ1_BOOT_WORKERS=40
+RQ1_BOOT=1000
+RQ1_PART_COMPRESSION=gzip
+```
+
+`RQ1_STARTUP_WORKERS` parallelizes duration-anchor startup scans, `RQ1_PART_WORKERS` parallelizes immutable canonical-part generation, `RQ1_FRAGMENT_WORKERS` parallelizes summary-fragment checkpoints, and `RQ1_BOOT_WORKERS` controls the participant-cluster/site-stratified bootstrap workers. The startup, duration-part and fragment schedules retain the validated large-task-first/LPT-style ordering. BLAS/OpenMP inner threading remains limited to one thread by the server runner so these worker counts do not create nested parallelism.
+
+These values are production defaults, not per-run tuning suggestions. Environment overrides remain supported for a different machine or explicit troubleshooting. `RQ1_PART_COMPRESSION=gzip` is the speed-oriented default; `xz` remains available when storage is more constrained.
