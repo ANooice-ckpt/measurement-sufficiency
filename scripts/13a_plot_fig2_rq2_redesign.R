@@ -180,9 +180,6 @@ PREDICTOR_COLORS <- c(
 )
 OUTCOME_SHAPES <- c("Signed" = 16, "Absolute" = 17)
 
-# Collapse repeated transition-specific fits within metric before visualization.
-# This avoids allowing dimensions with many local transitions to dominate the
-# visual summary while retaining metric-level heterogeneity as the raw layer.
 coef_metric <- coefficients |>
   filter(model_family == "joint", term %in% PREDICTOR_CATALOG$term, is.finite(estimate)) |>
   group_by(dimension, metric, outcome, term) |>
@@ -259,8 +256,6 @@ add_row_guides <- function(p) {
   } else p
 }
 
-# Predictor names are given their own narrow column. Keeping labels out of the
-# Overall panel recovers horizontal plotting area for the coefficient microplots.
 p_labels <- ggplot(predictor_order, aes(y = y)) +
   geom_text(
     aes(x = .955, label = label),
@@ -281,10 +276,7 @@ p_labels <- ggplot(predictor_order, aes(y = y)) +
   )
 p_labels <- add_row_guides(p_labels)
 
-p_overall <- ggplot(
-  predictor_order,
-  aes(fill = predictor_family)
-) +
+p_overall <- ggplot(predictor_order, aes(fill = predictor_family)) +
   geom_rect(
     aes(xmin = 0, xmax = overall_abs_plot, ymin = y - .29, ymax = y + .29),
     alpha = .90, na.rm = TRUE
@@ -482,10 +474,6 @@ p2a <- cowplot::ggdraw() +
     colour = "#666A6D", size = 4.4
   )
 
-# =============================================================================
-# b. Conditional distortion geometry across exposure state
-# =============================================================================
-
 conditional <- conditional |>
   mutate(
     metric = as.character(metric),
@@ -677,10 +665,6 @@ metric_legend_plot <- ggplot(
   )
 metric_legend_right <- cowplot::get_legend(metric_legend_plot)
 
-# =============================================================================
-# c. Out-of-sample contextual predictability
-# =============================================================================
-
 joint_cv_metric <- performance |>
   filter(
     str_detect(validation_scheme, "^participant_grouped"),
@@ -717,6 +701,7 @@ joint_cv_metric <- joint_cv_metric |>
   )
 
 joint_cv_summary <- joint_cv_metric |>
+  group_by(dimension, dimension_label, y, outcome_label, metric_class) |>
   summarise(
     n_metrics = n_distinct(metric),
     r2_median = median(r2, na.rm = TRUE),
@@ -838,12 +823,6 @@ p2c <- cowplot::ggdraw() +
     fontface = "bold", size = 6.15
   )
 
-# =============================================================================
-# Final composition: predictor atlas dominates the left; the existing state
-# geometry is compacted to the upper-right; predictability closes the argument
-# in the lower-right. Metric-class colour semantics are shared by b and c.
-# =============================================================================
-
 right_top <- cowplot::plot_grid(
   metric_legend_right, p2b,
   ncol = 1, rel_heights = c(.070, .930),
@@ -863,8 +842,6 @@ p2 <- cowplot::plot_grid(
 ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.pdf"), 8.4, 6.45)
 ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.png"), 8.4, 6.45)
 
-# Diagnostics make the figure fully auditable and document the complete predictor
-# set instead of the former representative subset.
 readr::write_csv(
   predictor_order |>
     mutate(predictor_family = as.character(predictor_family)),
