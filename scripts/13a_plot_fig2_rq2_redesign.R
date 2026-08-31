@@ -133,7 +133,7 @@ robust_symmetric_display_window <- function(x, summary_values = numeric(), probs
   if (length(s)) half <- max(half, min(abs(stats::median(s, na.rm = TRUE)) * 3, max(abs(s), na.rm = TRUE) / 2), na.rm = TRUE)
   if (!is.finite(half) || half <= 0) half <- min_half
   half <- max(half, min_half)
-  if (is.finite(hard_cap)) half <- min(half, hard_cap)
+  if (length(hard_cap) && is.finite(hard_cap)) half <- min(half, hard_cap)
   half <- half * pad
   c(-half, half)
 }
@@ -717,7 +717,6 @@ joint_cv_metric <- joint_cv_metric |>
   )
 
 joint_cv_summary <- joint_cv_metric |>
-  group_by(dimension, dimension_label, y, outcome_label, metric_class) |>
   summarise(
     n_metrics = n_distinct(metric),
     r2_median = median(r2, na.rm = TRUE),
