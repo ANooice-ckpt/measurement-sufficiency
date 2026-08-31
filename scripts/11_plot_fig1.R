@@ -26,12 +26,6 @@ source("scripts/utils/figure_style.R")
 source("scripts/utils/figure_atlas.R")
 source("scripts/utils/plot_contracts.R")
 
-# Fig. 1 is the RQ1 overview. The main-text grammar separates three questions:
-# (a) absolute versus relational preservation across all measurement dimensions,
-# (b) signed-versus-absolute geometry for target-alignment facets, and
-# (c) where local response accrues along ordered burden axes.
-# Display windows may robustly clip a few raw metric points, but all foreground
-# summaries remain computed from the complete frozen RQ1 artifacts.
 SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
 AVAILABILITY_CSV <- file.path("results", "rq1", "rq1_metric_availability.csv")
 LOCAL_CSV <- file.path("results", "rq1", "rq1_local_transition_summary.csv")
@@ -185,20 +179,10 @@ dimension_assoc <- dimension_assoc |>
   )
 if (!nrow(dimension_summary)) stop("No non-circular RQ1 rows available for Fig. 1a")
 
-a_core_limit <- safe_q(dimension_metric$A_typical, .98)
-a_summary_limit <- max(dimension_summary$A_q75, na.rm = TRUE)
-a_display_limit <- max(c(.30, a_core_limit, a_summary_limit), na.rm = TRUE) * 1.06
-if (!is.finite(a_display_limit) || a_display_limit <= 0) a_display_limit <- 1
-rank_loss_limit <- max(.05, max(dimension_metric$rank_loss_typical, na.rm = TRUE) * 1.06)
-
-dimension_metric_main <- dimension_metric |>
-  filter(is.finite(A_typical), A_typical <= a_display_limit + NUMERIC_TOL)
-dimension_metric_off <- dimension_metric |>
-  filter(is.finite(A_typical), A_typical > a_display_limit + NUMERIC_TOL) |>
-  mutate(A_display = a_display_limit * .985)
-
-# One common preservation landscape makes the between-dimension displacement
-# itself visible rather than reproducing four off-centre small multiples.
+# The main panel is summary-only. Each dimension × representation-class object
+# remains in the joint (A, rank-loss) space, while forest-style crosshairs show
+# heterogeneity across the prespecified target metrics: point = median and bars = IQR.
+# Raw metric observations remain available in the supplementary distribution atlas.
 DIM_SHAPES_A <- c(
   "Placement" = 16,
   "Optical representation" = 17,
@@ -206,61 +190,50 @@ DIM_SHAPES_A <- c(
   "Monitoring duration" = 18
 )
 
-# Raw metric observations carry both encodings lightly; foreground class summaries
-# use the same dimension shape and metric-class colour at higher visual weight.
 dimension_summary_a <- dimension_summary |>
-  mutate(
-    A_display = pmin(A_median, a_display_limit),
-    rank_display = rank_loss_median
+  filter(
+    is.finite(A_median), is.finite(A_q25), is.finite(A_q75),
+    is.finite(rank_loss_median), is.finite(rank_loss_q25), is.finite(rank_loss_q75)
   )
+if (!nrow(dimension_summary_a)) stop("No finite class summaries available for Fig. 1a")
 
-dimension_labels_a <- dimension_summary_a |>
-  group_by(dimension) |>
-  summarise(
-    x = median(A_display, na.rm = TRUE),
-    y = max(rank_loss_q75, rank_loss_median, na.rm = TRUE),
-    .groups = "drop"
-  ) |>
-  left_join(dimension_assoc |> select(dimension, label), by = "dimension") |>
-  mutate(
-    text = paste0(as.character(dimension), "\n", label),
-    y = pmin(rank_loss_limit * .955, y + rank_loss_limit * .055)
-  )
+# Display domains are driven by the foreground summaries rather than raw metric
+# extremes, so the joint structure occupies the plotting field without hiding
+# any median or IQR shown in the main panel.
+a_display_limit <- max(.25, max(dimension_summary_a$A_q75, na.rm = TRUE) * 1.08)
+rank_loss_limit <- max(.05, max(dimension_summary_a$rank_loss_q75, na.rm = TRUE) * 1.08)
+
+assoc_lookup <- setNames(dimension_assoc$rho_A_rank, as.character(dimension_assoc$dimension))
+assoc_text <- sprintf(
+  "A–rank-loss association, rₛ: Placement %.2f · Optical %.2f · Temporal %.2f · Duration %.2f",
+  assoc_lookup[["Placement"]], assoc_lookup[["Optical representation"]],
+  assoc_lookup[["Temporal resolution"]], assoc_lookup[["Monitoring duration"]]
+)
 
 p1a <- ggplot() +
   geom_hline(yintercept = 0, linewidth = .24, color = "#D7DADD") +
-  geom_point(
-    data = dimension_metric_main,
-    aes(A_typical, rank_loss_typical, color = metric_class, shape = dimension),
-    size = .72, alpha = .22
-  ) +
-  geom_point(
-    data = dimension_metric_off,
-    aes(A_display, rank_loss_typical, color = metric_class),
-    inherit.aes = FALSE, shape = 4, size = 1.15, stroke = .35, alpha = .88
+  geom_segment(
+    data = dimension_summary_a,
+    aes(
+      x = A_q25, xend = A_q75,
+      y = rank_loss_median, yend = rank_loss_median,
+      color = metric_class
+    ),
+    inherit.aes = FALSE, linewidth = 1.02, alpha = .54, lineend = "round"
   ) +
   geom_segment(
     data = dimension_summary_a,
-    aes(x = A_q25, xend = pmin(A_q75, a_display_limit),
-        y = rank_loss_median, yend = rank_loss_median, color = metric_class),
-    inherit.aes = FALSE, linewidth = .86, alpha = .42, lineend = "round"
-  ) +
-  geom_segment(
-    data = dimension_summary_a,
-    aes(x = A_display, xend = A_display,
-        y = rank_loss_q25, yend = rank_loss_q75, color = metric_class),
-    inherit.aes = FALSE, linewidth = .86, alpha = .42, lineend = "round"
+    aes(
+      x = A_median, xend = A_median,
+      y = rank_loss_q25, yend = rank_loss_q75,
+      color = metric_class
+    ),
+    inherit.aes = FALSE, linewidth = 1.02, alpha = .54, lineend = "round"
   ) +
   geom_point(
     data = dimension_summary_a,
-    aes(A_display, rank_display, color = metric_class, shape = dimension),
-    inherit.aes = FALSE, size = 2.15, alpha = .98
-  ) +
-  geom_text(
-    data = dimension_labels_a,
-    aes(x, y, label = text),
-    inherit.aes = FALSE, size = 2.05, lineheight = .95,
-    fontface = "bold", color = "#4A4E51", check_overlap = TRUE
+    aes(A_median, rank_loss_median, color = metric_class, shape = dimension),
+    inherit.aes = FALSE, size = 2.25, alpha = .98
   ) +
   scale_color_ms_metric(guide = "none") +
   scale_shape_manual(values = DIM_SHAPES_A, name = NULL) +
@@ -270,16 +243,21 @@ p1a <- ggplot() +
     expand = expansion(mult = c(0, .02))
   ) +
   scale_y_continuous(
-    limits = c(0, rank_loss_limit), breaks = scales::breaks_extended(n = 5),
+    limits = c(0, rank_loss_limit),
+    breaks = scales::breaks_extended(n = 5),
     expand = expansion(mult = c(0, .03))
   ) +
   labs(
     title = "a  Absolute and relational preservation",
+    subtitle = assoc_text,
     x = "Absolute distortion, A", y = "Rank loss, 1 − Spearman ρ"
   ) +
   theme_fig1(base_size = 7.15, legend_position = "bottom") +
   theme(
     panel.grid.major = element_blank(),
+    plot.subtitle = element_text(
+      size = 5.25, color = "#666A6D", margin = margin(t = 1, b = 2)
+    ),
     legend.text = element_text(size = 5.25),
     legend.key.width = grid::unit(3.6, "mm"),
     legend.spacing.x = grid::unit(.8, "mm"),
@@ -321,10 +299,6 @@ readr::write_csv(
 # -----------------------------------------------------------------------------
 # b. Target-aligned distortion magnitude and directional coherence
 # -----------------------------------------------------------------------------
-# Reparameterize the signed-versus-absolute geometry as magnitude A and
-# directional coherence C = B/A. C is bounded in [-1, 1], so the two target-
-# alignment panels can share a meaningful horizontal scale while each uses its
-# own A range. This avoids compressing optical magnitude to preserve a common y.
 target_geometry <- summary |>
   filter(
     dimension %in% c("placement", "optical"),
@@ -372,14 +346,14 @@ target_label_max_a <- target_geometry |>
   group_by(facet_label) |>
   slice_max(A_mean_absolute, n = 1, with_ties = FALSE) |>
   ungroup()
-target_label_coherent <- target_geometry |>
+target_label_max_coh <- target_geometry |>
   group_by(facet_label, metric) |>
   slice_max(abs(coherence), n = 1, with_ties = FALSE) |>
   ungroup() |>
   group_by(facet_label) |>
   slice_max(abs(coherence), n = 1, with_ties = FALSE) |>
   ungroup()
-target_labels <- bind_rows(target_label_max_a, target_label_coherent) |>
+target_labels <- bind_rows(target_label_max_a, target_label_max_coh) |>
   distinct(facet_label, metric, .keep_all = TRUE)
 
 target_geometry_panel <- function(panel_name, show_x_title = TRUE) {
@@ -408,7 +382,8 @@ target_geometry_panel <- function(panel_name, show_x_title = TRUE) {
     scale_color_ms_metric(guide = "none") +
     scale_shape_discrete(name = NULL) +
     scale_x_continuous(
-      limits = c(-1, 1), breaks = c(-1, -.5, 0, .5, 1),
+      limits = c(-1, 1),
+      breaks = c(-1, -.5, 0, .5, 1),
       expand = expansion(mult = c(.01, .01))
     ) +
     scale_y_continuous(
@@ -433,8 +408,6 @@ target_geometry_panel <- function(panel_name, show_x_title = TRUE) {
     )
 }
 
-# Both panels display the shared coherence ticks; the lower panel alone carries
-# the repeated axis title. Their y ranges are intentionally independent.
 p1b_top <- target_geometry_panel("Placement · chest/wrist → eye", show_x_title = FALSE)
 p1b_bottom <- target_geometry_panel("Optical representation · LIGHT → MEDI", show_x_title = TRUE)
 
@@ -591,7 +564,7 @@ local_distribution_panel <- function(dim, subpanel_title = DIM_TITLES[[dim]], sh
         x = share_q25, xend = share_q75,
         y = y_summary, yend = y_summary, color = metric_class
       ),
-      linewidth = .78, alpha = .48, lineend = "round"
+      linewidth = .78, alpha = .50, lineend = "round"
     ) +
     geom_point(
       data = ds,
