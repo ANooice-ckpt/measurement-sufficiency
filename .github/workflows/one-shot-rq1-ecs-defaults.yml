@@ -1,0 +1,120 @@
+name: One-shot RQ1 ECS defaults
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    if: github.event.head_commit.message == 'Add one-shot RQ1 ECS default updater'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Update validated ECS defaults and documentation
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              n = text.count(old)
+              if n != 1:
+                  raise SystemExit(f"Expected exactly one match in {path}, found {n}: {old!r}")
+              p.write_text(text.replace(old, new))
+
+          # Standalone RQ1 execution must permit and default to the validated
+          # high-parallelism startup/fragment stages on the production ECS.
+          replace_once(
+              "scripts/10_rq1_analysis.R",
+              'STARTUP_WORKERS <- ms_resolve_workers("RQ1_STARTUP_WORKERS", default = min(24L, PART_WORKERS), cap = 32L)\nFRAGMENT_WORKERS <- ms_resolve_workers("RQ1_FRAGMENT_WORKERS", default = min(10L, PART_WORKERS), cap = 16L)',
+              '# Production defaults target the validated 48-vCPU / 192-GiB ECS deployment.\n# Override only for a different machine or a diagnostic run.\nSTARTUP_WORKERS <- ms_resolve_workers("RQ1_STARTUP_WORKERS", default = 36L, cap = 48L)\nFRAGMENT_WORKERS <- ms_resolve_workers("RQ1_FRAGMENT_WORKERS", default = 36L, cap = 48L)'
+          )
+
+          replace_once(
+              "scripts/run_full_server.sh",
+              '# -> figures -> provenance. Defaults target the 48-physical-core / 192-GiB ECS\n# node; every worker count remains environment-overridable.',
+              '# -> figures -> provenance. Production defaults target the validated 48-vCPU / 192-GiB ECS\n# node used for subsequent full reruns; environment overrides are reserved for different hardware or diagnostics.'
+          )
+          replace_once(
+              "scripts/run_full_server.sh",
+              'export RQ1_STARTUP_WORKERS="${RQ1_STARTUP_WORKERS:-24}"',
+              'export RQ1_STARTUP_WORKERS="${RQ1_STARTUP_WORKERS:-36}"'
+          )
+          replace_once(
+              "scripts/run_full_server.sh",
+              'export RQ1_FRAGMENT_WORKERS="${RQ1_FRAGMENT_WORKERS:-12}"',
+              'export RQ1_FRAGMENT_WORKERS="${RQ1_FRAGMENT_WORKERS:-36}"'
+          )
+          replace_once(
+              "scripts/run_full_server.sh",
+              'echo "Workers: core=${CORE_WORKERS}; duration=${CORE_DURATION_WORKERS}; rq1_parts=${RQ1_PART_WORKERS}; rq1_fragments=${RQ1_FRAGMENT_WORKERS}; rq1_boot=${RQ1_BOOT_WORKERS}; rq2=${RQ2_WORKERS}; rq3=${RQ3_WORKERS}; rq3_parts=${RQ3_PART_WORKERS}"',
+              'echo "Workers: core=${CORE_WORKERS}; duration=${CORE_DURATION_WORKERS}; rq1_startup=${RQ1_STARTUP_WORKERS}; rq1_parts=${RQ1_PART_WORKERS}; rq1_fragments=${RQ1_FRAGMENT_WORKERS}; rq1_boot=${RQ1_BOOT_WORKERS}; rq2=${RQ2_WORKERS}; rq3=${RQ3_WORKERS}; rq3_parts=${RQ3_PART_WORKERS}"'
+          )
+
+          replace_once(
+              "README.md",
+              'RQ1_BOOT=1000 RQ1_PART_WORKERS=24 RQ1_BOOT_WORKERS=8 RQ1_PART_COMPRESSION=gzip Rscript scripts/10_rq1_analysis.R',
+              'RQ1_BOOT=1000 RQ1_STARTUP_WORKERS=36 RQ1_PART_WORKERS=44 RQ1_FRAGMENT_WORKERS=36 RQ1_BOOT_WORKERS=40 RQ1_PART_COMPRESSION=gzip Rscript scripts/10_rq1_analysis.R'
+          )
+          replace_once(
+              "README.md",
+              'Linux execution has three maintained entrypoints: `scripts/run_core_artifacts.sh` for the expensive source-to-core build, `scripts/run_downstream_server.sh` for resumable RQ1-output-to-final-results execution, and `scripts/run_full_server.sh` for the complete pipeline. Worker counts remain environment-overridable; the full runner defaults target the 48-physical-core / 192-GiB ECS node.',
+              'Linux execution has three maintained entrypoints: `scripts/run_core_artifacts.sh` for the expensive source-to-core build, `scripts/run_downstream_server.sh` for resumable RQ1-output-to-final-results execution, and `scripts/run_full_server.sh` for the complete pipeline. Production reruns are expected to use the validated 48-vCPU / 192-GiB ECS class. The repository defaults therefore target that machine directly; worker environment variables remain available only when hardware changes or for explicit diagnostic runs.'
+          )
+
+          old_doc = '''When RQ1_BOOT is positive, the analysis also computes participant-cluster/site-stratified
+bootstrap intervals for A and B. RQ1_BOOT_WORKERS controls the cross-platform PSOCK worker
+count. RQ1_PART_WORKERS controls parallel canonical-part generation and RQ1_FRAGMENT_WORKERS controls summary checkpoints. These can
+be set manually; a practical server starting point for a 100-GB node is
+`RQ1_PART_WORKERS=16 RQ1_BOOT_WORKERS=8`; raise the part count to 24 only
+after confirming memory headroom.
+`RQ1_PART_COMPRESSION=gzip` is the speed-oriented default; `xz` remains
+available when storage is more constrained.'''
+          new_doc = '''## Production server defaults
+
+Production reruns are expected to use the same validated **48-vCPU / 192-GiB ECS** class used for the full analysis. The repository therefore treats that machine as the default deployment target rather than a conservative generic server. Unless the hardware changes or a diagnostic run deliberately requires lower parallelism, use the checked-in defaults unchanged:
+
+```text
+RQ1_STARTUP_WORKERS=36
+RQ1_PART_WORKERS=44
+RQ1_FRAGMENT_WORKERS=36
+RQ1_BOOT_WORKERS=40
+RQ1_BOOT=1000
+RQ1_PART_COMPRESSION=gzip
+```
+
+`RQ1_STARTUP_WORKERS` parallelizes duration-anchor startup scans, `RQ1_PART_WORKERS` parallelizes immutable canonical-part generation, `RQ1_FRAGMENT_WORKERS` parallelizes summary-fragment checkpoints, and `RQ1_BOOT_WORKERS` controls the participant-cluster/site-stratified bootstrap workers. The startup, duration-part and fragment schedules retain the validated large-task-first/LPT-style ordering. BLAS/OpenMP inner threading remains limited to one thread by the server runner so these worker counts do not create nested parallelism.
+
+These values are production defaults, not per-run tuning suggestions. Environment overrides remain supported for a different machine or explicit troubleshooting. `RQ1_PART_COMPRESSION=gzip` is the speed-oriented default; `xz` remains available when storage is more constrained.'''
+          replace_once("docs/RQ1_EXECUTION.md", old_doc, new_doc)
+
+      - name: Validate edits
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/run_full_server.sh
+          grep -F 'default = 36L, cap = 48L' scripts/10_rq1_analysis.R | wc -l | grep -qx '2'
+          grep -F 'RQ1_STARTUP_WORKERS="${RQ1_STARTUP_WORKERS:-36}"' scripts/run_full_server.sh
+          grep -F 'RQ1_FRAGMENT_WORKERS="${RQ1_FRAGMENT_WORKERS:-36}"' scripts/run_full_server.sh
+          grep -F 'RQ1_STARTUP_WORKERS=36' docs/RQ1_EXECUTION.md
+          grep -F 'RQ1_FRAGMENT_WORKERS=36' docs/RQ1_EXECUTION.md
+          git diff --check
+          git diff -- scripts/10_rq1_analysis.R scripts/run_full_server.sh README.md docs/RQ1_EXECUTION.md
+
+      - name: Commit production defaults and remove updater
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/one-shot-rq1-ecs-defaults.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/10_rq1_analysis.R scripts/run_full_server.sh README.md docs/RQ1_EXECUTION.md .github/workflows/one-shot-rq1-ecs-defaults.yml
+          git commit -m "Set production RQ1 ECS worker defaults"
+          git push origin HEAD:master
