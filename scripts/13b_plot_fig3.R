@@ -112,66 +112,6 @@ theme_rq2 <- function(base_size = 6.7, legend_position = "none") {
 
 metric_legend <- ms_metric_legend(text_size = 5.35, point_size = 1.5, key_width_mm = 3.5)
 
-robust_symmetric_display_limit <- function(x, summary_values = numeric(), prob = .95,
-                                           pad = 1.08, fallback = 1) {
-  x <- abs(as.numeric(x))
-  x <- x[is.finite(x)]
-  s <- abs(as.numeric(summary_values))
-  s <- s[is.finite(s)]
-  core <- if (length(x)) as.numeric(stats::quantile(x, prob, na.rm = TRUE,
-                                                    names = FALSE, type = 8)) else NA_real_
-  summary_extent <- if (length(s)) max(s, na.rm = TRUE) else NA_real_
-  lim <- suppressWarnings(max(c(core, summary_extent), na.rm = TRUE))
-  if (!is.finite(lim) || lim <= 0) lim <- fallback
-  lim * pad
-}
-
-robust_upper_display_limit <- function(x, summary_values = numeric(), prob = .95,
-                                       pad = 1.08, fallback = 1) {
-  x <- as.numeric(x)
-  x <- x[is.finite(x)]
-  s <- as.numeric(summary_values)
-  s <- s[is.finite(s)]
-  core <- if (length(x)) as.numeric(stats::quantile(x, prob, na.rm = TRUE,
-                                                    names = FALSE, type = 8)) else NA_real_
-  summary_extent <- if (length(s)) max(s, na.rm = TRUE) else NA_real_
-  lim <- suppressWarnings(max(c(core, summary_extent), na.rm = TRUE))
-  if (!is.finite(lim) || lim <= 0) lim <- fallback
-  lim * pad
-}
-
-robust_bounded_display_range <- function(x, summary_values = numeric(), probs = c(.05, .95),
-                                         lower = -1, upper = 1, min_span = .30,
-                                         pad_fraction = .08) {
-  x <- as.numeric(x)
-  x <- x[is.finite(x)]
-  s <- as.numeric(summary_values)
-  s <- s[is.finite(s)]
-  if (!length(x) && !length(s)) return(c(lower, upper))
-  q <- if (length(x)) {
-    as.numeric(stats::quantile(x, probs, na.rm = TRUE, names = FALSE, type = 8))
-  } else c(min(s), max(s))
-  lo <- min(c(q[[1]], s), na.rm = TRUE)
-  hi <- max(c(q[[2]], s), na.rm = TRUE)
-  lo <- max(lower, lo)
-  hi <- min(upper, hi)
-  if (!is.finite(lo) || !is.finite(hi) || lo >= hi) return(c(lower, upper))
-  span <- hi - lo
-  if (span < min_span) {
-    center <- (lo + hi) / 2
-    lo <- center - min_span / 2
-    hi <- center + min_span / 2
-  }
-  span <- hi - lo
-  lo <- max(lower, lo - span * pad_fraction)
-  hi <- min(upper, hi + span * pad_fraction)
-  if ((hi - lo) < min_span) {
-    if (lo <= lower + 1e-12) hi <- min(upper, lower + min_span)
-    if (hi >= upper - 1e-12) lo <- max(lower, upper - min_span)
-  }
-  c(lo, hi)
-}
-
 # =============================================================================
 # Fig. 3 — cross-dimensional non-additivity
 # =============================================================================
@@ -190,7 +130,6 @@ PAIR_LEVELS <- c(
 )
 PAIR_CODES <- c("placement__optical", "optical__temporal", "placement__temporal")
 names(PAIR_CODES) <- PAIR_LEVELS
-PAIR_CODE_TO_LABEL <- setNames(names(PAIR_CODES), unname(PAIR_CODES))
 NUMERIC_TOL <- 1e-12
 
 safe_median <- function(x) {
@@ -255,9 +194,8 @@ metric_table <- gamma_plot |>
   ) |>
   distinct(metric, .keep_all = TRUE)
 
-# Keep representation classes with enough metrics for a genuine distribution.
-# Sparse n=1/2 classes remain part of Overall and the faint raw layer but are not
-# promoted to their own main-text summary row/profile.
+# Classes with n=1/2 remain in Overall and in faint raw points, but only classes
+# with enough metrics for a meaningful distribution receive a main-text row.
 fig3_class_counts <- metric_table |>
   filter(!is.na(metric_class)) |>
   count(metric_class, name = "n_metrics")
@@ -279,13 +217,9 @@ fig3_row_labels <- setNames(
   vapply(FIG3_CLASS_ORDER, function(z) {
     n <- if (z == "Overall") nrow(metric_table) else unname(fig3_n_lookup[[z]])
     paste0(if (z == "Overall") "Overall" else str_to_sentence(z), " (n=", n, ")")
-  }, character(1)),
-  FIG3_CLASS_ORDER
+  }, character(1)), FIG3_CLASS_ORDER
 )
 
-# -----------------------------------------------------------------------------
-# Shared Q display mapping for panels a and b
-# -----------------------------------------------------------------------------
 make_fig3_focus_tail_axis <- function(values, foreground, prob = .95,
                                       tail_ratio = 1.30, gutter_fraction = .10,
                                       fallback = .25) {
@@ -331,9 +265,7 @@ make_fig3_focus_tail_axis <- function(values, foreground, prob = .95,
        display_max = display_max, tick_max = focus, map = mapper)
 }
 
-# -----------------------------------------------------------------------------
-# Panel a data — ranked class half-eye atlas
-# -----------------------------------------------------------------------------
+# Panel a source summaries.
 a_metric_q <- gamma_metric |>
   filter(is.finite(Q_metric)) |>
   mutate(pair_code = as.character(pair_code), metric_class = as.character(metric_class))
@@ -351,9 +283,7 @@ a_stats_raw <- a_metric_q |>
     Q_q90 = safe_q(Q_metric, .90), .groups = "drop"
   )
 
-# -----------------------------------------------------------------------------
-# Panel b data — explicit ordered transition sequences
-# -----------------------------------------------------------------------------
+# Panel b source rows and transition order.
 fig3_transition_order <- bind_rows(
   tibble(
     pair_code = PAIR_CODES[[1]],
@@ -427,19 +357,19 @@ fig3_q_labels <- scales::label_number(
   accuracy = if (fig3_q_axis$tick_max <= .5) .05 else .1
 )(fig3_q_breaks_raw)
 
+pair_display_lookup <- c(
+  placement__optical = "Placement ×\noptical",
+  optical__temporal = "Optical ×\ntemporal",
+  placement__temporal = "Placement ×\ntemporal"
+)
+pair_display_levels <- unname(pair_display_lookup[PAIR_CODES])
+
 a_metric_plot <- a_metric_q |>
   mutate(
     Q_plot = fig3_q_axis$map(Q_metric),
     atlas_row = factor(unname(fig3_row_labels[atlas_class]),
                        levels = unname(fig3_row_labels[FIG3_CLASS_ORDER])),
-    dimension_pair = factor(
-      unname(c(
-        placement__optical = "Placement ×\noptical",
-        optical__temporal = "Optical ×\ntemporal",
-        placement__temporal = "Placement ×\ntemporal"
-      )[pair_code]),
-      levels = c("Placement ×\noptical", "Optical ×\ntemporal", "Placement ×\ntemporal")
-    )
+    dimension_pair = factor(unname(pair_display_lookup[pair_code]), levels = pair_display_levels)
   ) |>
   arrange(atlas_class, pair_code, metric) |>
   group_by(atlas_class, pair_code) |>
@@ -453,14 +383,7 @@ a_stats <- a_stats_raw |>
     Q_q90 = fig3_q_axis$map(Q_q90),
     atlas_row = factor(unname(fig3_row_labels[atlas_class]),
                        levels = unname(fig3_row_labels[FIG3_CLASS_ORDER])),
-    dimension_pair = factor(
-      unname(c(
-        placement__optical = "Placement ×\noptical",
-        optical__temporal = "Optical ×\ntemporal",
-        placement__temporal = "Placement ×\ntemporal"
-      )[pair_code]),
-      levels = c("Placement ×\noptical", "Optical ×\ntemporal", "Placement ×\ntemporal")
-    )
+    dimension_pair = factor(unname(pair_display_lookup[pair_code]), levels = pair_display_levels)
   )
 
 a_density <- a_metric_plot |>
@@ -482,8 +405,7 @@ p3a <- ggplot() +
     ymin = -Inf, ymax = Inf, fill = "#F5F6F6", colour = NA
   ) else NULL} +
   {if (fig3_q_axis$use_tail) geom_vline(
-    xintercept = fig3_q_axis$focus, colour = "#B9BEC1",
-    linewidth = .25, linetype = "22"
+    xintercept = fig3_q_axis$focus, colour = "#B9BEC1", linewidth = .25, linetype = "22"
   ) else NULL} +
   geom_ribbon(
     data = a_density,
@@ -499,8 +421,7 @@ p3a <- ggplot() +
   ) +
   geom_point(
     data = a_metric_plot,
-    aes(Q_plot, raw_y, colour = atlas_class),
-    shape = 16, size = .46, alpha = .22
+    aes(Q_plot, raw_y, colour = atlas_class), shape = 16, size = .46, alpha = .22
   ) +
   geom_segment(
     data = a_stats,
@@ -547,18 +468,13 @@ p3a <- ggplot() +
     plot.margin = margin(1, 3, 1, 3)
   )
 
-# -----------------------------------------------------------------------------
-# Panel c — directional coherence with class-level second layer
-# -----------------------------------------------------------------------------
+# Panel c — overall neutral half-density, class mini-IQRs, and faint raw metrics.
 coherence_points <- gamma_metric |>
   filter(is.finite(C_metric)) |>
   mutate(
     pair_code = as.character(pair_code), metric_class = as.character(metric_class),
-    pair_y = unname(c(
-      placement__optical = 3,
-      optical__temporal = 2,
-      placement__temporal = 1
-    )[pair_code])
+    pair_y = unname(c(placement__optical = 3, optical__temporal = 2,
+                      placement__temporal = 1)[pair_code])
   ) |>
   arrange(pair_y, C_metric, metric) |>
   group_by(pair_code) |>
@@ -586,19 +502,20 @@ coherence_density <- coherence_points |>
   group_by(pair_code, pair_y) |>
   group_modify(~ {
     values <- .x$C_metric[is.finite(.x$C_metric)]
+    base_y <- .y$pair_y[[1]]
     if (length(values) < 3L || diff(range(values)) <= NUMERIC_TOL) {
       return(tibble(x = numeric(), density_y = numeric()))
     }
     fit <- stats::density(values, from = -1, to = 1, n = 192, adjust = 1)
-    tibble(x = fit$x, density_y = .x$pair_y[[1]] + .035 + .26 * fit$y / max(fit$y))
+    tibble(x = fit$x, density_y = base_y + .035 + .26 * fit$y / max(fit$y))
   }) |>
   ungroup()
 coherence_polygons <- coherence_density |>
   group_by(pair_code, pair_y) |>
-  group_modify(~ tibble(
-    x = c(.x$x, rev(.x$x)),
-    y = c(.x$density_y, rep(.x$pair_y[[1]] + .035, nrow(.x)))
-  )) |>
+  group_modify(~ {
+    base_y <- .y$pair_y[[1]] + .035
+    tibble(x = c(.x$x, rev(.x$x)), y = c(.x$density_y, rep(base_y, nrow(.x))))
+  }) |>
   ungroup()
 
 p3c <- ggplot() +
@@ -610,8 +527,7 @@ p3c <- ggplot() +
   ) +
   geom_point(
     data = coherence_points,
-    aes(C_metric, raw_y, colour = metric_class),
-    shape = 16, size = .50, alpha = .20
+    aes(C_metric, raw_y, colour = metric_class), shape = 16, size = .50, alpha = .20
   ) +
   geom_segment(
     data = coherence_class,
@@ -621,8 +537,7 @@ p3c <- ggplot() +
   ) +
   geom_point(
     data = coherence_class,
-    aes(C_median, y_summary, colour = metric_class),
-    shape = 16, size = .90, alpha = .96
+    aes(C_median, y_summary, colour = metric_class), shape = 16, size = .90, alpha = .96
   ) +
   geom_segment(
     data = coherence_overall,
@@ -631,8 +546,8 @@ p3c <- ggplot() +
   ) +
   geom_point(
     data = coherence_overall,
-    aes(C_median, pair_y),
-    shape = 23, size = 1.85, fill = "#343B3F", colour = "white", stroke = .22
+    aes(C_median, pair_y), shape = 23, size = 1.85,
+    fill = "#343B3F", colour = "white", stroke = .22
   ) +
   scale_colour_manual(values = MS_METRIC_COLORS, guide = "none") +
   scale_x_continuous(
@@ -662,11 +577,9 @@ p3c <- ggplot() +
     plot.margin = margin(1, 2.5, 1, 2.5)
   )
 
-# -----------------------------------------------------------------------------
-# Panel b — ordered-transition backbone
-# -----------------------------------------------------------------------------
-b_raw_plot <- b_raw |>
-  mutate(Q_plot = fig3_q_axis$map(Q))
+# Panel b — x is the ordered refinement sequence, y is Q. Dark profiles are the
+# first visual layer; class profiles and raw metric points are progressively weaker.
+b_raw_plot <- b_raw |> mutate(Q_plot = fig3_q_axis$map(Q))
 b_class_stats <- b_class_stats_raw |>
   mutate(
     Q_q25_plot = fig3_q_axis$map(Q_q25),
@@ -701,8 +614,7 @@ make_fig3_backbone_panel <- function(pair_name, title, type = c("categorical", "
       ymax = fig3_q_axis$display_max, fill = "#F5F6F6", colour = NA
     ) else NULL} +
     {if (fig3_q_axis$use_tail) geom_hline(
-      yintercept = fig3_q_axis$focus, colour = "#B9BEC1",
-      linewidth = .25, linetype = "22"
+      yintercept = fig3_q_axis$focus, colour = "#B9BEC1", linewidth = .25, linetype = "22"
     ) else NULL} +
     geom_point(
       data = raw,
@@ -712,8 +624,7 @@ make_fig3_backbone_panel <- function(pair_name, title, type = c("categorical", "
     )
 
   if (type == "categorical") {
-    cls <- cls |>
-      mutate(x_class = x_plot + unname(fig3_class_x_offsets[metric_class]))
+    cls <- cls |> mutate(x_class = x_plot + unname(fig3_class_x_offsets[metric_class]))
     p <- p +
       geom_errorbar(
         data = cls,
@@ -722,8 +633,7 @@ make_fig3_backbone_panel <- function(pair_name, title, type = c("categorical", "
       ) +
       geom_point(
         data = cls,
-        aes(x_class, Q_median_plot, colour = metric_class),
-        shape = 16, size = .92, alpha = .96
+        aes(x_class, Q_median_plot, colour = metric_class), shape = 16, size = .92, alpha = .96
       ) +
       geom_errorbar(
         data = overall,
@@ -732,8 +642,8 @@ make_fig3_backbone_panel <- function(pair_name, title, type = c("categorical", "
       ) +
       geom_point(
         data = overall,
-        aes(x_plot, Q_median_plot),
-        shape = 21, size = 1.70, fill = "#343B3F", colour = "white", stroke = .22
+        aes(x_plot, Q_median_plot), shape = 21, size = 1.70,
+        fill = "#343B3F", colour = "white", stroke = .22
       )
   } else {
     p <- p +
@@ -744,8 +654,7 @@ make_fig3_backbone_panel <- function(pair_name, title, type = c("categorical", "
       ) +
       geom_errorbar(
         data = cls,
-        aes(x = x_plot, ymin = Q_q25_plot, ymax = Q_q75_plot,
-            colour = metric_class),
+        aes(x = x_plot, ymin = Q_q25_plot, ymax = Q_q75_plot, colour = metric_class),
         width = .025, linewidth = .28, alpha = .28
       ) +
       geom_line(
@@ -756,8 +665,7 @@ make_fig3_backbone_panel <- function(pair_name, title, type = c("categorical", "
       ) +
       geom_point(
         data = cls,
-        aes(x_plot, Q_median_plot, colour = metric_class),
-        shape = 16, size = .88, alpha = .90
+        aes(x_plot, Q_median_plot, colour = metric_class), shape = 16, size = .88, alpha = .90
       ) +
       geom_line(
         data = overall,
@@ -766,15 +674,14 @@ make_fig3_backbone_panel <- function(pair_name, title, type = c("categorical", "
       ) +
       geom_point(
         data = overall,
-        aes(x_plot, Q_median_plot),
-        shape = 21, size = 1.62, fill = "#343B3F", colour = "white", stroke = .22
+        aes(x_plot, Q_median_plot), shape = 21, size = 1.62,
+        fill = "#343B3F", colour = "white", stroke = .22
       )
   }
 
   p +
     scale_colour_manual(values = MS_METRIC_COLORS, guide = "none") +
-    scale_linetype_manual(values = c(all = "solid", chest = "solid", wrist = "22"),
-                          guide = "none") +
+    scale_linetype_manual(values = c(all = "solid", chest = "solid", wrist = "22"), guide = "none") +
     scale_x_continuous(
       limits = c(.62, max(steps$step_index) + .38),
       breaks = steps$step_index, labels = steps$x_label,
@@ -830,8 +737,7 @@ p3b <- cowplot::ggdraw() +
 metric_legend_main <- cowplot::get_legend(
   ggplot(
     tibble(metric_class = factor(FIG3_DISPLAY_CLASSES, levels = FIG3_DISPLAY_CLASSES),
-           x = 1, y = 1),
-    aes(x, y, colour = metric_class)
+           x = 1, y = 1), aes(x, y, colour = metric_class)
   ) +
     geom_point(size = 1.10) +
     scale_colour_manual(values = MS_METRIC_COLORS, limits = FIG3_DISPLAY_CLASSES,
@@ -846,8 +752,6 @@ metric_legend_main <- cowplot::get_legend(
     )
 )
 
-# The global panels sit together on the first row; the ordered transition
-# backbone spans the full lower width so its rise/fall profile remains legible.
 p3_top <- cowplot::plot_grid(
   p3a, p3c, ncol = 2, rel_widths = c(.66, .34),
   align = "hv", axis = "tblr", greedy = TRUE
@@ -860,6 +764,11 @@ p3 <- cowplot::plot_grid(
   metric_legend_main, p3_body, ncol = 1, rel_heights = c(.045, 1),
   align = "v", axis = "l", greedy = TRUE
 )
+
+# The global visual-polish pass still knows the previous Fig. 3 component names.
+# Remove the three temporary section objects only after the new composite has
+# been built, so export preserves this new top-row + full-width-backbone layout.
+rm(p3b_po, p3b_ot, p3b_pt)
 
 ms_plot_save(p3, file.path(OUT_DIR, "Fig3_RQ2.png"), 7.40, 6.70)
 
