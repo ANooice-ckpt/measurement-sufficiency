@@ -42,7 +42,7 @@ Monitoring duration is the accumulation dimension. Core preprocessing identifies
 Build the expensive core layer with:
 
 ```bash
-CORE_WORKERS=48 CORE_FORCE=0 bash scripts/run_core_artifacts.sh
+CORE_WORKERS=48 CORE_DURATION_WORKERS=32 CORE_FORCE=0 bash scripts/run_core_artifacts.sh
 ```
 
 Durable core outputs:
@@ -77,9 +77,9 @@ Rscript scripts/14_rq3_analysis.R
 Rscript scripts/15_plot_rq3.R
 ```
 
-RQ1-RQ3 are canonical executable sources: the server runners invoke these files directly rather than generating scientifically different downstream runtimes. RQ1 keeps concrete nested duration-window comparisons in its canonical pairwise artifact but projects them to generic 1–6 day comparison types before pooled summaries and bootstrap inference. The RQ2 entrypoint contains the streamed conditional analysis directly and, in the same R process, adds the layered contextual models. Those models reuse existing ERA5 fields from `unit_context` and harmonized MeLiDos light-exposure, exercise and sleep diaries; they do not introduce an alternate core/weather preprocessing path.
+RQ1-RQ3 are canonical executable sources: all server runners invoke these files directly rather than generating alternate downstream runtimes. RQ1 keeps concrete nested duration-window comparisons in its canonical pairwise artifact but projects them to generic 1–6 day comparison types before pooled summaries and bootstrap inference. The RQ2 entrypoint contains the streamed conditional analysis directly and, in the same R process, adds the layered contextual models. Those models reuse existing ERA5 fields from `unit_context` and harmonized MeLiDos light-exposure, exercise and sleep diaries; they do not introduce an alternate core/weather preprocessing path.
 
-On the Linux server, the resumable downstream chain can be launched with `scripts/run_downstream_server.sh`. The server runners define their own high-core-count defaults and every worker count remains environment-overridable; inspect the selected runner before changing concurrency for a different instance size. `scripts/run_full_server_optimized.sh` generates runtime-only scheduling variants for the expensive core/duration build; downstream scientific logic still comes from the canonical RQ1-RQ3 sources.
+Linux execution has three maintained entrypoints: `scripts/run_core_artifacts.sh` for the expensive source-to-core build, `scripts/run_downstream_server.sh` for resumable RQ1-output-to-final-results execution, and `scripts/run_full_server.sh` for the complete pipeline. Worker counts remain environment-overridable; the full runner defaults target the 48-physical-core / 192-GiB ECS node.
 
 The analysis stages emit versioned model/checkpoint and figure provenance tables alongside their primary outputs. Main PNG figures are centralized under `results/figures`; RQ-specific figure manifests remain at the corresponding `results/rqX/` roots.
 
