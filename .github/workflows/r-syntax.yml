@@ -20,7 +20,6 @@ jobs:
           files <- c(
             "scripts/utils/analysis_design.R",
             "scripts/utils/core_artifacts.R",
-            "scripts/utils/core_temporal_sampling.R",
             "scripts/utils/duration_artifacts.R",
             "scripts/utils/figure_style.R",
             "scripts/utils/figure_atlas.R",
