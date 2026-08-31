@@ -28,6 +28,10 @@ PART_WORKERS <- ms_resolve_workers("RQ1_PART_WORKERS", default = 44L, cap = 48L)
 # Override only for a different machine or a diagnostic run.
 STARTUP_WORKERS <- ms_resolve_workers("RQ1_STARTUP_WORKERS", default = 36L, cap = 48L)
 FRAGMENT_WORKERS <- ms_resolve_workers("RQ1_FRAGMENT_WORKERS", default = 36L, cap = 48L)
+# Relational preservation re-reads compressed canonical parts and returns paired
+# value vectors to the master process. Cap this I/O/memory-heavy scan below the
+# lighter summary-fragment stage on the production ECS.
+RELATIONAL_WORKERS <- min(24L, FRAGMENT_WORKERS)
 BOOT_SEED <- 20260820L
 PRIMARY_TEMPORAL_S <- ms_primary_temporal_s()
 PRIMARY_DURATION_DAYS <- ms_primary_duration_days()
@@ -711,11 +715,11 @@ rq1_rank_fragment <- function(part_path) {
     )
 }
 
-message("RQ1 relational preservation over ", length(part_paths), " canonical parts; workers=", FRAGMENT_WORKERS)
+message("RQ1 relational preservation over ", length(part_paths), " canonical parts; workers=", RELATIONAL_WORKERS)
 rank_schedule_idx <- order(as.numeric(file.info(part_paths)$size), decreasing = TRUE, na.last = TRUE)
 rank_fragments_scheduled <- ms_parallel_map(
   part_paths[rank_schedule_idx], rq1_rank_fragment,
-  workers = FRAGMENT_WORKERS,
+  workers = RELATIONAL_WORKERS,
   packages = c("tidyverse"),
   exports = c("rank_group_vars", "RQ1_DIMENSIONS", "rq1_rank_fragment")
 )
