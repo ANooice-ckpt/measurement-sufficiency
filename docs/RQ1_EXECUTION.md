@@ -76,6 +76,6 @@ RQ1_BOOT=1000
 RQ1_PART_COMPRESSION=gzip
 ```
 
-`RQ1_STARTUP_WORKERS` parallelizes duration-anchor startup scans, `RQ1_PART_WORKERS` parallelizes immutable canonical-part generation, `RQ1_FRAGMENT_WORKERS` parallelizes summary-fragment checkpoints, and `RQ1_BOOT_WORKERS` controls the participant-cluster/site-stratified bootstrap workers. The startup, duration-part and fragment schedules retain the validated large-task-first/LPT-style ordering. BLAS/OpenMP inner threading remains limited to one thread by the server runner so these worker counts do not create nested parallelism.
+`RQ1_STARTUP_WORKERS` parallelizes duration-anchor startup scans, `RQ1_PART_WORKERS` parallelizes immutable canonical-part generation, `RQ1_FRAGMENT_WORKERS` parallelizes both summary-fragment checkpoints and the canonical-part relational-preservation scan, and `RQ1_BOOT_WORKERS` controls the participant-cluster/site-stratified bootstrap workers. The startup, duration-part and fragment schedules retain the validated large-task-first/LPT-style ordering. BLAS/OpenMP inner threading remains limited to one thread by the server runner so these worker counts do not create nested parallelism.
 
 These values are production defaults, not per-run tuning suggestions. Environment overrides remain supported for a different machine or explicit troubleshooting. `RQ1_PART_COMPRESSION=gzip` is the speed-oriented default; `xz` remains available when storage is more constrained.

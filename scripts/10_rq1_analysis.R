@@ -711,8 +711,15 @@ rq1_rank_fragment <- function(part_path) {
     )
 }
 
-message("RQ1 relational preservation over ", length(part_paths), " canonical parts")
-rank_fragments <- map(part_paths, rq1_rank_fragment)
+message("RQ1 relational preservation over ", length(part_paths), " canonical parts; workers=", FRAGMENT_WORKERS)
+rank_schedule_idx <- order(as.numeric(file.info(part_paths)$size), decreasing = TRUE, na.last = TRUE)
+rank_fragments_scheduled <- ms_parallel_map(
+  part_paths[rank_schedule_idx], rq1_rank_fragment,
+  workers = FRAGMENT_WORKERS,
+  packages = c("tidyverse"),
+  exports = c("rank_group_vars", "RQ1_DIMENSIONS", "rq1_rank_fragment")
+)
+rank_fragments <- rank_fragments_scheduled[order(rank_schedule_idx)]
 rank_rows <- bind_rows(rank_fragments)
 if (!nrow(rank_rows)) stop("No rows available for RQ1 relational-preservation analysis")
 
