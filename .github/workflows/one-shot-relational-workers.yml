@@ -9,7 +9,6 @@ permissions:
 
 jobs:
   update:
-    if: github.event.head_commit.message == 'Add one-shot relational worker updater'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,32 +18,19 @@ jobs:
       - name: Cap relational preservation workers at 24
         shell: bash
         run: |
+          set -euo pipefail
           python - <<'PY'
           from pathlib import Path
 
           p = Path('scripts/10_rq1_analysis.R')
           s = p.read_text()
-          old = '''STARTUP_WORKERS <- ms_resolve_workers("RQ1_STARTUP_WORKERS", default = 36L, cap = 48L)
-FRAGMENT_WORKERS <- ms_resolve_workers("RQ1_FRAGMENT_WORKERS", default = 36L, cap = 48L)'''
-          new = '''STARTUP_WORKERS <- ms_resolve_workers("RQ1_STARTUP_WORKERS", default = 36L, cap = 48L)
-FRAGMENT_WORKERS <- ms_resolve_workers("RQ1_FRAGMENT_WORKERS", default = 36L, cap = 48L)
-# Relational preservation re-reads compressed canonical parts and returns paired
-# value vectors to the master process. Cap this I/O/memory-heavy scan below the
-# lighter summary-fragment stage on the production ECS.
-RELATIONAL_WORKERS <- min(24L, FRAGMENT_WORKERS)'''
+          old = 'STARTUP_WORKERS <- ms_resolve_workers("RQ1_STARTUP_WORKERS", default = 36L, cap = 48L)\nFRAGMENT_WORKERS <- ms_resolve_workers("RQ1_FRAGMENT_WORKERS", default = 36L, cap = 48L)'
+          new = 'STARTUP_WORKERS <- ms_resolve_workers("RQ1_STARTUP_WORKERS", default = 36L, cap = 48L)\nFRAGMENT_WORKERS <- ms_resolve_workers("RQ1_FRAGMENT_WORKERS", default = 36L, cap = 48L)\n# Relational preservation re-reads compressed canonical parts and returns paired\n# value vectors to the master process. Cap this I/O/memory-heavy scan below the\n# lighter summary-fragment stage on the production ECS.\nRELATIONAL_WORKERS <- min(24L, FRAGMENT_WORKERS)'
           if s.count(old) != 1:
               raise SystemExit('worker definition pattern mismatch')
           s = s.replace(old, new)
-          old2 = '''message("RQ1 relational preservation over ", length(part_paths), " canonical parts; workers=", FRAGMENT_WORKERS)
-rank_schedule_idx <- order(as.numeric(file.info(part_paths)$size), decreasing = TRUE, na.last = TRUE)
-rank_fragments_scheduled <- ms_parallel_map(
-  part_paths[rank_schedule_idx], rq1_rank_fragment,
-  workers = FRAGMENT_WORKERS,'''
-          new2 = '''message("RQ1 relational preservation over ", length(part_paths), " canonical parts; workers=", RELATIONAL_WORKERS)
-rank_schedule_idx <- order(as.numeric(file.info(part_paths)$size), decreasing = TRUE, na.last = TRUE)
-rank_fragments_scheduled <- ms_parallel_map(
-  part_paths[rank_schedule_idx], rq1_rank_fragment,
-  workers = RELATIONAL_WORKERS,'''
+          old2 = 'message("RQ1 relational preservation over ", length(part_paths), " canonical parts; workers=", FRAGMENT_WORKERS)\nrank_schedule_idx <- order(as.numeric(file.info(part_paths)$size), decreasing = TRUE, na.last = TRUE)\nrank_fragments_scheduled <- ms_parallel_map(\n  part_paths[rank_schedule_idx], rq1_rank_fragment,\n  workers = FRAGMENT_WORKERS,'
+          new2 = 'message("RQ1 relational preservation over ", length(part_paths), " canonical parts; workers=", RELATIONAL_WORKERS)\nrank_schedule_idx <- order(as.numeric(file.info(part_paths)$size), decreasing = TRUE, na.last = TRUE)\nrank_fragments_scheduled <- ms_parallel_map(\n  part_paths[rank_schedule_idx], rq1_rank_fragment,\n  workers = RELATIONAL_WORKERS,'
           if s.count(old2) != 1:
               raise SystemExit('relational scan pattern mismatch')
           p.write_text(s.replace(old2, new2))
@@ -58,7 +44,6 @@ rank_fragments_scheduled <- ms_parallel_map(
           p.write_text(s.replace(old, new))
           PY
 
-          Rscript --vanilla -e 'parse("scripts/10_rq1_analysis.R"); cat("RQ1 parse OK\n")'
           grep -F 'RELATIONAL_WORKERS <- min(24L, FRAGMENT_WORKERS)' scripts/10_rq1_analysis.R
           grep -F 'workers=", RELATIONAL_WORKERS' scripts/10_rq1_analysis.R
           git diff --check
@@ -66,6 +51,7 @@ rank_fragments_scheduled <- ms_parallel_map(
       - name: Commit and remove updater
         shell: bash
         run: |
+          set -euo pipefail
           rm -f .github/workflows/one-shot-relational-workers.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
