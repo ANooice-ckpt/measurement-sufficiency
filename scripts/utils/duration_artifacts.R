@@ -40,8 +40,6 @@ duration_isiv_from_context <- function(x, hour_cols) {
   # The context already stores exactly one hourly value per Date x hour.
   # Reproduce LightLogR's default (population-variance) IS/IV equations
   # directly, avoiding a pivot and two dplyr regroupings for every window.
-  # Missing hours are removed in the same order as LightLogR's na.rm=TRUE
-  # branch; the supplied hour columns retain the original chronological order.
   x <- x[order(x$Date), , drop = FALSE]
   hourly_matrix <- as.matrix(x[, hour_cols, drop = FALSE])
   hourly_values <- as.numeric(t(hourly_matrix))
@@ -81,28 +79,25 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
   isiv_meta <- metric_types |>
     dplyr::filter(metric %in% c("interdaily_stability", "intradaily_variability")) |>
     dplyr::mutate(metric_scope = "multiday", metric_geometry = "linear")
-  # The membership join is many-to-many by design.  Build one support/site
-  # block at a time so the intermediate join cannot exhaust local RAM.
+
+  # Duration parts are independent support x site blocks. Split the large inputs
+  # once, then build/checkpoint each block separately to bound memory use.
   block_keys <- windows |>
     dplyr::distinct(support_id, site) |>
     dplyr::arrange(support_id, site)
   block_token <- function(support_id, site) paste(support_id, site, sep = "\r")
-  # Split once by the immutable support/site facet.  Re-scanning the complete
-  # metric cube for every duration block is disproportionately expensive on
-  # both Windows PSOCK hosts and Linux workers.
   metric_blocks <- split(metric_cube, block_token(metric_cube$support_id, metric_cube$site))
   context_blocks <- split(unit_context, block_token(unit_context$support_id, unit_context$site))
   rm(metric_cube, unit_context)
   invisible(gc())
+
   build_block <- function(block_key) {
     support_value <- block_key$support_id[[1L]]
     site_value <- block_key$site[[1L]]
     key <- block_token(support_value, site_value)
     block_membership <- membership |>
       dplyr::filter(support_id == support_value, site == site_value)
-    if (!nrow(block_membership)) {
-      return(list(daily = tibble::tibble(), isiv = tibble::tibble()))
-    }
+    if (!nrow(block_membership)) return(list(daily = tibble::tibble(), isiv = tibble::tibble()))
 
     metric_block <- metric_blocks[[key]]
     context_block <- context_blocks[[key]]
@@ -163,6 +158,7 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
     }
     list(daily = daily_block, isiv = isiv_block)
   }
+
   finalize_part <- function(block) {
     raw <- dplyr::bind_rows(block$daily, block$isiv)
     if (!nrow(raw)) return(raw)
@@ -185,27 +181,25 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
     part_rows <- integer(nrow(block_keys))
     part_support <- character(nrow(block_keys))
     part_site <- character(nrow(block_keys))
-    for (i in seq_len(nrow(block_keys))) {
+
+    duration_workers <- suppressWarnings(as.integer(Sys.getenv("CORE_DURATION_WORKERS", unset = "1")))
+    if (!is.finite(duration_workers) || duration_workers < 1L) duration_workers <- 1L
+    detected_cores <- suppressWarnings(parallel::detectCores(logical = FALSE))
+    if (!is.finite(detected_cores) || detected_cores < 1L) detected_cores <- parallel::detectCores(logical = TRUE)
+    if (is.finite(detected_cores) && detected_cores > 0L) duration_workers <- min(duration_workers, detected_cores)
+    duration_workers <- min(duration_workers, nrow(block_keys))
+
+    build_part <- function(i) {
       part_name <- sprintf("duration_metric_cube_part_%03d.rds", i)
       part_path <- file.path(part_dir, part_name)
       part_marker <- paste0(part_path, ".ok")
       support_value <- as.character(block_keys$support_id[[i]])
       site_value <- as.character(block_keys$site[[i]])
       if (reuse_parts && file.exists(part_path)) {
-        # A completed RDS is accompanied by a tiny marker written only after
-        # the RDS has been closed.  This avoids reloading 100--500 MB parts
-        # merely to resume a run after a process interruption.  Older v3
-        # parts predate the marker; their versioned directory and substantial
-        # size are sufficient evidence for this one-time migration, while
-        # tiny/incomplete files are rebuilt.
         size_ok <- isTRUE(file.info(part_path)$size >= 5e6)
         marker_ok <- file.exists(part_marker)
         if (marker_ok || size_ok) {
-          part_paths[[i]] <- part_path
-          part_rows[[i]] <- NA_integer_
-          part_support[[i]] <- support_value
-          part_site[[i]] <- site_value
-          next
+          return(list(i = i, path = part_path, rows = NA_integer_, support = support_value, site = site_value))
         }
       }
       block <- build_block(block_keys[i, , drop = FALSE])
@@ -213,17 +207,44 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
       tmp_path <- paste0(part_path, ".tmp")
       if (file.exists(tmp_path)) unlink(tmp_path)
       saveRDS(part, tmp_path, compress = FALSE)
-      if (!file.rename(tmp_path, part_path)) {
-        stop("Could not atomically install duration checkpoint: ", part_path)
-      }
+      if (!file.rename(tmp_path, part_path)) stop("Could not atomically install duration checkpoint: ", part_path)
       writeLines("duration_complete_analysis_days_v1", part_marker, useBytes = TRUE)
-      part_paths[[i]] <- part_path
-      part_rows[[i]] <- nrow(part)
-      part_support[[i]] <- support_value
-      part_site[[i]] <- site_value
+      rows <- nrow(part)
       rm(block, part)
-      invisible(gc())
+      invisible(gc(FALSE))
+      list(i = i, path = part_path, rows = rows, support = support_value, site = site_value)
     }
+
+    # Largest blocks first reduces the long tail on high-core-count Linux hosts.
+    block_cost <- vapply(seq_len(nrow(block_keys)), function(i) {
+      support_value <- as.character(block_keys$support_id[[i]])
+      site_value <- as.character(block_keys$site[[i]])
+      key <- block_token(support_value, site_value)
+      metric_n <- if (is.null(metric_blocks[[key]])) 0 else nrow(metric_blocks[[key]])
+      context_n <- if (is.null(context_blocks[[key]])) 0 else nrow(context_blocks[[key]])
+      membership_n <- sum(membership$support_id == support_value & membership$site == site_value)
+      as.numeric(metric_n + context_n + 10 * membership_n)
+    }, numeric(1))
+    schedule_idx <- order(block_cost, decreasing = TRUE, na.last = TRUE)
+    message("[duration] LPT schedule: ", nrow(block_keys), " blocks; workers=", duration_workers)
+
+    if (.Platform$OS.type != "windows" && duration_workers > 1L) {
+      part_records_scheduled <- parallel::mclapply(
+        schedule_idx, build_part, mc.cores = duration_workers,
+        mc.preschedule = FALSE, mc.set.seed = FALSE
+      )
+    } else {
+      part_records_scheduled <- lapply(schedule_idx, build_part)
+    }
+    part_records <- part_records_scheduled[order(schedule_idx)]
+    for (rec in part_records) {
+      i <- rec$i
+      part_paths[[i]] <- rec$path
+      part_rows[[i]] <- rec$rows
+      part_support[[i]] <- rec$support
+      part_site[[i]] <- rec$site
+    }
+
     part_manifest <- tibble::tibble(
       part = basename(part_paths), part_dir = part_dir, rows = part_rows,
       support_id = part_support, site = part_site
@@ -234,7 +255,7 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
       artifact_type = "partitioned_duration_metric_cube",
       duration_artifact_version = "duration_complete_analysis_days_v1",
       part_dir = part_dir, parts = part_manifest$part,
-      part_manifest = part_manifest, rows = sum(part_manifest$rows)
+      part_manifest = part_manifest, rows = sum(part_manifest$rows, na.rm = TRUE)
     )
   } else {
     block_parts <- lapply(seq_len(nrow(block_keys)), function(i) {
