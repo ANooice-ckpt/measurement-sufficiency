@@ -133,7 +133,7 @@ robust_symmetric_display_window <- function(x, summary_values = numeric(), probs
   if (length(s)) half <- max(half, min(abs(stats::median(s, na.rm = TRUE)) * 3, max(abs(s), na.rm = TRUE) / 2), na.rm = TRUE)
   if (!is.finite(half) || half <= 0) half <- min_half
   half <- max(half, min_half)
-  if (length(hard_cap) && is.finite(hard_cap)) half <- min(half, hard_cap)
+  if (is.finite(hard_cap)) half <- min(half, hard_cap)
   half <- half * pad
   c(-half, half)
 }
@@ -239,7 +239,7 @@ family_boundaries <- predictor_order |>
 coef_window_global <- robust_symmetric_display_window(
   coef_metric$estimate,
   c(coef_summary$estimate_median, coef_summary$estimate_q25, coef_summary$estimate_q75),
-  probs = c(.08, .92), min_half = .02, pad = 1.06
+  probs = c(.05, .95), min_half = .025, pad = 1.10
 )
 coef_metric_global <- coef_metric |>
   mutate(estimate_plot = squish_to_limits(estimate, coef_window_global))
@@ -259,11 +259,36 @@ add_row_guides <- function(p) {
   } else p
 }
 
+# Predictor names are given their own narrow column. Keeping labels out of the
+# Overall panel recovers horizontal plotting area for the coefficient microplots.
+p_labels <- ggplot(predictor_order, aes(y = y)) +
+  geom_text(
+    aes(x = .955, label = label),
+    hjust = 1, size = 1.48, color = "#34383B"
+  ) +
+  geom_point(
+    aes(x = .995, color = predictor_family),
+    size = .72, alpha = .95
+  ) +
+  scale_color_manual(values = PREDICTOR_COLORS, drop = FALSE, guide = "none") +
+  scale_x_continuous(limits = c(0, 1), expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(limits = c(.5, nrow(predictor_order) + .5), expand = expansion(mult = c(0, 0))) +
+  labs(title = "Predictor", x = NULL, y = NULL) +
+  theme_void(base_family = MS_FONT) +
+  theme(
+    plot.title = element_text(size = 5.05, hjust = 1, face = "bold", margin = margin(b = 1.2)),
+    plot.margin = margin(1.5, .6, 1.5, .6)
+  )
+p_labels <- add_row_guides(p_labels)
+
 p_overall <- ggplot(
   predictor_order,
-  aes(overall_abs_plot, y, fill = predictor_family)
+  aes(fill = predictor_family)
 ) +
-  geom_col(width = .58, alpha = .90, na.rm = TRUE) +
+  geom_rect(
+    aes(xmin = 0, xmax = overall_abs_plot, ymin = y - .29, ymax = y + .29),
+    alpha = .90, na.rm = TRUE
+  ) +
   geom_point(
     data = predictor_order |> filter(overall_clipped),
     aes(x = overall_limit, y = y), inherit.aes = FALSE,
@@ -281,8 +306,6 @@ p_overall <- ggplot(
     expand = expansion(mult = c(0, .02))
   ) +
   scale_y_continuous(
-    breaks = predictor_axis$y,
-    labels = predictor_axis$label,
     limits = c(.5, nrow(predictor_order) + .5),
     expand = expansion(mult = c(0, 0))
   ) +
@@ -291,7 +314,7 @@ p_overall <- ggplot(
   theme(
     panel.grid = element_blank(),
     axis.line.y = element_blank(), axis.ticks.y = element_blank(),
-    axis.text.y = element_text(size = 4.25, colour = "#34383B", hjust = 1),
+    axis.text.y = element_blank(),
     axis.text.x = element_text(size = 4.25), axis.title.x = element_text(size = 4.55),
     plot.title = element_text(size = 5.35, hjust = .5, face = "bold", margin = margin(b = 1.2)),
     plot.margin = margin(1.5, 1.2, 1.5, 1.5)
@@ -310,12 +333,13 @@ p_spread <- ggplot(coef_metric_global, aes(estimate_plot, y, color = predictor_f
     breaks = scales::breaks_extended(n = 3)
   ) +
   scale_y_continuous(limits = c(.5, nrow(predictor_order) + .5), expand = expansion(mult = c(0, 0))) +
-  labs(title = "Task spread", x = "β", y = NULL) +
+  labs(title = "All tasks", x = "β", y = NULL) +
   theme_rq2(base_size = 5.35) +
   theme(
     panel.grid.major.y = element_blank(),
     axis.line.y = element_blank(), axis.ticks.y = element_blank(), axis.text.y = element_blank(),
-    axis.text.x = element_text(size = 4.05), axis.title.x = element_text(size = 4.4),
+    axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+    axis.title.x = element_text(size = 4.25),
     plot.title = element_text(size = 5.15, hjust = .5, face = "bold", margin = margin(b = 1.2)),
     plot.margin = margin(1.5, .6, 1.5, .6)
   )
@@ -348,7 +372,7 @@ make_coef_dimension <- function(dim_name) {
   dim_window <- robust_symmetric_display_window(
     raw$estimate,
     c(sm$estimate_median, sm$estimate_q25, sm$estimate_q75),
-    probs = c(.08, .92), min_half = .015, pad = 1.05
+    probs = c(.05, .95), min_half = .020, pad = 1.10
   )
   raw <- raw |> mutate(estimate_plot = squish_to_limits(estimate, dim_window))
   sm <- sm |>
@@ -434,10 +458,10 @@ predictor_legend_plot <- ggplot(
 predictor_legend <- cowplot::get_legend(predictor_legend_plot)
 
 p2a_core <- cowplot::plot_grid(
-  p_overall, p_spread,
+  p_labels, p_overall, p_spread,
   coef_dim_plots[[1]], coef_dim_plots[[2]], coef_dim_plots[[3]], coef_dim_plots[[4]],
-  ncol = 6,
-  rel_widths = c(.305, .125, .1425, .1425, .1425, .1425),
+  ncol = 7,
+  rel_widths = c(.18, .08, .06, .17, .17, .17, .17),
   align = "hv", axis = "tb", greedy = TRUE
 )
 p2a_body <- cowplot::plot_grid(
@@ -526,8 +550,6 @@ make_conditional_state_block <- function(dim_name) {
   )
 
   p_mag <- ggplot() +
-    # Keep the pairwise trajectory information, but demote it strongly so the
-    # large blank line segments no longer dominate the visual field.
     geom_line(
       data = tr,
       aes(x_pos, A_state, group = interaction(metric, comparison_pair_id), color = metric_class),
@@ -835,12 +857,12 @@ right_column <- cowplot::plot_grid(
 )
 p2 <- cowplot::plot_grid(
   p2a, right_column,
-  ncol = 2, rel_widths = c(.62, .38),
+  ncol = 2, rel_widths = c(.63, .37),
   align = "hv", axis = "tb", greedy = TRUE
 )
 
-ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.pdf"), 9.2, 7.25)
-ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.png"), 9.2, 7.25)
+ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.pdf"), 8.4, 6.45)
+ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.png"), 8.4, 6.45)
 
 # Diagnostics make the figure fully auditable and document the complete predictor
 # set instead of the former representative subset.
