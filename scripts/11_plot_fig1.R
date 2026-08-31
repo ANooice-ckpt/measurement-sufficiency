@@ -26,10 +26,12 @@ source("scripts/utils/figure_style.R")
 source("scripts/utils/figure_atlas.R")
 source("scripts/utils/plot_contracts.R")
 
-# Fig. 1 uses a compact distribution-led grammar. Metric-level observations are
-# visible, but the foreground is always a class-level location/interval summary.
-# The four measurement dimensions are never connected as if they formed one
-# continuous axis; ordered local transitions are shown as distribution strips.
+# Fig. 1 is the RQ1 overview. The main-text grammar separates three questions:
+# (a) absolute versus relational preservation across all measurement dimensions,
+# (b) signed-versus-absolute geometry for target-alignment facets, and
+# (c) where local response accrues along ordered burden axes.
+# Display windows may robustly clip a few raw metric points, but all foreground
+# summaries remain computed from the complete frozen RQ1 artifacts.
 SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
 AVAILABILITY_CSV <- file.path("results", "rq1", "rq1_metric_availability.csv")
 LOCAL_CSV <- file.path("results", "rq1", "rq1_local_transition_summary.csv")
@@ -49,9 +51,10 @@ DIM_TITLES <- c(
   temporal = "Temporal resolution", duration = "Monitoring duration"
 )
 METRIC_CLASSES <- MS_METRIC_CLASSES
-FIG1_PANEL_TITLE_SIZE <- 7.6
-FIG1_SUBPANEL_TITLE_SIZE <- 6.5
+FIG1_PANEL_TITLE_SIZE <- 8.0
+FIG1_SUBPANEL_TITLE_SIZE <- 7.0
 TEMPORAL_TRANSITION_ORDER <- ms_temporal_transition_labels()
+NUMERIC_TOL <- 1e-12
 
 summary <- readr::read_csv(SUMMARY_CSV, show_col_types = FALSE, progress = FALSE)
 availability <- readr::read_csv(AVAILABILITY_CSV, show_col_types = FALSE, progress = FALSE)
@@ -59,6 +62,7 @@ local <- readr::read_csv(LOCAL_CSV, show_col_types = FALSE, progress = FALSE)
 dimension_metric <- readr::read_csv(RANK_METRIC_CSV, show_col_types = FALSE, progress = FALSE)
 dimension_summary <- readr::read_csv(RANK_SUMMARY_CSV, show_col_types = FALSE, progress = FALSE)
 dimension_assoc <- readr::read_csv(RANK_ASSOC_CSV, show_col_types = FALSE, progress = FALSE)
+
 ms_plot_require_columns(
   summary,
   c("core_artifact_version", "rq1_analysis_version", "dimension", "comparison_lattice",
@@ -79,7 +83,6 @@ ms_plot_require_columns(
     "orientation_type", "orientation_basis", "G", "A", "B"),
   "rq1_local_transition_summary.csv"
 )
-
 ms_plot_require_columns(
   dimension_metric,
   c("core_artifact_version", "rq1_analysis_version", "dimension", "metric", "metric_class",
@@ -114,11 +117,17 @@ if (!grepl(ms_analysis_design_id(), RQ1_VERSION, fixed = TRUE)) {
   stop("Fig. 1 inputs do not match the current frozen analysis design", call. = FALSE)
 }
 
-pretty_transition <- function(x) {
-  stringr::str_replace_all(as.character(x), "\\s+to\\s+", " to ")
+safe_q <- function(x, p) {
+  x <- as.numeric(x)
+  x <- x[is.finite(x)]
+  if (length(x)) unname(stats::quantile(x, p, names = FALSE, type = 8)) else NA_real_
 }
 
-theme_fig1 <- function(base_size = 6.8, legend_position = "none") {
+pretty_transition <- function(x) {
+  stringr::str_replace_all(as.character(x), "\\s+to\\s+", " → ")
+}
+
+theme_fig1 <- function(base_size = 7.1, legend_position = "none") {
   theme_ms_axes(
     base_size = base_size,
     legend_position = legend_position,
@@ -159,8 +168,6 @@ availability_plot <- availability |> mutate(dimension = as.character(dimension))
 # -----------------------------------------------------------------------------
 # a. Absolute versus relational preservation across measurement dimensions
 # -----------------------------------------------------------------------------
-# All statistical quantities below are frozen RQ1 outputs. The plotter only
-# applies display labels/factors and graphical scales.
 dimension_metric <- dimension_metric |>
   mutate(
     dimension = factor(dimension, levels = DIMENSIONS, labels = unname(DIM_TITLES[DIMENSIONS])),
@@ -174,61 +181,81 @@ dimension_summary <- dimension_summary |>
 dimension_assoc <- dimension_assoc |>
   mutate(
     dimension = factor(dimension, levels = DIMENSIONS, labels = unname(DIM_TITLES[DIMENSIONS])),
-    label = if_else(is.finite(rho_A_rank), sprintf("ρ = %.2f", rho_A_rank), "ρ = NA")
+    label = if_else(is.finite(rho_A_rank), sprintf("rₛ = %.2f", rho_A_rank), "rₛ = NA")
   )
 if (!nrow(dimension_summary)) stop("No non-circular RQ1 rows available for Fig. 1a")
 
+# Preserve one common linear A scale so cross-dimension magnitude remains
+# directly comparable. A few extreme raw metrics are clipped only for display;
+# class medians/IQRs are always calculated from all metrics.
+a_core_limit <- safe_q(dimension_metric$A_typical, .98)
+a_summary_limit <- max(dimension_summary$A_q75, na.rm = TRUE)
+a_display_limit <- max(c(.30, a_core_limit, a_summary_limit), na.rm = TRUE) * 1.06
+if (!is.finite(a_display_limit) || a_display_limit <= 0) a_display_limit <- 1
 rank_loss_limit <- max(.05, max(dimension_metric$rank_loss_typical, na.rm = TRUE) * 1.06)
-p1a <- ggplot(dimension_metric, aes(A_typical, rank_loss_typical, color = metric_class)) +
+
+dimension_metric_main <- dimension_metric |>
+  filter(is.finite(A_typical), A_typical <= a_display_limit + NUMERIC_TOL)
+dimension_metric_off <- dimension_metric |>
+  filter(is.finite(A_typical), A_typical > a_display_limit + NUMERIC_TOL) |>
+  mutate(A_display = a_display_limit * .985)
+
+p1a <- ggplot(dimension_metric_main, aes(A_typical, rank_loss_typical, color = metric_class)) +
   geom_hline(yintercept = 0, linewidth = .24, color = "#D7DADD") +
-  geom_point(size = .68, alpha = .30) +
-  geom_segment(
-    data = dimension_summary,
-    aes(x = A_q25, xend = A_q75, y = rank_loss_median, yend = rank_loss_median, color = metric_class),
-    inherit.aes = FALSE, linewidth = .78, alpha = .45, lineend = "round"
+  geom_point(size = .78, alpha = .34) +
+  geom_point(
+    data = dimension_metric_off,
+    aes(A_display, rank_loss_typical, color = metric_class),
+    inherit.aes = FALSE, shape = 4, size = 1.15, stroke = .35, alpha = .88
   ) +
   geom_segment(
     data = dimension_summary,
-    aes(x = A_median, xend = A_median, y = rank_loss_q25, yend = rank_loss_q75, color = metric_class),
-    inherit.aes = FALSE, linewidth = .78, alpha = .45, lineend = "round"
+    aes(x = A_q25, xend = pmin(A_q75, a_display_limit),
+        y = rank_loss_median, yend = rank_loss_median, color = metric_class),
+    inherit.aes = FALSE, linewidth = .86, alpha = .48, lineend = "round"
+  ) +
+  geom_segment(
+    data = dimension_summary,
+    aes(x = pmin(A_median, a_display_limit), xend = pmin(A_median, a_display_limit),
+        y = rank_loss_q25, yend = rank_loss_q75, color = metric_class),
+    inherit.aes = FALSE, linewidth = .86, alpha = .48, lineend = "round"
   ) +
   geom_point(
     data = dimension_summary,
-    aes(A_median, rank_loss_median, color = metric_class),
-    inherit.aes = FALSE, shape = 18, size = 1.85, alpha = .98
+    aes(pmin(A_median, a_display_limit), rank_loss_median, color = metric_class),
+    inherit.aes = FALSE, shape = 18, size = 2.0, alpha = .98
   ) +
   geom_text(
     data = dimension_assoc,
     aes(x = Inf, y = Inf, label = label),
-    inherit.aes = FALSE, hjust = 1.08, vjust = 1.25,
-    size = 1.75, colour = "#666A6D"
+    inherit.aes = FALSE, hjust = 1.08, vjust = 1.22,
+    size = 2.05, colour = "#666A6D"
   ) +
   facet_grid(. ~ dimension) +
   scale_color_ms_metric(guide = "none") +
   scale_x_continuous(
-    trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4),
-    expand = expansion(mult = c(.02, .03))
+    limits = c(0, a_display_limit),
+    breaks = scales::breaks_extended(n = 4),
+    expand = expansion(mult = c(0, .02))
   ) +
   scale_y_continuous(
     limits = c(0, rank_loss_limit), breaks = scales::breaks_extended(n = 4),
     expand = expansion(mult = c(0, .03))
   ) +
   labs(
-    title = "a  Absolute and relational preservation under configuration change",
-    subtitle = "metric points; diamonds = class medians; bars = IQR · facet ρ = metric-level A–rank-loss association",
-    x = "typical absolute distortion A", y = "typical rank loss  1 − Spearman ρ"
+    title = "a  Absolute and relational preservation",
+    x = "Absolute distortion, A", y = "Rank loss, 1 − Spearman ρ"
   ) +
-  theme_fig1(base_size = 6.65) +
+  theme_fig1(base_size = 7.15) +
   theme(
     panel.grid.major = element_blank(),
     strip.text.x = element_text(size = FIG1_SUBPANEL_TITLE_SIZE, hjust = .5),
-    panel.spacing.x = grid::unit(2.4, "mm"),
-    plot.subtitle = element_text(size = 4.85, colour = "#666A6D", margin = margin(t = -1, b = 1)),
-    plot.margin = margin(2, 3, 2, 5)
+    panel.spacing.x = grid::unit(2.7, "mm"),
+    plot.margin = margin(2, 3, 2, 4)
   )
 
 # -----------------------------------------------------------------------------
-# Supplementary complete metric-level atlas retained unchanged in meaning
+# Supplementary complete metric-level atlas
 # -----------------------------------------------------------------------------
 atlas <- summary_plot |> filter(is.finite(A_mean_absolute), is.finite(B_mean_signed))
 atlas_bg <- availability_plot
@@ -260,10 +287,12 @@ readr::write_csv(
 )
 
 # -----------------------------------------------------------------------------
-# b. Target-aligned signed-vs-absolute distortion geometry
+# b. Target-aligned signed-versus-absolute distortion geometry
 # -----------------------------------------------------------------------------
-# Placement and optical geometry share one linear scale because A and B have the
-# same standardized units and obey the common feasible geometry |B| <= A.
+# The V-shaped |B| <= A geometry is retained because A and B have the same
+# standardized units. Placement and optical panels share one robust display
+# window; off-scale raw metrics are marked at the boundary rather than allowed
+# to compress the entire optical panel.
 target_geometry <- summary |>
   filter(
     dimension %in% c("placement", "optical"),
@@ -271,39 +300,45 @@ target_geometry <- summary |>
   ) |>
   transmute(
     dimension = as.character(dimension), metric, metric_class,
-    A_mean_absolute, B_mean_signed, transition = pair_label,
-    A_boot_q025, A_boot_q975, B_boot_q025, B_boot_q975,
+    A_mean_absolute, B_mean_signed,
+    transition = pretty_transition(pair_label),
     facet_label = case_when(
-      dimension == "placement" ~ "Placement | Chest/Wrist to Eye",
-      dimension == "optical" ~ "Optical | LIGHT to MEDI",
+      dimension == "placement" ~ "Placement · chest/wrist → eye",
+      dimension == "optical" ~ "Optical representation · LIGHT → MEDI",
       TRUE ~ dimension
     )
   ) |>
   mutate(
     facet_label = factor(
       facet_label,
-      levels = c("Placement | Chest/Wrist to Eye", "Optical | LIGHT to MEDI")
+      levels = c("Placement · chest/wrist → eye", "Optical representation · LIGHT → MEDI")
     ),
     metric_class = factor(metric_class, levels = METRIC_CLASSES)
   )
 if (!nrow(target_geometry)) stop("No target-aligned rows available for Fig. 1b")
 
-target_ci <- target_geometry |>
-  filter(
-    is.finite(A_boot_q025), is.finite(A_boot_q975),
-    is.finite(B_boot_q025), is.finite(B_boot_q975)
+target_limit <- safe_q(c(target_geometry$A_mean_absolute, abs(target_geometry$B_mean_signed)), .98)
+target_limit <- max(.30, target_limit, na.rm = TRUE) * 1.08
+if (!is.finite(target_limit) || target_limit <= 0) target_limit <- 1
+
+target_geometry <- target_geometry |>
+  mutate(
+    offscale = A_mean_absolute > target_limit + NUMERIC_TOL |
+      abs(B_mean_signed) > target_limit + NUMERIC_TOL,
+    A_display = pmin(A_mean_absolute, target_limit * .975),
+    B_display = pmax(-target_limit * .975, pmin(B_mean_signed, target_limit * .975))
   )
+
 target_label_max_a <- target_geometry |>
   group_by(facet_label, metric) |>
   slice_max(A_mean_absolute, n = 1, with_ties = FALSE) |>
   ungroup() |>
   group_by(facet_label) |>
   slice_max(A_mean_absolute, n = 1, with_ties = FALSE) |>
-  ungroup() |>
-  mutate(label_role = "max A")
+  ungroup()
 target_label_coherent <- target_geometry |>
   mutate(direction_coherence = if_else(
-    is.finite(A_mean_absolute) & A_mean_absolute > 0,
+    A_mean_absolute > NUMERIC_TOL,
     abs(B_mean_signed) / A_mean_absolute, NA_real_
   )) |>
   filter(is.finite(direction_coherence)) |>
@@ -312,82 +347,64 @@ target_label_coherent <- target_geometry |>
   ungroup() |>
   group_by(facet_label) |>
   slice_max(direction_coherence, n = 1, with_ties = FALSE) |>
-  ungroup() |>
-  mutate(label_role = "max |B|/A")
-target_labels <- bind_rows(target_label_max_a, target_label_coherent) |>
-  group_by(facet_label, metric) |>
-  mutate(label_role = paste(unique(label_role), collapse = " + ")) |>
-  slice_head(n = 1) |>
   ungroup()
-target_limit <- ms_symmetric_limit(
-  target_geometry$A_mean_absolute, target_geometry$B_mean_signed,
-  target_ci$A_boot_q025, target_ci$A_boot_q975,
-  target_ci$B_boot_q025, target_ci$B_boot_q975,
-  pad = 1.04
-)
+target_labels <- bind_rows(target_label_max_a, target_label_coherent) |>
+  distinct(facet_label, metric, .keep_all = TRUE)
 
-p1b <- ggplot(target_geometry, aes(B_mean_signed, A_mean_absolute, color = metric_class)) +
-  geom_vline(xintercept = 0, linewidth = .24, color = "#D7DADD") +
+p1b <- ggplot() +
+  geom_vline(xintercept = 0, linewidth = .25, color = "#D7DADD") +
   geom_abline(
     slope = c(-1, 1), intercept = 0, linetype = 2,
-    linewidth = .27, color = "#9BA0A3"
+    linewidth = .30, color = "#9BA0A3"
   ) +
-  geom_segment(
-    data = target_ci,
-    aes(
-      x = B_boot_q025, xend = B_boot_q975,
-      y = A_mean_absolute, yend = A_mean_absolute
-    ),
-    inherit.aes = FALSE, alpha = .10, linewidth = .20, color = "#8E9396"
+  geom_point(
+    data = target_geometry |> filter(!offscale),
+    aes(B_display, A_display, color = metric_class, shape = transition),
+    size = 1.25, alpha = .82
   ) +
-  geom_segment(
-    data = target_ci,
-    aes(
-      x = B_mean_signed, xend = B_mean_signed,
-      y = A_boot_q025, yend = A_boot_q975
-    ),
-    inherit.aes = FALSE, alpha = .10, linewidth = .20, color = "#8E9396"
+  geom_point(
+    data = target_geometry |> filter(offscale),
+    aes(B_display, A_display),
+    inherit.aes = FALSE, shape = 4, size = 1.50, stroke = .42, color = "#303437"
   ) +
-  geom_point(aes(shape = transition), size = 1.28, alpha = .84) +
   geom_text(
     data = target_labels,
-    aes(B_mean_signed, A_mean_absolute, label = paste0(metric, " · ", label_role)),
-    inherit.aes = FALSE, size = 1.70, color = "#303030",
-    check_overlap = TRUE, vjust = -.60
+    aes(B_display, A_display, label = metric),
+    inherit.aes = FALSE, size = 1.85, color = "#303030",
+    check_overlap = TRUE, vjust = -.62
   ) +
-  facet_wrap(~facet_label, nrow = 1) +
+  facet_wrap(~facet_label, ncol = 1) +
   scale_color_ms_metric(guide = "none") +
+  scale_shape_discrete(name = NULL) +
   scale_x_continuous(
     limits = c(-target_limit, target_limit),
-    breaks = scales::breaks_extended(n = 6),
+    breaks = scales::breaks_extended(n = 5),
     expand = expansion(mult = c(.02, .02))
   ) +
   scale_y_continuous(
     limits = c(0, target_limit),
-    breaks = scales::breaks_extended(n = 6),
-    expand = expansion(mult = c(0, .02))
+    breaks = scales::breaks_extended(n = 4),
+    expand = expansion(mult = c(0, .03))
   ) +
   coord_fixed(ratio = 1, clip = "off") +
   labs(
-    title = "b  Directionality and magnitude of target-aligned distortion",
-    x = "B: mean signed change", y = "A: mean absolute change"
+    title = "b  Target-aligned distortion geometry",
+    x = "Signed distortion, B", y = "Absolute distortion, A"
   ) +
-  theme_fig1(base_size = 6.7) +
+  theme_fig1(base_size = 7.05, legend_position = "bottom") +
   theme(
     panel.grid.major = element_blank(),
     strip.text.x = element_text(size = FIG1_SUBPANEL_TITLE_SIZE, hjust = .5),
-    panel.spacing.x = grid::unit(2.6, "mm"),
-    # Pull the plotting field left so its vertical axis shares panel a's
-    # first-axis endpoint; the tick labels remain inside the page gutter.
-    plot.margin = margin(2, 3, 2, -20)
+    panel.spacing.y = grid::unit(2.2, "mm"),
+    legend.text = element_text(size = 5.1),
+    legend.key.width = grid::unit(3.2, "mm"),
+    legend.spacing.x = grid::unit(.6, "mm"),
+    plot.margin = margin(2, 4, 2, 4)
   )
 
 # -----------------------------------------------------------------------------
-# c-d. Distribution of where ordered-axis distortion accrues
+# c. Where local response accrues along ordered measurement-burden axes
 # -----------------------------------------------------------------------------
-# Each metric is normalized over its adjacent steps. Unlike a trajectory plot,
-# the horizontal strips do not imply smoothness; they show the full metric-level
-# distribution together with class medians and IQRs at every transition.
 local_display <- local |>
   mutate(
     dimension = as.character(dimension),
@@ -401,12 +418,12 @@ local_display <- local |>
     ),
     transition = if_else(
       dimension == "duration",
-      paste0(from_days, " d to ", to_days, " d"),
-      paste(lower_level, "to", higher_level)
+      paste0(from_days, " d → ", to_days, " d"),
+      pretty_transition(paste(lower_level, "to", higher_level))
     ),
     step_order = case_when(
       dimension == "duration" ~ as.numeric(from_days),
-      dimension == "temporal" ~ match(transition, TEMPORAL_TRANSITION_ORDER),
+      dimension == "temporal" ~ match(transition, pretty_transition(TEMPORAL_TRANSITION_ORDER)),
       TRUE ~ NA_real_
     )
   ) |>
@@ -444,6 +461,16 @@ local_summary <- local_display |>
     y_summary = step_order + row_offset
   )
 
+local_overall <- local_display |>
+  group_by(dimension, transition, step_order) |>
+  summarise(
+    n_metrics = n_distinct(metric),
+    share_median = median(G_share, na.rm = TRUE),
+    share_q25 = quantile(G_share, .25, na.rm = TRUE, names = FALSE),
+    share_q75 = quantile(G_share, .75, na.rm = TRUE, names = FALSE),
+    .groups = "drop"
+  )
+
 readr::write_csv(
   local_summary |>
     mutate(metric_class = as.character(metric_class)) |>
@@ -453,27 +480,34 @@ readr::write_csv(
     ),
   file.path("results", "rq1", "fig1_local_response_aggregated.csv"), na = ""
 )
+readr::write_csv(
+  local_overall,
+  file.path("results", "rq1", "fig1_local_response_overall.csv"), na = ""
+)
 
-local_distribution_panel <- function(dim, subpanel_title = DIM_TITLES[[dim]]) {
+local_xmax <- max(c(local_summary$share_q75, local_summary$share_median,
+                    local_overall$share_q75, local_overall$share_median), na.rm = TRUE) * 1.15
+local_xmax <- min(1, max(.40, local_xmax))
+
+local_distribution_panel <- function(dim, subpanel_title = DIM_TITLES[[dim]], show_x_title = TRUE) {
   d <- local_display |> filter(dimension == dim)
   ds <- local_summary |> filter(dimension == dim)
-  if (!nrow(d) || !nrow(ds)) stop("No local response rows for Fig. 1 dimension: ", dim)
+  do <- local_overall |> filter(dimension == dim)
+  if (!nrow(d) || !nrow(ds) || !nrow(do)) stop("No local response rows for Fig. 1 dimension: ", dim)
 
   labels <- d |> distinct(step_order, transition) |> arrange(step_order)
   equal_share <- 1 / n_distinct(labels$transition)
-  xmax <- max(ds$share_q75, ds$share_median, na.rm = TRUE) * 1.18
-  xmax <- min(1, max(.32, xmax))
 
   ggplot() +
     geom_vline(
       xintercept = equal_share, linetype = 3,
-      linewidth = .28, color = "#A9AEB1"
+      linewidth = .30, color = "#A9AEB1"
     ) +
     geom_point(
       data = d,
       aes(G_share, y_point, color = metric_class),
       position = position_jitter(width = 0, height = .025, seed = 73),
-      size = .48, alpha = .18
+      size = .56, alpha = .22
     ) +
     geom_segment(
       data = ds,
@@ -481,34 +515,47 @@ local_distribution_panel <- function(dim, subpanel_title = DIM_TITLES[[dim]]) {
         x = share_q25, xend = share_q75,
         y = y_summary, yend = y_summary, color = metric_class
       ),
-      linewidth = .74, alpha = .47, lineend = "round"
+      linewidth = .78, alpha = .48, lineend = "round"
     ) +
     geom_point(
       data = ds,
       aes(share_median, y_summary, color = metric_class),
-      shape = 18, size = 1.48, alpha = .98
+      shape = 18, size = 1.55, alpha = .98
+    ) +
+    geom_segment(
+      data = do,
+      aes(x = share_q25, xend = share_q75, y = step_order, yend = step_order),
+      inherit.aes = FALSE, linewidth = .52, color = "#4D5255", alpha = .78,
+      lineend = "round"
+    ) +
+    geom_point(
+      data = do,
+      aes(share_median, step_order),
+      inherit.aes = FALSE, shape = 23, size = 1.65,
+      stroke = .38, fill = "white", color = "#34383A"
     ) +
     scale_color_ms_metric(guide = "none") +
     scale_x_continuous(
-      limits = c(0, xmax),
+      limits = c(0, local_xmax),
       labels = scales::label_percent(accuracy = 1),
-      breaks = scales::breaks_extended(n = 4),
-      expand = expansion(mult = c(.01, .03))
+      breaks = scales::breaks_extended(n = 5),
+      expand = expansion(mult = c(.01, .02))
     ) +
     scale_y_reverse(
       breaks = labels$step_order,
-      labels = pretty_transition(labels$transition),
+      labels = labels$transition,
       expand = expansion(add = c(.38, .38))
     ) +
     labs(
       title = subpanel_title,
-      x = "share of local response", y = NULL
+      x = if (show_x_title) "Share of cumulative local response" else NULL,
+      y = NULL
     ) +
-    theme_fig1(base_size = 6.55) +
+    theme_fig1(base_size = 7.0) +
     theme(
       panel.grid.major.y = element_blank(),
       axis.line.y = element_blank(), axis.ticks.y = element_blank(),
-      axis.text.y = element_text(size = 5.35),
+      axis.text.y = element_text(size = 5.8),
       plot.title = element_text(
         size = FIG1_SUBPANEL_TITLE_SIZE, face = "bold", hjust = .5,
         margin = margin(b = 2)
@@ -517,55 +564,45 @@ local_distribution_panel <- function(dim, subpanel_title = DIM_TITLES[[dim]]) {
     )
 }
 
-p1c <- local_distribution_panel("temporal", "Temporal resolution") +
-  theme(
-    axis.title.x = element_blank(),
-    # Match the title baseline to panel b while preserving the equal c/d rows.
-    plot.margin = margin(12, 3, .5, 3)
-  )
-p1d <- local_distribution_panel("duration", "Monitoring duration") +
-  theme(
-    plot.margin = margin(.5, 3, .5, 3)
-  )
+p1c_temporal <- local_distribution_panel("temporal", "Temporal resolution", show_x_title = FALSE)
+p1c_duration <- local_distribution_panel("duration", "Monitoring duration", show_x_title = TRUE)
 
-# One compact legend governs the main figure. Panel a also labels every class,
-# so the legend is a cross-panel color key rather than the only class identifier.
-metric_legend <- ms_metric_legend(text_size = 5.45, point_size = 1.55, key_width_mm = 3.4)
+metric_legend <- ms_metric_legend(text_size = 6.05, point_size = 1.7, key_width_mm = 3.8)
 
-# Asymmetric composition: the distribution atlas is a compact header; the A/B
-# geometry occupies the main lower-left field; ordered-axis distributions form a
-# dense diagnostic column at right. This avoids equal-size dashboard panels.
-panel_c_spacer <- cowplot::ggdraw()
-right_column_core <- cowplot::plot_grid(
-  panel_c_spacer, p1c, p1d, ncol = 1, rel_heights = c(.14, 1.05, .95),
-  align = "v", axis = "l", greedy = TRUE
+right_core <- cowplot::plot_grid(
+  p1c_temporal, p1c_duration,
+  ncol = 1, rel_heights = c(1, 1),
+  align = "v", axis = "lr", greedy = TRUE
 )
 right_column <- cowplot::ggdraw() +
-  # A tiny common downward nudge closes the remaining raster-pixel gap
-  # between the c-top/d-bottom frames and panel b's corresponding edges.
-  cowplot::draw_plot(right_column_core, x = 0, y = -.004, width = 1, height = 1) +
+  cowplot::draw_plot(right_core, x = 0, y = 0, width = 1, height = .955) +
   cowplot::draw_label(
-    "c  Ordered-axis local response · dotted = equal share",
-    x = 0, y = .92, hjust = 0, vjust = .5,
+    "c  Where ordered-axis distortion accrues",
+    x = .002, y = .998, hjust = 0, vjust = 1,
     size = FIG1_PANEL_TITLE_SIZE, fontface = "bold",
     colour = "#151515", fontfamily = MS_FONT
   )
+
 lower <- cowplot::plot_grid(
-  p1b, right_column, ncol = 2, rel_widths = c(1.43, .87),
-  # Expand the right column around the lower-row center so its actual upper
-  # and lower plotting-frame boundaries track panel b together.
-  align = "h", axis = "b", greedy = TRUE, scale = c(1, 1.134)
+  p1b, right_column,
+  ncol = 2, rel_widths = c(1, 1),
+  align = "hv", axis = "tblr", greedy = TRUE
 )
 fig1body <- cowplot::plot_grid(
-  p1a, lower, ncol = 1, rel_heights = c(.82, 1.52),
+  p1a, lower,
+  ncol = 1, rel_heights = c(.78, 1.42),
   align = "v", axis = "l", greedy = TRUE
 )
 fig1 <- cowplot::plot_grid(
-  metric_legend, fig1body, ncol = 1,
-  rel_heights = c(.040, 1), align = "v", greedy = TRUE
+  metric_legend, fig1body,
+  ncol = 1, rel_heights = c(.045, 1),
+  align = "v", axis = "l", greedy = TRUE
 )
-ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.pdf"), 8.6, 5.7)
-ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.png"), 8.6, 5.7)
+
+# Save at intended full-width print size rather than oversizing and relying on
+# downstream shrinkage; this protects final text size and line weights.
+ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.pdf"), 7.2, 6.35)
+ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.png"), 7.2, 6.35)
 
 # -----------------------------------------------------------------------------
 # Supplementary figures
@@ -640,4 +677,4 @@ ms_plot_write_manifest(
     rq3_analysis_version = NA_character_
   )
 )
-message("Fig. 1 complete: level-versus-rank preservation, A/B geometry, and local-response distribution strips; full metric atlas retained as supplement.")
+message("Fig. 1 complete: robust shared preservation scales, target-aligned A/B geometry, and ordered-axis local-response distributions.")
