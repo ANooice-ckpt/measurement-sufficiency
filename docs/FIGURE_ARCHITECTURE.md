@@ -50,6 +50,37 @@ not regenerate or overwrite Fig. 1–5; only its `FigS_*` blocks produce figures
 The retired combined plotting entrypoints `13_plot_rq2.R` and
 `15_plot_rq3.R` are no longer part of the repository or canonical run graph.
 
+## Main-figure visual composition contract
+
+Fig. 2 and Fig. 4 define the current manuscript house style. The final export
+pass in `scripts/utils/figure_polish.R` is strictly visual: it receives already
+constructed panel objects and may change only composition, spacing, typography,
+legend spacing and export dimensions. It cannot alter data, statistics, scales,
+metric definitions, availability, model results or scientific estimands.
+
+Across Fig. 1–5:
+
+- panel labels and titles are left aligned, bold and placed at one consistent
+  visual hierarchy; explanatory subtitles use one smaller neutral-grey level;
+- metric-class color remains defined only by `MS_METRIC_COLORS`; neutral raw
+  observations, reference guides and overall summaries remain visually
+  subordinate to the class-level foreground;
+- linetype is used only where it carries a categorical distinction already
+  defined by the figure (for example chest versus wrist), rather than as
+  decoration;
+- nested layouts must form an approximately rectangular outer footprint: a
+  full-width panel above a two-panel row shares the same left/right outer edges,
+  and a full-width lower panel shares the same outer edges as the row above;
+- subplot spacing is controlled at the composition level instead of by adding
+  arbitrary whitespace inside individual plotting panels;
+- Fig. 1 is exported as one full-width panel above two aligned lower panels;
+  Fig. 3 uses the same full-width-above-two structure; Fig. 4 retains that
+  reference structure; Fig. 5 retains two upper panels above one full-width
+  lower panel, with extra width assigned to the multi-facet upper-right panel;
+- Fig. 2 retains its established asymmetric predictor-atlas/reference layout and
+  acts as the second visual reference rather than being forced into a symmetric
+  grid.
+
 ## Frozen inputs and output locations
 
 The plot scripts read only frozen RQ outputs. Figure-level display summaries may
