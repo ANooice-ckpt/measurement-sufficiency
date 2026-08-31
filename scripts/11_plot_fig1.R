@@ -33,6 +33,8 @@ RANK_METRIC_CSV <- file.path("results", "rq1", "rq1_relational_preservation_dime
 RANK_SUMMARY_CSV <- file.path("results", "rq1", "rq1_relational_preservation_dimension_summary.csv")
 RANK_ASSOC_CSV <- file.path("results", "rq1", "rq1_distortion_rank_association.csv")
 OUT_DIR <- file.path("results", "rq1", "figures")
+FIG1_WIDTH_IN <- 7.2
+FIG1_HEIGHT_IN <- 3.325  # half of the previous 6.65-in production height
 ms_plot_require_files(
   c(SUMMARY_CSV, AVAILABILITY_CSV, LOCAL_CSV, RANK_METRIC_CSV, RANK_SUMMARY_CSV, RANK_ASSOC_CSV),
   "RQ1 plotting inputs"
@@ -179,10 +181,11 @@ dimension_assoc <- dimension_assoc |>
   )
 if (!nrow(dimension_summary)) stop("No non-circular RQ1 rows available for Fig. 1a")
 
-# The main panel is summary-only. Each dimension × representation-class object
-# remains in the joint (A, rank-loss) space, while forest-style crosshairs show
-# heterogeneity across the prespecified target metrics: point = median and bars = IQR.
-# Raw metric observations remain available in the supplementary distribution atlas.
+# The main panel is summary-only. Keep every dimension × representation-class
+# object in one common (A, rank-loss) space so the four measurement dimensions
+# remain directly comparable. Crosshairs show the class-level median and IQR;
+# deterministic leader lines label the dimension groups without adding a second
+# statistical layer. Raw metric observations remain in the supplementary atlas.
 DIM_SHAPES_A <- c(
   "Placement" = 16,
   "Optical representation" = 17,
@@ -209,8 +212,31 @@ assoc_text <- sprintf(
   assoc_lookup[["Placement"]], assoc_lookup[["Optical representation"]],
   assoc_lookup[["Temporal resolution"]], assoc_lookup[["Monitoring duration"]]
 )
+assoc_text_compact <- sprintf(
+  "A–rank-loss rₛ\nP %.2f · O %.2f · T %.2f · D %.2f",
+  assoc_lookup[["Placement"]], assoc_lookup[["Optical representation"]],
+  assoc_lookup[["Temporal resolution"]], assoc_lookup[["Monitoring duration"]]
+)
 
-p1a <- ggplot() +
+# Dimension identity is shown with a compact in-panel legend. It uses the same
+# shape grammar as the summaries and occupies the otherwise empty upper-left
+# region, avoiding leader lines that compete with the crosshairs.
+a_dimension_legend <- tibble(
+  dimension = factor(
+    c("Placement", "Optical representation", "Temporal resolution", "Monitoring duration"),
+    levels = levels(dimension_summary_a$dimension)
+  ),
+  label = c("Placement", "Optical", "Temporal", "Duration"),
+  x = .025,
+  x_text = .045,
+  y = rank_loss_limit * c(.78, .65, .52, .39)
+)
+a_dimension_legend_bg <- tibble(
+  xmin = .010, xmax = .155,
+  ymin = rank_loss_limit * .31, ymax = rank_loss_limit * .85
+)
+
+p1a_core <- ggplot() +
   geom_hline(yintercept = 0, linewidth = .24, color = "#D7DADD") +
   geom_segment(
     data = dimension_summary_a,
@@ -219,7 +245,7 @@ p1a <- ggplot() +
       y = rank_loss_median, yend = rank_loss_median,
       color = metric_class
     ),
-    inherit.aes = FALSE, linewidth = 1.02, alpha = .54, lineend = "round"
+    inherit.aes = FALSE, linewidth = .72, alpha = .54, lineend = "round"
   ) +
   geom_segment(
     data = dimension_summary_a,
@@ -228,40 +254,84 @@ p1a <- ggplot() +
       y = rank_loss_q25, yend = rank_loss_q75,
       color = metric_class
     ),
-    inherit.aes = FALSE, linewidth = 1.02, alpha = .54, lineend = "round"
+    inherit.aes = FALSE, linewidth = .72, alpha = .54, lineend = "round"
+  ) +
+  geom_rect(
+    data = a_dimension_legend_bg,
+    aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+    inherit.aes = FALSE, fill = scales::alpha("white", .88),
+    color = "#D7DADD", linewidth = .24
+  ) +
+  geom_text(
+    data = tibble(x = .017, y = rank_loss_limit * .825, label = "Dimension"),
+    aes(x, y, label = label),
+    inherit.aes = FALSE, hjust = 0, vjust = .5,
+    size = 1.60, family = MS_FONT, fontface = "bold", color = "#565B5E"
+  ) +
+  geom_point(
+    data = a_dimension_legend,
+    aes(x, y, shape = dimension),
+    inherit.aes = FALSE, size = 1.95, color = "#4E5559", stroke = 0
+  ) +
+  geom_text(
+    data = a_dimension_legend,
+    aes(x_text, y, label = label),
+    inherit.aes = FALSE, hjust = 0, vjust = .5,
+    size = 1.55, family = MS_FONT, color = "#4E5559"
   ) +
   geom_point(
     data = dimension_summary_a,
     aes(A_median, rank_loss_median, color = metric_class, shape = dimension),
-    inherit.aes = FALSE, size = 2.25, alpha = .98
+    inherit.aes = FALSE, size = 2.35, stroke = 0, alpha = .98
   ) +
+  scale_shape_manual(values = DIM_SHAPES_A, guide = "none") +
   scale_color_ms_metric(guide = "none") +
-  scale_shape_manual(values = DIM_SHAPES_A, name = NULL) +
   scale_x_continuous(
+    # A pseudo-log display expands the dense low-distortion region while
+    # retaining a well-defined zero and the original A values in tick labels.
+    trans = scales::transform_pseudo_log(sigma = .02),
     limits = c(0, a_display_limit),
-    breaks = scales::breaks_extended(n = 5),
+    breaks = c(0, .2, .4, .6),
+    labels = scales::label_number(accuracy = .1),
     expand = expansion(mult = c(0, .02))
   ) +
   scale_y_continuous(
+    # Apply the same monotone zero-preserving display logic to rank loss;
+    # otherwise the many near-zero temporal/optical summaries collapse onto
+    # the baseline while A is already shown on a pseudo-log scale.
+    trans = scales::transform_pseudo_log(sigma = .01),
     limits = c(0, rank_loss_limit),
-    breaks = scales::breaks_extended(n = 5),
-    expand = expansion(mult = c(0, .03))
+    breaks = c(0, .01, .05, .1, .2, .4),
+    labels = scales::label_number(accuracy = .01),
+    expand = expansion(mult = c(0, .04))
   ) +
   labs(
-    title = "a  Absolute and relational preservation",
-    subtitle = assoc_text,
-    x = "Absolute distortion, A", y = "Rank loss, 1 − Spearman ρ"
+    x = "Absolute distortion, A (pseudo-log scale)",
+    y = "Rank loss, 1 − Spearman ρ (pseudo-log scale)"
   ) +
   theme_fig1(base_size = 7.15, legend_position = "bottom") +
   theme(
     panel.grid.major = element_blank(),
-    plot.subtitle = element_text(
-      size = 5.25, color = "#666A6D", margin = margin(t = 1, b = 2)
-    ),
-    legend.text = element_text(size = 5.25),
-    legend.key.width = grid::unit(3.6, "mm"),
-    legend.spacing.x = grid::unit(.8, "mm"),
-    plot.margin = margin(2, 3, 2, 4)
+    axis.text = element_text(size = 5.7),
+    axis.title = element_text(size = 6.65),
+    plot.margin = margin(0, 3, 3, 3)
+  )
+
+# The lower b/c block has an intentional left inset for the shared y-axis and
+# its plot frames. Apply the same inset to panel a's inner plot, while keeping
+# the panel title and association line on the full-figure left alignment.
+p1a <- cowplot::ggdraw() +
+  cowplot::draw_plot(p1a_core, x = .025, y = 0, width = .975, height = .93) +
+  cowplot::draw_label(
+    "a  Absolute and\nrelational preservation",
+    x = .002, y = .998, hjust = 0, vjust = 1,
+    size = 6.8, lineheight = .92, fontface = "bold",
+    colour = "#151515", fontfamily = MS_FONT
+  ) +
+  cowplot::draw_label(
+    assoc_text_compact,
+    x = .025, y = .895, hjust = 0, vjust = 1,
+    size = 4.05, lineheight = .90, colour = "#666A6D", fontfamily = MS_FONT
   )
 
 # -----------------------------------------------------------------------------
@@ -360,6 +430,11 @@ target_geometry_panel <- function(panel_name, show_x_title = TRUE) {
   d <- target_geometry |> filter(facet_label == panel_name)
   if (!nrow(d)) stop("No target geometry rows for panel: ", panel_name)
   y_lim <- dplyr::first(d$y_limit)
+  panel_title <- dplyr::case_when(
+    panel_name == "Placement · chest/wrist → eye" ~ "Placement ·\nchest/wrist → eye",
+    panel_name == "Optical representation · LIGHT → MEDI" ~ "Optical representation ·\nLIGHT → MEDI",
+    TRUE ~ panel_name
+  )
 
   ggplot() +
     geom_vline(xintercept = 0, linewidth = .30, color = "#A8ADB0") +
@@ -392,7 +467,7 @@ target_geometry_panel <- function(panel_name, show_x_title = TRUE) {
       expand = expansion(mult = c(0, .03))
     ) +
     labs(
-      title = panel_name,
+      title = panel_title,
       x = if (show_x_title) "Directional coherence, B/A" else NULL,
       y = NULL
     ) +
@@ -400,10 +475,10 @@ target_geometry_panel <- function(panel_name, show_x_title = TRUE) {
     theme(
       panel.grid.major = element_blank(),
       plot.title = element_text(
-        size = FIG1_SUBPANEL_TITLE_SIZE, face = "bold", hjust = .5,
-        margin = margin(b = 2)
+        size = 5.8, lineheight = .90, face = "bold", hjust = .5,
+        margin = margin(b = 1)
       ),
-      axis.text.x = element_text(size = 5.7),
+      axis.text.x = element_text(size = 5.1),
       plot.margin = margin(2, 3, 2, 3)
     )
 }
@@ -418,9 +493,9 @@ p1b_shape_legend <- cowplot::get_legend(
     theme_void() +
     theme(
       legend.position = "bottom",
-      legend.text = element_text(size = 5.0),
-      legend.key.width = grid::unit(3.0, "mm"),
-      legend.spacing.x = grid::unit(.6, "mm")
+      legend.text = element_text(size = 4.25),
+      legend.key.width = grid::unit(2.5, "mm"),
+      legend.spacing.x = grid::unit(.35, "mm")
     )
 )
 
@@ -433,16 +508,16 @@ p1b <- cowplot::ggdraw() +
   cowplot::draw_plot(p1b_core, x = .08, y = .075, width = .92, height = .86) +
   cowplot::draw_plot(p1b_shape_legend, x = .16, y = 0, width = .70, height = .09) +
   cowplot::draw_label(
-    "b  Magnitude and directional coherence",
+    "b  Magnitude and\ndirectional coherence",
     x = .002, y = .998, hjust = 0, vjust = 1,
-    size = FIG1_PANEL_TITLE_SIZE, fontface = "bold",
+    size = 6.8, lineheight = .92, fontface = "bold",
     colour = "#151515", fontfamily = MS_FONT
   ) +
   cowplot::draw_label(
     "Absolute distortion, A",
     x = .012, y = .50, angle = 90,
     hjust = .5, vjust = .5,
-    size = 7.1, colour = "#151515", fontfamily = MS_FONT
+    size = 6.3, colour = "#151515", fontfamily = MS_FONT
   )
 
 # -----------------------------------------------------------------------------
@@ -612,23 +687,18 @@ right_core <- cowplot::plot_grid(
   align = "v", axis = "lr", greedy = TRUE
 )
 right_column <- cowplot::ggdraw() +
-  cowplot::draw_plot(right_core, x = 0, y = 0, width = 1, height = .955) +
+  cowplot::draw_plot(right_core, x = 0, y = 0, width = 1, height = .90) +
   cowplot::draw_label(
-    "c  Where ordered-axis distortion accrues",
+    "c  Where ordered-axis\ndistortion accrues",
     x = .002, y = .998, hjust = 0, vjust = 1,
-    size = FIG1_PANEL_TITLE_SIZE, fontface = "bold",
+    size = 6.8, lineheight = .92, fontface = "bold",
     colour = "#151515", fontfamily = MS_FONT
   )
 
-lower <- cowplot::plot_grid(
-  p1b, right_column,
-  ncol = 2, rel_widths = c(1, 1),
-  align = "hv", axis = "tblr", greedy = TRUE
-)
 fig1body <- cowplot::plot_grid(
-  p1a, lower,
-  ncol = 1, rel_heights = c(.82, 1.18),
-  align = "v", axis = "l", greedy = TRUE
+  p1a, p1b, right_column,
+  ncol = 3, rel_widths = c(.98, 1.14, 1.14),
+  align = "hv", axis = "tblr", greedy = TRUE
 )
 fig1 <- cowplot::plot_grid(
   metric_legend, fig1body,
@@ -636,8 +706,8 @@ fig1 <- cowplot::plot_grid(
   align = "v", axis = "l", greedy = TRUE
 )
 
-ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.pdf"), 7.2, 6.65)
-ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.png"), 7.2, 6.65)
+ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.pdf"), FIG1_WIDTH_IN, FIG1_HEIGHT_IN)
+ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.png"), FIG1_WIDTH_IN, FIG1_HEIGHT_IN)
 
 # -----------------------------------------------------------------------------
 # Supplementary figures
