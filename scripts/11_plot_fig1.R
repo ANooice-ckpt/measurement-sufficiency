@@ -185,9 +185,6 @@ dimension_assoc <- dimension_assoc |>
   )
 if (!nrow(dimension_summary)) stop("No non-circular RQ1 rows available for Fig. 1a")
 
-# Preserve one common linear A scale so cross-dimension magnitude remains
-# directly comparable. A few extreme raw metrics are clipped only for display;
-# class medians/IQRs are always calculated from all metrics.
 a_core_limit <- safe_q(dimension_metric$A_typical, .98)
 a_summary_limit <- max(dimension_summary$A_q75, na.rm = TRUE)
 a_display_limit <- max(c(.30, a_core_limit, a_summary_limit), na.rm = TRUE) * 1.06
@@ -200,57 +197,92 @@ dimension_metric_off <- dimension_metric |>
   filter(is.finite(A_typical), A_typical > a_display_limit + NUMERIC_TOL) |>
   mutate(A_display = a_display_limit * .985)
 
-p1a <- ggplot(dimension_metric_main, aes(A_typical, rank_loss_typical, color = metric_class)) +
+# One common preservation landscape makes the between-dimension displacement
+# itself visible rather than reproducing four off-centre small multiples.
+DIM_SHAPES_A <- c(
+  "Placement" = 16,
+  "Optical representation" = 17,
+  "Temporal resolution" = 15,
+  "Monitoring duration" = 18
+)
+
+# Raw metric observations carry both encodings lightly; foreground class summaries
+# use the same dimension shape and metric-class colour at higher visual weight.
+dimension_summary_a <- dimension_summary |>
+  mutate(
+    A_display = pmin(A_median, a_display_limit),
+    rank_display = rank_loss_median
+  )
+
+dimension_labels_a <- dimension_summary_a |>
+  group_by(dimension) |>
+  summarise(
+    x = median(A_display, na.rm = TRUE),
+    y = max(rank_loss_q75, rank_loss_median, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  left_join(dimension_assoc |> select(dimension, label), by = "dimension") |>
+  mutate(
+    text = paste0(as.character(dimension), "\n", label),
+    y = pmin(rank_loss_limit * .955, y + rank_loss_limit * .055)
+  )
+
+p1a <- ggplot() +
   geom_hline(yintercept = 0, linewidth = .24, color = "#D7DADD") +
-  geom_point(size = .78, alpha = .34) +
+  geom_point(
+    data = dimension_metric_main,
+    aes(A_typical, rank_loss_typical, color = metric_class, shape = dimension),
+    size = .72, alpha = .22
+  ) +
   geom_point(
     data = dimension_metric_off,
     aes(A_display, rank_loss_typical, color = metric_class),
     inherit.aes = FALSE, shape = 4, size = 1.15, stroke = .35, alpha = .88
   ) +
   geom_segment(
-    data = dimension_summary,
+    data = dimension_summary_a,
     aes(x = A_q25, xend = pmin(A_q75, a_display_limit),
         y = rank_loss_median, yend = rank_loss_median, color = metric_class),
-    inherit.aes = FALSE, linewidth = .86, alpha = .48, lineend = "round"
+    inherit.aes = FALSE, linewidth = .86, alpha = .42, lineend = "round"
   ) +
   geom_segment(
-    data = dimension_summary,
-    aes(x = pmin(A_median, a_display_limit), xend = pmin(A_median, a_display_limit),
+    data = dimension_summary_a,
+    aes(x = A_display, xend = A_display,
         y = rank_loss_q25, yend = rank_loss_q75, color = metric_class),
-    inherit.aes = FALSE, linewidth = .86, alpha = .48, lineend = "round"
+    inherit.aes = FALSE, linewidth = .86, alpha = .42, lineend = "round"
   ) +
   geom_point(
-    data = dimension_summary,
-    aes(pmin(A_median, a_display_limit), rank_loss_median, color = metric_class),
-    inherit.aes = FALSE, shape = 18, size = 2.0, alpha = .98
+    data = dimension_summary_a,
+    aes(A_display, rank_display, color = metric_class, shape = dimension),
+    inherit.aes = FALSE, size = 2.15, alpha = .98
   ) +
   geom_text(
-    data = dimension_assoc,
-    aes(x = Inf, y = Inf, label = label),
-    inherit.aes = FALSE, hjust = 1.08, vjust = 1.22,
-    size = 2.05, colour = "#666A6D"
+    data = dimension_labels_a,
+    aes(x, y, label = text),
+    inherit.aes = FALSE, size = 2.05, lineheight = .95,
+    fontface = "bold", color = "#4A4E51", check_overlap = TRUE
   ) +
-  facet_grid(. ~ dimension) +
   scale_color_ms_metric(guide = "none") +
+  scale_shape_manual(values = DIM_SHAPES_A, name = NULL) +
   scale_x_continuous(
     limits = c(0, a_display_limit),
-    breaks = scales::breaks_extended(n = 4),
+    breaks = scales::breaks_extended(n = 5),
     expand = expansion(mult = c(0, .02))
   ) +
   scale_y_continuous(
-    limits = c(0, rank_loss_limit), breaks = scales::breaks_extended(n = 4),
+    limits = c(0, rank_loss_limit), breaks = scales::breaks_extended(n = 5),
     expand = expansion(mult = c(0, .03))
   ) +
   labs(
     title = "a  Absolute and relational preservation",
     x = "Absolute distortion, A", y = "Rank loss, 1 − Spearman ρ"
   ) +
-  theme_fig1(base_size = 7.15) +
+  theme_fig1(base_size = 7.15, legend_position = "bottom") +
   theme(
     panel.grid.major = element_blank(),
-    strip.text.x = element_text(size = FIG1_SUBPANEL_TITLE_SIZE, hjust = .5),
-    panel.spacing.x = grid::unit(2.7, "mm"),
+    legend.text = element_text(size = 5.25),
+    legend.key.width = grid::unit(3.6, "mm"),
+    legend.spacing.x = grid::unit(.8, "mm"),
     plot.margin = margin(2, 3, 2, 4)
   )
 
@@ -287,20 +319,22 @@ readr::write_csv(
 )
 
 # -----------------------------------------------------------------------------
-# b. Target-aligned signed-versus-absolute distortion geometry
+# b. Target-aligned distortion magnitude and directional coherence
 # -----------------------------------------------------------------------------
-# The V-shaped |B| <= A geometry is retained because A and B have the same
-# standardized units. Placement and optical panels share one robust display
-# window; off-scale raw metrics are marked at the boundary rather than allowed
-# to compress the entire optical panel.
+# Reparameterize the signed-versus-absolute geometry as magnitude A and
+# directional coherence C = B/A. C is bounded in [-1, 1], so the two target-
+# alignment panels can share a meaningful horizontal scale while each uses its
+# own A range. This avoids compressing optical magnitude to preserve a common y.
 target_geometry <- summary |>
   filter(
     dimension %in% c("placement", "optical"),
-    is.finite(A_mean_absolute), is.finite(B_mean_signed)
+    is.finite(A_mean_absolute), is.finite(B_mean_signed),
+    A_mean_absolute > NUMERIC_TOL
   ) |>
   transmute(
     dimension = as.character(dimension), metric, metric_class,
     A_mean_absolute, B_mean_signed,
+    coherence = pmax(-1, pmin(1, B_mean_signed / A_mean_absolute)),
     transition = pretty_transition(pair_label),
     facet_label = case_when(
       dimension == "placement" ~ "Placement · chest/wrist → eye",
@@ -317,16 +351,18 @@ target_geometry <- summary |>
   )
 if (!nrow(target_geometry)) stop("No target-aligned rows available for Fig. 1b")
 
-target_limit <- safe_q(c(target_geometry$A_mean_absolute, abs(target_geometry$B_mean_signed)), .98)
-target_limit <- max(.30, target_limit, na.rm = TRUE) * 1.08
-if (!is.finite(target_limit) || target_limit <= 0) target_limit <- 1
+target_y_limits <- target_geometry |>
+  group_by(facet_label) |>
+  summarise(
+    y_limit = max(.12, safe_q(A_mean_absolute, .98), na.rm = TRUE) * 1.08,
+    .groups = "drop"
+  )
 
 target_geometry <- target_geometry |>
+  left_join(target_y_limits, by = "facet_label") |>
   mutate(
-    offscale = A_mean_absolute > target_limit + NUMERIC_TOL |
-      abs(B_mean_signed) > target_limit + NUMERIC_TOL,
-    A_display = pmin(A_mean_absolute, target_limit * .975),
-    B_display = pmax(-target_limit * .975, pmin(B_mean_signed, target_limit * .975))
+    offscale = A_mean_absolute > y_limit + NUMERIC_TOL,
+    A_display = pmin(A_mean_absolute, y_limit * .975)
   )
 
 target_label_max_a <- target_geometry |>
@@ -337,69 +373,103 @@ target_label_max_a <- target_geometry |>
   slice_max(A_mean_absolute, n = 1, with_ties = FALSE) |>
   ungroup()
 target_label_coherent <- target_geometry |>
-  mutate(direction_coherence = if_else(
-    A_mean_absolute > NUMERIC_TOL,
-    abs(B_mean_signed) / A_mean_absolute, NA_real_
-  )) |>
-  filter(is.finite(direction_coherence)) |>
   group_by(facet_label, metric) |>
-  slice_max(direction_coherence, n = 1, with_ties = FALSE) |>
+  slice_max(abs(coherence), n = 1, with_ties = FALSE) |>
   ungroup() |>
   group_by(facet_label) |>
-  slice_max(direction_coherence, n = 1, with_ties = FALSE) |>
+  slice_max(abs(coherence), n = 1, with_ties = FALSE) |>
   ungroup()
 target_labels <- bind_rows(target_label_max_a, target_label_coherent) |>
   distinct(facet_label, metric, .keep_all = TRUE)
 
-p1b <- ggplot() +
-  geom_vline(xintercept = 0, linewidth = .25, color = "#D7DADD") +
-  geom_abline(
-    slope = c(-1, 1), intercept = 0, linetype = 2,
-    linewidth = .30, color = "#9BA0A3"
+target_geometry_panel <- function(panel_name, show_x_title = TRUE) {
+  d <- target_geometry |> filter(facet_label == panel_name)
+  if (!nrow(d)) stop("No target geometry rows for panel: ", panel_name)
+  y_lim <- dplyr::first(d$y_limit)
+
+  ggplot() +
+    geom_vline(xintercept = 0, linewidth = .30, color = "#A8ADB0") +
+    geom_point(
+      data = d |> filter(!offscale),
+      aes(coherence, A_display, color = metric_class, shape = transition),
+      size = 1.28, alpha = .82
+    ) +
+    geom_point(
+      data = d |> filter(offscale),
+      aes(coherence, A_display),
+      inherit.aes = FALSE, shape = 4, size = 1.50, stroke = .42, color = "#303437"
+    ) +
+    geom_text(
+      data = target_labels |> filter(facet_label == panel_name),
+      aes(coherence, A_display, label = metric),
+      inherit.aes = FALSE, size = 1.80, color = "#303030",
+      check_overlap = TRUE, vjust = -.62
+    ) +
+    scale_color_ms_metric(guide = "none") +
+    scale_shape_discrete(name = NULL) +
+    scale_x_continuous(
+      limits = c(-1, 1), breaks = c(-1, -.5, 0, .5, 1),
+      expand = expansion(mult = c(.01, .01))
+    ) +
+    scale_y_continuous(
+      limits = c(0, y_lim),
+      breaks = scales::breaks_extended(n = 4),
+      expand = expansion(mult = c(0, .03))
+    ) +
+    labs(
+      title = panel_name,
+      x = if (show_x_title) "Directional coherence, B/A" else NULL,
+      y = NULL
+    ) +
+    theme_fig1(base_size = 7.0) +
+    theme(
+      panel.grid.major = element_blank(),
+      plot.title = element_text(
+        size = FIG1_SUBPANEL_TITLE_SIZE, face = "bold", hjust = .5,
+        margin = margin(b = 2)
+      ),
+      axis.text.x = element_text(size = 5.7),
+      plot.margin = margin(2, 3, 2, 3)
+    )
+}
+
+# Both panels display the shared coherence ticks; the lower panel alone carries
+# the repeated axis title. Their y ranges are intentionally independent.
+p1b_top <- target_geometry_panel("Placement · chest/wrist → eye", show_x_title = FALSE)
+p1b_bottom <- target_geometry_panel("Optical representation · LIGHT → MEDI", show_x_title = TRUE)
+
+p1b_shape_legend <- cowplot::get_legend(
+  ggplot(target_geometry |> filter(!offscale), aes(coherence, A_display, shape = transition)) +
+    geom_point(size = 1.5, color = "#3B3B3B") +
+    scale_shape_discrete(name = NULL) +
+    theme_void() +
+    theme(
+      legend.position = "bottom",
+      legend.text = element_text(size = 5.0),
+      legend.key.width = grid::unit(3.0, "mm"),
+      legend.spacing.x = grid::unit(.6, "mm")
+    )
+)
+
+p1b_core <- cowplot::plot_grid(
+  p1b_top, p1b_bottom,
+  ncol = 1, rel_heights = c(1, 1),
+  align = "v", axis = "lr", greedy = TRUE
+)
+p1b <- cowplot::ggdraw() +
+  cowplot::draw_plot(p1b_core, x = .08, y = .075, width = .92, height = .86) +
+  cowplot::draw_plot(p1b_shape_legend, x = .16, y = 0, width = .70, height = .09) +
+  cowplot::draw_label(
+    "b  Magnitude and directional coherence",
+    x = .002, y = .998, hjust = 0, vjust = 1,
+    size = FIG1_PANEL_TITLE_SIZE, fontface = "bold",
+    colour = "#151515", fontfamily = MS_FONT
   ) +
-  geom_point(
-    data = target_geometry |> filter(!offscale),
-    aes(B_display, A_display, color = metric_class, shape = transition),
-    size = 1.25, alpha = .82
-  ) +
-  geom_point(
-    data = target_geometry |> filter(offscale),
-    aes(B_display, A_display),
-    inherit.aes = FALSE, shape = 4, size = 1.50, stroke = .42, color = "#303437"
-  ) +
-  geom_text(
-    data = target_labels,
-    aes(B_display, A_display, label = metric),
-    inherit.aes = FALSE, size = 1.85, color = "#303030",
-    check_overlap = TRUE, vjust = -.62
-  ) +
-  facet_wrap(~facet_label, ncol = 1) +
-  scale_color_ms_metric(guide = "none") +
-  scale_shape_discrete(name = NULL) +
-  scale_x_continuous(
-    limits = c(-target_limit, target_limit),
-    breaks = scales::breaks_extended(n = 5),
-    expand = expansion(mult = c(.02, .02))
-  ) +
-  scale_y_continuous(
-    limits = c(0, target_limit),
-    breaks = scales::breaks_extended(n = 4),
-    expand = expansion(mult = c(0, .03))
-  ) +
-  coord_fixed(ratio = 1, clip = "off") +
-  labs(
-    title = "b  Target-aligned distortion geometry",
-    x = "Signed distortion, B", y = "Absolute distortion, A"
-  ) +
-  theme_fig1(base_size = 7.05, legend_position = "bottom") +
-  theme(
-    panel.grid.major = element_blank(),
-    strip.text.x = element_text(size = FIG1_SUBPANEL_TITLE_SIZE, hjust = .5),
-    panel.spacing.y = grid::unit(2.2, "mm"),
-    legend.text = element_text(size = 5.1),
-    legend.key.width = grid::unit(3.2, "mm"),
-    legend.spacing.x = grid::unit(.6, "mm"),
-    plot.margin = margin(2, 4, 2, 4)
+  cowplot::draw_label(
+    "Absolute distortion, A",
+    x = .012, y = .50, angle = 90,
+    hjust = .5, vjust = .5,
+    size = 7.1, colour = "#151515", fontfamily = MS_FONT
   )
 
 # -----------------------------------------------------------------------------
@@ -503,6 +573,12 @@ local_distribution_panel <- function(dim, subpanel_title = DIM_TITLES[[dim]], sh
       xintercept = equal_share, linetype = 3,
       linewidth = .30, color = "#A9AEB1"
     ) +
+    geom_segment(
+      data = do,
+      aes(x = share_q25, xend = share_q75, y = step_order, yend = step_order),
+      inherit.aes = FALSE, linewidth = .62, color = "#AEB3B6", alpha = .38,
+      lineend = "round"
+    ) +
     geom_point(
       data = d,
       aes(G_share, y_point, color = metric_class),
@@ -521,18 +597,6 @@ local_distribution_panel <- function(dim, subpanel_title = DIM_TITLES[[dim]], sh
       data = ds,
       aes(share_median, y_summary, color = metric_class),
       shape = 18, size = 1.55, alpha = .98
-    ) +
-    geom_segment(
-      data = do,
-      aes(x = share_q25, xend = share_q75, y = step_order, yend = step_order),
-      inherit.aes = FALSE, linewidth = .52, color = "#4D5255", alpha = .78,
-      lineend = "round"
-    ) +
-    geom_point(
-      data = do,
-      aes(share_median, step_order),
-      inherit.aes = FALSE, shape = 23, size = 1.65,
-      stroke = .38, fill = "white", color = "#34383A"
     ) +
     scale_color_ms_metric(guide = "none") +
     scale_x_continuous(
@@ -590,7 +654,7 @@ lower <- cowplot::plot_grid(
 )
 fig1body <- cowplot::plot_grid(
   p1a, lower,
-  ncol = 1, rel_heights = c(.78, 1.42),
+  ncol = 1, rel_heights = c(.82, 1.18),
   align = "v", axis = "l", greedy = TRUE
 )
 fig1 <- cowplot::plot_grid(
@@ -599,10 +663,8 @@ fig1 <- cowplot::plot_grid(
   align = "v", axis = "l", greedy = TRUE
 )
 
-# Save at intended full-width print size rather than oversizing and relying on
-# downstream shrinkage; this protects final text size and line weights.
-ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.pdf"), 7.2, 6.35)
-ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.png"), 7.2, 6.35)
+ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.pdf"), 7.2, 6.65)
+ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.png"), 7.2, 6.65)
 
 # -----------------------------------------------------------------------------
 # Supplementary figures
@@ -677,4 +739,4 @@ ms_plot_write_manifest(
     rq3_analysis_version = NA_character_
   )
 )
-message("Fig. 1 complete: robust shared preservation scales, target-aligned A/B geometry, and ordered-axis local-response distributions.")
+message("Fig. 1 complete: common preservation landscape, target-aligned magnitude/coherence geometry, and ordered-axis local-response distributions.")
