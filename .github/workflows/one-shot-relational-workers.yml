@@ -21,7 +21,6 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
-
           p = Path('scripts/10_rq1_analysis.R')
           s = p.read_text()
           old = 'STARTUP_WORKERS <- ms_resolve_workers("RQ1_STARTUP_WORKERS", default = 36L, cap = 48L)\nFRAGMENT_WORKERS <- ms_resolve_workers("RQ1_FRAGMENT_WORKERS", default = 36L, cap = 48L)'
@@ -34,16 +33,7 @@ jobs:
           if s.count(old2) != 1:
               raise SystemExit('relational scan pattern mismatch')
           p.write_text(s.replace(old2, new2))
-
-          p = Path('docs/RQ1_EXECUTION.md')
-          s = p.read_text()
-          old = '`RQ1_STARTUP_WORKERS` parallelizes duration-anchor startup scans, `RQ1_PART_WORKERS` parallelizes immutable canonical-part generation, `RQ1_FRAGMENT_WORKERS` parallelizes summary-fragment checkpoints, and `RQ1_BOOT_WORKERS` controls the participant-cluster/site-stratified bootstrap workers. The startup, duration-part and fragment schedules retain the validated large-task-first/LPT-style ordering.'
-          new = '`RQ1_STARTUP_WORKERS` parallelizes duration-anchor startup scans, `RQ1_PART_WORKERS` parallelizes immutable canonical-part generation, `RQ1_FRAGMENT_WORKERS` parallelizes summary-fragment checkpoints, and `RQ1_BOOT_WORKERS` controls the participant-cluster/site-stratified bootstrap workers. Relational-preservation analysis re-reads compressed canonical parts and returns paired value vectors, so this I/O/memory-heavy stage is intentionally capped at 24 concurrent workers even though `RQ1_FRAGMENT_WORKERS` remains 36. The startup, duration-part, fragment and relational schedules retain the validated large-task-first/LPT-style ordering.'
-          if s.count(old) != 1:
-              raise SystemExit('documentation pattern mismatch')
-          p.write_text(s.replace(old, new))
           PY
-
           grep -F 'RELATIONAL_WORKERS <- min(24L, FRAGMENT_WORKERS)' scripts/10_rq1_analysis.R
           grep -F 'workers=", RELATIONAL_WORKERS' scripts/10_rq1_analysis.R
           git diff --check
@@ -55,6 +45,6 @@ jobs:
           rm -f .github/workflows/one-shot-relational-workers.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add scripts/10_rq1_analysis.R docs/RQ1_EXECUTION.md .github/workflows/one-shot-relational-workers.yml
+          git add scripts/10_rq1_analysis.R .github/workflows/one-shot-relational-workers.yml
           git commit -m "Cap RQ1 relational preservation at 24 workers"
           git push origin HEAD:master
