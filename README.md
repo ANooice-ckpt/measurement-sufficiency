@@ -77,9 +77,9 @@ Rscript scripts/14_rq3_analysis.R
 Rscript scripts/15_plot_rq3.R
 ```
 
-The canonical RQ2 entrypoint contains the corrected streamed analysis directly and then, in the same R process, adds the layered contextual models. Those models reuse existing ERA5 fields from `unit_context` and harmonized MeLiDos light-exposure, exercise and sleep diaries; they do not introduce an alternate core/weather preprocessing path.
+RQ1-RQ3 are canonical executable sources: the server runners invoke these files directly rather than generating scientifically different downstream runtimes. RQ1 keeps concrete nested duration-window comparisons in its canonical pairwise artifact but projects them to generic 1–6 day comparison types before pooled summaries and bootstrap inference. The RQ2 entrypoint contains the streamed conditional analysis directly and, in the same R process, adds the layered contextual models. Those models reuse existing ERA5 fields from `unit_context` and harmonized MeLiDos light-exposure, exercise and sleep diaries; they do not introduce an alternate core/weather preprocessing path.
 
-On the Linux server, the resumable downstream chain can be launched with `scripts/run_downstream_server.sh`. The server runners define their own high-core-count defaults and every worker count remains environment-overridable; inspect the selected runner before changing concurrency for a different instance size. Downstream RQ2/RQ3 sources are canonical and are no longer generated through a v5 runtime-patch layer.
+On the Linux server, the resumable downstream chain can be launched with `scripts/run_downstream_server.sh`. The server runners define their own high-core-count defaults and every worker count remains environment-overridable; inspect the selected runner before changing concurrency for a different instance size. `scripts/run_full_server_optimized.sh` generates runtime-only scheduling variants for the expensive core/duration build; downstream scientific logic still comes from the canonical RQ1-RQ3 sources.
 
 The analysis stages emit versioned model/checkpoint and figure provenance tables alongside their primary outputs. Main PNG figures are centralized under `results/figures`; RQ-specific figure manifests remain at the corresponding `results/rqX/` roots.
 
