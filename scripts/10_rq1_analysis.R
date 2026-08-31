@@ -20,15 +20,10 @@ OUT <- file.path("results", "rq1")
 DIAG <- file.path("results", "diagnostics")
 B_BOOT <- suppressWarnings(as.integer(Sys.getenv("RQ1_BOOT", unset = "1000")))
 if (!is.finite(B_BOOT) || B_BOOT < 0L) B_BOOT <- 1000L
-BOOT_WORKERS <- ms_resolve_workers("RQ1_BOOT_WORKERS", default = 1L, cap = 48L)
-rq1_default_part_workers <- function() {
-  logical <- suppressWarnings(parallel::detectCores(logical = TRUE))
-  physical <- suppressWarnings(parallel::detectCores(logical = FALSE))
-  detected <- if (is.finite(physical) && physical > 0) physical else logical
-  if (!is.finite(detected) || detected < 1) return(1L)
-  max(1L, min(24L, as.integer(floor(detected / 2))))
-}
-PART_WORKERS <- ms_resolve_workers("RQ1_PART_WORKERS", default = rq1_default_part_workers(), cap = 48L)
+# Production worker defaults are validated on the 48-vCPU / 192-GiB ECS deployment.
+# Environment overrides remain available for different hardware or diagnostics.
+BOOT_WORKERS <- ms_resolve_workers("RQ1_BOOT_WORKERS", default = 40L, cap = 48L)
+PART_WORKERS <- ms_resolve_workers("RQ1_PART_WORKERS", default = 44L, cap = 48L)
 # Production defaults target the validated 48-vCPU / 192-GiB ECS deployment.
 # Override only for a different machine or a diagnostic run.
 STARTUP_WORKERS <- ms_resolve_workers("RQ1_STARTUP_WORKERS", default = 36L, cap = 48L)
