@@ -1,0 +1,351 @@
+name: One-shot audit cleanup
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.5.0'
+          use-public-rspm: true
+      - name: Consolidate audited fixes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              n = text.count(old)
+              if n != 1:
+                  raise RuntimeError(f"{path}: expected one replacement anchor, found {n}")
+              p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          def remove_between(path, start, end):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              i = text.find(start)
+              if i < 0:
+                  raise RuntimeError(f"{path}: start anchor not found: {start[:60]}")
+              j = text.find(end, i)
+              if j < 0:
+                  raise RuntimeError(f"{path}: end anchor not found: {end[:60]}")
+              p.write_text(text[:i] + text[j:], encoding="utf-8")
+
+          # RQ1: corrected canonical summary behavior must have a distinct artifact/cache key.
+          replace_once(
+              "scripts/10_rq1_analysis.R",
+              '"rq1_v5_oriented_pairwise_config_keyed__", CORE_VERSION, "__", ANALYSIS_DESIGN_ID',
+              '"rq1_v5_duration_type_canonical__", CORE_VERSION, "__", ANALYSIS_DESIGN_ID',
+          )
+
+          # One shared upstream-version contract for direct RQ2/RQ3/recovery execution.
+          replace_once(
+              "scripts/utils/rq1_pairwise_artifacts.R",
+              '''rq1_pairwise_version <- function(x) {
+            if (rq1_pairwise_is_partitioned(x)) return(as.character(x$rq1_analysis_version[[1]]))
+            value <- unique(na.omit(x$rq1_analysis_version))
+            if (length(value) != 1L) stop("Expected exactly one RQ1 analysis version")
+            value[[1]]
+          }
+          ''',
+              '''rq1_pairwise_version <- function(x) {
+            if (rq1_pairwise_is_partitioned(x)) return(as.character(x$rq1_analysis_version[[1]]))
+            value <- unique(na.omit(x$rq1_analysis_version))
+            if (length(value) != 1L) stop("Expected exactly one RQ1 analysis version")
+            value[[1]]
+          }
+
+          rq1_assert_summary_version <- function(x, summary) {
+            expected <- rq1_pairwise_version(x)
+            if (!"rq1_analysis_version" %in% names(summary)) stop("RQ1 summary lacks rq1_analysis_version")
+            observed <- unique(na.omit(as.character(summary$rq1_analysis_version)))
+            if (length(observed) != 1L || !identical(observed[[1]], expected)) {
+              stop("RQ1 pairwise manifest and summary versions do not match")
+            }
+            invisible(expected)
+          }
+          ''',
+          )
+          for path in ["scripts/12_rq2_analysis.R", "scripts/14_rq3_analysis.R", "scripts/resume_rq3_after_joint.R"]:
+              replace_once(
+                  path,
+                  'pair_summary <- readr::read_csv(RQ1_SUMMARY, show_col_types = FALSE, progress = FALSE)\n',
+                  'pair_summary <- readr::read_csv(RQ1_SUMMARY, show_col_types = FALSE, progress = FALSE)\nrq1_assert_summary_version(pairwise_artifact if FALSE else rq1_artifact, pair_summary)\n' if path.endswith("12_rq2_analysis.R") else
+                  'pair_summary <- readr::read_csv(RQ1_SUMMARY, show_col_types = FALSE, progress = FALSE)\nrq1_assert_summary_version(pairwise_artifact, pair_summary)\n'
+              )
+
+          # RQ3 anchor follows the frozen duration-domain definition instead of a literal 6.
+          replace_once(
+              "scripts/14_rq3_analysis.R",
+              'filter(placement == "eye", optical == "MEDI", resolution_s == 10L, n_days == 6L, available, is.finite(value))',
+              'filter(placement == "eye", optical == "MEDI", resolution_s == 10L, n_days == max(PRIMARY_DURATION_DAYS), available, is.finite(value))',
+          )
+
+          # Forked duration workers should fail immediately and explicitly.
+          replace_once(
+              "scripts/utils/duration_artifacts.R",
+              '''    } else {
+                part_records_scheduled <- lapply(schedule_idx, build_part)
+              }
+              part_records <- part_records_scheduled[order(schedule_idx)]
+          ''',
+              '''    } else {
+                part_records_scheduled <- lapply(schedule_idx, build_part)
+              }
+              failed <- vapply(part_records_scheduled, inherits, logical(1), "try-error")
+              if (any(failed)) stop("Duration checkpoint worker failed: ", as.character(part_records_scheduled[[which(failed)[1L]]]))
+              part_records <- part_records_scheduled[order(schedule_idx)]
+          ''',
+          )
+
+          # Full execution owns core + RQ1 only; all later stages use the one downstream runner.
+          remove_between(
+              "scripts/run_full_server.sh",
+              '  echo "===== FIGURE 1 ====="\n',
+              '  echo "===== FULL RUN COMPLETE: $(date --iso-8601=seconds) ====="\n',
+          )
+          replace_once(
+              "scripts/run_full_server.sh",
+              '  Rscript scripts/10_rq1_analysis.R\n  echo "===== FULL RUN COMPLETE: $(date --iso-8601=seconds) ====="\n',
+              '  Rscript scripts/10_rq1_analysis.R\n\n  echo "===== DOWNSTREAM ====="\n  bash scripts/run_downstream_server.sh\n\n  echo "===== FULL RUN COMPLETE: $(date --iso-8601=seconds) ====="\n',
+          )
+
+          # Core preflight and CI discover scripts automatically; no hand-maintained file lists.
+          p = Path("scripts/run_core_artifacts.sh")
+          text = p.read_text(encoding="utf-8")
+          start = 'echo "[preflight] Parse all scientific and figure entry points before expensive work"\n'
+          end = '\necho "[1/8] Restore/pin R 4.5.0 environment"\n'
+          i, j = text.find(start), text.find(end)
+          if i < 0 or j < 0 or j <= i:
+              raise RuntimeError("run_core_artifacts.sh preflight anchors not found")
+          new = '''echo "[preflight] Parse all R scripts before expensive work"
+          Rscript --vanilla -e 'files <- sort(list.files("scripts", pattern = "\\\\.R$", recursive = TRUE, full.names = TRUE)); if (!length(files)) stop("No R scripts found"); invisible(lapply(files, parse)); cat("R parse preflight passed for", length(files), "files\\n")'
+          '''
+          p.write_text(text[:i] + new + text[j:], encoding="utf-8")
+
+          Path(".github/workflows/r-syntax.yml").write_text('''name: R syntax
+
+          on:
+            pull_request:
+            push:
+              branches: [master]
+
+          jobs:
+            parse-sources:
+              runs-on: ubuntu-latest
+              steps:
+                - uses: actions/checkout@v4
+                - uses: r-lib/actions/setup-r@v2
+                  with:
+                    r-version: '4.5.0'
+                    use-public-rspm: true
+                - name: Parse every R source
+                  shell: Rscript {0}
+                  run: |
+                    files <- sort(list.files("scripts", pattern = "\\\\.R$", recursive = TRUE, full.names = TRUE))
+                    if (!length(files)) stop("No R scripts found")
+                    invisible(lapply(files, parse))
+                    message("All ", length(files), " R scripts parsed successfully.")
+                - name: Check every shell script
+                  shell: bash
+                  run: |
+                    while IFS= read -r -d '' file; do
+                      echo "Checking ${file}"
+                      bash -n "${file}"
+                    done < <(find scripts -type f -name '*.sh' -print0)
+          ''', encoding="utf-8")
+
+          # Downstream preflight also prevents mixed manifest/summary generations.
+          replace_once(
+              "scripts/run_downstream_server.sh",
+              'mkdir -p results/logs results/runtime results/rq2 results/rq3 results/figures',
+              'mkdir -p results/logs results/rq2 results/rq3 results/figures',
+          )
+          replace_once(
+              "scripts/run_downstream_server.sh",
+              '    source("scripts/utils/analysis_design.R")\n',
+              '    source("scripts/utils/analysis_design.R")\n    source("scripts/utils/rq1_pairwise_artifacts.R")\n',
+          )
+          replace_once(
+              "scripts/run_downstream_server.sh",
+              '    s <- readr::read_csv("results/rq1/rq1_pairwise_summary.csv", show_col_types = FALSE, progress = FALSE)\n',
+              '    s <- readr::read_csv("results/rq1/rq1_pairwise_summary.csv", show_col_types = FALSE, progress = FALSE)\n    rq1_assert_summary_version(manifest, s)\n',
+          )
+          replace_once(
+              "scripts/run_downstream_server.sh",
+              '# Use the canonical wrapper so the runtime and layered extension share one R\n  # process and therefore one set of validated canonical transition objects.',
+              '# The canonical RQ2 entrypoint and layered extension share one R process and\n  # therefore one set of validated canonical transition objects.',
+          )
+
+          # RQ2 plotting design guard belongs before any figure is written.
+          replace_once(
+              "scripts/13_plot_rq2.R",
+              'source("scripts/utils/plot_contracts.R")\n',
+              'source("scripts/utils/plot_contracts.R")\nsource("scripts/utils/analysis_design.R")\n',
+          )
+          guard2 = '''# Guard against plotting stale RQ2 artifacts after a measurement-lattice change.
+          if (is.list(condition) && !is.null(condition$analysis_design_id) &&
+              !identical(as.character(condition$analysis_design_id[[1]]), ms_analysis_design_id())) {
+            stop("RQ2 plotting inputs do not match the current frozen analysis design", call. = FALSE)
+          }
+          '''
+          replace_once(
+              "scripts/13_plot_rq2.R",
+              'ms_plot_assert_prefix(RQ2_VERSION, "rq2_v5_", "rq2_analysis_version")\n',
+              'ms_plot_assert_prefix(RQ2_VERSION, "rq2_v5_", "rq2_analysis_version")\n' + guard2,
+          )
+          remove_between(
+              "scripts/13_plot_rq2.R",
+              'source(file.path("scripts", "utils", "analysis_design.R"), local = .GlobalEnv)\n\n# Guard against plotting stale RQ2 artifacts after a measurement-lattice change.\n',
+              '\n}',
+          )
+          # remove_between leaves the closing brace; consume the now-orphaned brace/newline.
+          p = Path("scripts/13_plot_rq2.R")
+          text = p.read_text(encoding="utf-8")
+          if text.rstrip().endswith('}'):
+              text = text.rstrip()[:-1].rstrip() + '\n'
+          p.write_text(text, encoding="utf-8")
+
+          # RQ3 plotting: bind design once at the top, validate before plotting, and
+          # delete the superseded first construction of Fig. 4. The refined Fig. 4
+          # remains the only implementation; Fig. 5 and supplementary plots are unchanged.
+          replace_once(
+              "scripts/15_plot_rq3.R",
+              'source("scripts/utils/plot_contracts.R")\n',
+              'source("scripts/utils/plot_contracts.R")\nsource("scripts/utils/analysis_design.R")\n',
+          )
+          replace_once(
+              "scripts/15_plot_rq3.R",
+              '''RES_LEVELS <- c(1800, 900, 300, 60, 30, 20, 10)
+          RES_LABELS <- c("30 min", "15 min", "5 min", "1 min", "30 s", "20 s", "10 s")
+          NUMERIC_TOL <- 1e-12
+          ''',
+              '''RES_LEVELS <- rev(ms_primary_temporal_s())
+          RES_LABELS <- ms_temporal_label(RES_LEVELS)
+          DURATION_LEVELS <- ms_primary_duration_days()
+          ORDERED_MAX_RANK <- max(length(RES_LEVELS), length(DURATION_LEVELS))
+          NUMERIC_TOL <- 1e-12
+          ''',
+          )
+          guard3 = '''if (!all(sort(unique(joint$resolution_s)) %in% sort(ms_primary_temporal_s()))) {
+            stop("RQ3 joint artifact contains temporal states outside the frozen primary design", call. = FALSE)
+          }
+          if (!all(sort(unique(joint$n_days)) %in% DURATION_LEVELS)) {
+            stop("RQ3 joint artifact contains duration states outside the frozen primary design", call. = FALSE)
+          }
+          if (!grepl(ms_analysis_design_id(), RQ3_VERSION, fixed = TRUE)) {
+            stop("RQ3 plotting inputs do not match the current frozen analysis design", call. = FALSE)
+          }
+          '''
+          replace_once(
+              "scripts/15_plot_rq3.R",
+              'ms_plot_assert_prefix(RQ3_VERSION, "rq3_v5_", "rq3_analysis_version")\n',
+              'ms_plot_assert_prefix(RQ3_VERSION, "rq3_v5_", "rq3_analysis_version")\n' + guard3,
+          )
+          remove_between(
+              "scripts/15_plot_rq3.R",
+              'p4a_main <- ggplot(requirement_summary, aes(epsilon, rank_median, color = metric_class)) +\n',
+              '# b. Distribution of the empirical entry threshold R_obs at each ordered state.\n',
+          )
+          remove_between(
+              "scripts/15_plot_rq3.R",
+              'p4b <- ggplot() +\n',
+              '# c. Unordered dimensions are empirical substitutability curves. Reconstruct the\n',
+          )
+          remove_between(
+              "scripts/15_plot_rq3.R",
+              'p4c <- ggplot(pair_ecdf,\n',
+              'readr::write_csv(\n  resolved_coverage |>\n',
+          )
+          # Remove late design rebinding/guard; it is now performed before plotting.
+          remove_between(
+              "scripts/15_plot_rq3.R",
+              'source(file.path("scripts", "utils", "analysis_design.R"), local = .GlobalEnv)\n\n# Rebind every display-level ordered axis to the single frozen design definition.\n',
+              '# -----------------------------------------------------------------------------\n# Main-text display refinement for Fig. 4.\n',
+          )
+          replace_once(
+              "scripts/15_plot_rq3.R",
+              'message("RQ3 v5 figures complete: single-dimension sufficiency and joint tolerance landscapes")\n\n# -----------------------------------------------------------------------------\n# Main-text display refinement for Fig. 4.\n',
+              '# -----------------------------------------------------------------------------\n# Main-text display refinement for Fig. 4.\n',
+          )
+          p = Path("scripts/15_plot_rq3.R")
+          text = p.read_text(encoding="utf-8").rstrip()
+          if text.endswith('# -----------------------------------------------------------------------------'):
+              text = text[:text.rfind('# -----------------------------------------------------------------------------')].rstrip()
+          text += '\n\nmessage("RQ3 v5 figures complete: single-dimension sufficiency and joint tolerance landscapes")\n'
+          p.write_text(text, encoding="utf-8")
+
+          # RQ1 execution docs now describe the actual canonical summary/checkpoint layer.
+          replace_once(
+              "docs/RQ1_EXECUTION.md",
+              '- metric geometry, standardizer, robust standardizer and availability.',
+              '- metric geometry, scale-anchor identifier, standardized `z`/`robust_z` and availability.',
+          )
+          replace_once(
+              "docs/RQ1_EXECUTION.md",
+              '- Duration: every nested pair of 1–6 complete-day windows in the core manifest, with adjacent d -> d+1 pairs flagged.',
+              '- Duration: canonical rows retain every nested pair of 1–6 complete-day windows; inferential summaries project them to the 15 generic n-day comparison types, with adjacent d -> d+1 types flagged.',
+          )
+          replace_once(
+              "docs/RQ1_EXECUTION.md",
+              'RQ1_PART_WORKERS controls parallel canonical-part generation. Both can\nbe set manually;',
+              'RQ1_PART_WORKERS controls parallel canonical-part generation and RQ1_FRAGMENT_WORKERS controls summary checkpoints. These can\nbe set manually;',
+          )
+
+          # Keep generated default-device output out of version control.
+          p = Path(".gitignore")
+          text = p.read_text(encoding="utf-8")
+          if "Rplots.pdf" not in text:
+              text = text.replace("# R\n", "# R\nRplots.pdf\n", 1)
+          p.write_text(text, encoding="utf-8")
+
+          # Static invariants for this cleanup.
+          checks = {
+              "scripts/10_rq1_analysis.R": ["rq1_v5_duration_type_canonical__"],
+              "scripts/12_rq2_analysis.R": ["rq1_assert_summary_version(rq1_artifact, pair_summary)"],
+              "scripts/14_rq3_analysis.R": ["rq1_assert_summary_version(pairwise_artifact, pair_summary)"],
+              "scripts/run_full_server.sh": ["bash scripts/run_downstream_server.sh"],
+          }
+          for path, needles in checks.items():
+              text = Path(path).read_text(encoding="utf-8")
+              for needle in needles:
+                  if needle not in text:
+                      raise RuntimeError(f"{path}: missing invariant {needle}")
+          p15 = Path("scripts/15_plot_rq3.R").read_text(encoding="utf-8")
+          if p15.count("p4a_main <-") != 1 or p15.count("p4b <- ggplot") != 1 or p15.count("p4c <- ggplot") != 1:
+              raise RuntimeError("RQ3 Fig. 4 still has duplicate plot implementations")
+          if "rq1_v5_oriented_pairwise_config_keyed__" in Path("scripts/10_rq1_analysis.R").read_text(encoding="utf-8"):
+              raise RuntimeError("Old RQ1 artifact key survived")
+          PY
+      - name: Parse every R source after cleanup
+        shell: Rscript {0}
+        run: |
+          files <- sort(list.files("scripts", pattern = "\\.R$", recursive = TRUE, full.names = TRUE))
+          if (!length(files)) stop("No R scripts found")
+          invisible(lapply(files, parse))
+          message("All ", length(files), " R scripts parsed successfully.")
+      - name: Check every shell script after cleanup
+        shell: bash
+        run: |
+          while IFS= read -r -d '' file; do bash -n "${file}"; done < <(find scripts -type f -name '*.sh' -print0)
+      - name: Commit audited tree
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f Rplots.pdf .github/workflows/one-shot-audit-cleanup.yml
+          git add -A
+          git commit -m "Finalize canonical audit cleanup"
+          git push
