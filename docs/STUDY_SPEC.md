@@ -28,9 +28,9 @@ Support is part of the estimand. Eye–chest and eye–wrist analyses retain the
 
 For metric k and smallest analysis unit i:
 
-    delta_ik(c_a,c_b) = value_ik(c_a) - value_ik(c_b)
+    delta_ik(c_a,c_b) = value_ik(c_b) - value_ik(c_a)
 
-for linear metrics. Circular-time metrics use the shortest signed circular difference. The canonical orientation is unique: for temporal resolution, state_a is coarser/less demanding and state_b is finer/more demanding; for duration, state_a is shorter and state_b is longer. Placement/optical pairs are explicit unordered facets, not burden-ordered candidate/reference states.
+for linear metrics. Circular-time metrics use the shortest signed circular difference from state_a to state_b. The canonical orientation is unique: for temporal resolution, state_a is coarser/less demanding and state_b is finer/more demanding; for duration, state_a is shorter and state_b is longer. Placement/optical pairs are explicit unordered facets with a target-aligned orientation, not burden-ordered candidate/reference states.
 
 Within comparison lattice g:
 
