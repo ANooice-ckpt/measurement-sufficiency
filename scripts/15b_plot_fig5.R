@@ -30,7 +30,7 @@ OUT_DIR <- file.path("results", "rq3", "figures")
 ms_plot_require_files(c(RQ1_SUMMARY_CSV, OBSERVED_RDS, SUFFICIENCY_CSV, REQUIREMENT_CSV,
                         UNORDERED_CSV, COVERAGE_CSV, CONVERGENCE_CSV, JOINT_CSV,
                         PARETO_OCCUPANCY_CSV),
-                        "RQ3 v5 plotting inputs")
+                      "RQ3 v5 plotting inputs")
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
 METRIC_CLASSES <- MS_METRIC_CLASSES
@@ -111,6 +111,7 @@ safe_q <- function(x, p) {
   if (length(x)) unname(quantile(x, p, names = FALSE)) else NA_real_
 }
 safe_mean <- function(x) {
+  x <- as.numeric(x)
   x <- x[is.finite(x)]
   if (length(x)) mean(x) else NA_real_
 }
@@ -122,15 +123,12 @@ theme_rq3 <- function(base_size = 6.7, legend_position = "none") {
 metric_legend <- ms_metric_legend(text_size = 5.35, point_size = 1.5, key_width_mm = 3.5)
 
 # =============================================================================
-# Fig. 5 — joint temporal × duration sufficiency geometry
+# Fig. 5 — joint temporal × duration sufficiency phase diagrams
 # =============================================================================
 
-# Fig. 5 is restricted to the temporal-resolution × monitoring-duration joint
-# design. Entry tolerance keeps the existing metric-equal pooling: support,
-# placement and optical facets are collapsed within metric first, followed by
-# the median across metrics. Pareto occupancy is read from the frozen
-# epsilon-interval output; no Pareto rule is refit here.
-
+# The measurement lattice is intrinsically discrete (6 temporal states × 6
+# monitoring durations). All fields below therefore retain discrete cells and
+# stepped boundaries. No interpolation, smoothing or monotonicity is imposed.
 metric_class_lookup5 <- rq1_summary |>
   distinct(metric, metric_class)
 
@@ -158,12 +156,21 @@ format_resolution5 <- function(x) {
     paste0(format(x, trim = TRUE), " s")
   )
 }
+format_resolution_compact5 <- function(x) {
+  x <- as.numeric(x)
+  ifelse(
+    x >= 60 & abs(x / 60 - round(x / 60)) < 1e-9,
+    paste0(format(round(x / 60), trim = TRUE), "m"),
+    paste0(format(x, trim = TRUE), "s")
+  )
+}
 fig5_res_labels <- format_resolution5(fig5_res_levels)
+fig5_res_labels_compact <- format_resolution_compact5(fig5_res_levels)
 joint_plot_base <- joint_plot_base |>
   mutate(resolution_rank = match(resolution_s, fig5_res_levels))
 
-# Equal-weight metric entry surface: facet pooling is performed within metric
-# before the metric-level median, matching the previous joint landscape.
+# Equal-weight metric entry surface: support / placement / optical facets are
+# collapsed within metric first, followed by the metric-level distribution.
 entry_metric_surface <- joint_plot_base |>
   filter(status == "resolved", is.finite(epsilon_entry), !is.na(metric_class)) |>
   group_by(metric, metric_class, resolution_s, resolution_rank, n_days) |>
@@ -203,7 +210,6 @@ entry_grid <- tidyr::crossing(
   left_join(joint_cell_status, by = c("resolution_rank", "n_days")) |>
   mutate(cell_unresolved = replace_na(cell_unresolved, FALSE))
 
-# Use one shared fill range for Panel a and the target-specific landscapes.
 entry_fill_max5 <- max(
   c(entry_grid$epsilon_entry_median, entry_metric_surface$epsilon_metric),
   na.rm = TRUE
@@ -211,234 +217,168 @@ entry_fill_max5 <- max(
 if (!is.finite(entry_fill_max5) || entry_fill_max5 <= 0) entry_fill_max5 <- 1
 entry_fill_limits5 <- c(0, entry_fill_max5)
 
-# Discrete tolerance boundaries: draw only the exposed edges of cells with
-# median entry tolerance <= epsilon. This is a stepped decision aid, not a
-# continuous contour or a new sufficiency estimate.
-FIG5_TOLERANCE_SLICES <- c(.10, .25, .50, .75)
-build_step_boundaries5 <- function(g, eps_levels, value_column,
-                                   half_width = .46, facet_value = NULL) {
-  is_sufficient <- function(x, y, eps) {
-    z <- g[g$resolution_rank == x & g$n_days == y, , drop = FALSE]
-    value <- z[[value_column]][[1]]
-    nrow(z) == 1L && isTRUE(is.finite(value)) &&
-      isTRUE(value <= eps + NUMERIC_TOL)
+# Build exposed cell edges for one scientifically interpretable threshold. The
+# helper supports both <= thresholds (entry tolerance) and >= thresholds
+# (occupancy / sufficient fractions), optionally within facets.
+build_stepped_boundary5 <- function(g, threshold, value_column,
+                                    direction = c("ge", "le"),
+                                    facet_column = NULL,
+                                    half_width = .46) {
+  direction <- match.arg(direction)
+  facet_values <- if (is.null(facet_column)) {
+    NA_character_
+  } else {
+    unique(as.character(g[[facet_column]]))
   }
-
+  facet_values <- facet_values[is.na(facet_values) | nzchar(facet_values)]
   segments <- list()
-  for (eps in eps_levels) {
-    eps_label <- paste0("epsilon = ", sprintf("%.2f", eps))
-    for (x in seq_along(fig5_res_levels)) {
-      for (y in fig5_days) {
-        if (!is_sufficient(x, y, eps)) next
-        x0 <- x
-        y0 <- y
-        if (x == 1L || !is_sufficient(x - 1L, y, eps)) {
-          segments[[length(segments) + 1L]] <- tibble(
-            epsilon_label = eps_label, x = x0 - half_width, xend = x0 - half_width,
-            y = y0 - half_width, yend = y0 + half_width
-          )
-        }
-        if (x == length(fig5_res_levels) || !is_sufficient(x + 1L, y, eps)) {
-          segments[[length(segments) + 1L]] <- tibble(
-            epsilon_label = eps_label, x = x0 + half_width, xend = x0 + half_width,
-            y = y0 - half_width, yend = y0 + half_width
-          )
-        }
-        if (y == min(fig5_days) || !is_sufficient(x, y - 1L, eps)) {
-          segments[[length(segments) + 1L]] <- tibble(
-            epsilon_label = eps_label, x = x0 - half_width, xend = x0 + half_width,
-            y = y0 - half_width, yend = y0 - half_width
-          )
-        }
-        if (y == max(fig5_days) || !is_sufficient(x, y + 1L, eps)) {
-          segments[[length(segments) + 1L]] <- tibble(
-            epsilon_label = eps_label, x = x0 - half_width, xend = x0 + half_width,
-            y = y0 + half_width, yend = y0 + half_width
-          )
-        }
+
+  for (facet_value in facet_values) {
+    gs <- if (is.null(facet_column)) {
+      g
+    } else {
+      g[as.character(g[[facet_column]]) == facet_value, , drop = FALSE]
+    }
+    if (!nrow(gs)) next
+
+    is_region <- function(x, y) {
+      z <- gs[gs$resolution_rank == x & gs$n_days == y, , drop = FALSE]
+      if (nrow(z) != 1L) return(FALSE)
+      unresolved <- if ("cell_unresolved" %in% names(z)) {
+        isTRUE(z$cell_unresolved[[1]])
+      } else {
+        FALSE
+      }
+      value <- z[[value_column]][[1]]
+      if (unresolved || !isTRUE(is.finite(value))) return(FALSE)
+      if (direction == "ge") {
+        value >= threshold - NUMERIC_TOL
+      } else {
+        value <= threshold + NUMERIC_TOL
       }
     }
-  }
-  out <- bind_rows(segments) |>
-    mutate(
-      epsilon_label = factor(
-        epsilon_label,
-        levels = paste0("epsilon = ", sprintf("%.2f", eps_levels))
-      )
-    )
-  if (!is.null(facet_value)) out$metric <- facet_value
-  out
-}
 
-# Exposed stepped edges for high-value regions on the discrete lattice. This is
-# used for the Pareto-occupancy and class-level sufficiency atlases; it only
-# summarizes already frozen cell values and does not interpolate between cells.
-build_region_boundaries5 <- function(g, thresholds, value_column,
-                                     group_column, facet_column,
-                                     half_width = .46) {
-  threshold_labels <- paste0(">=", sprintf("%d%%", round(100 * thresholds)))
-  segments <- list()
-  group_values <- unique(g[[group_column]])
-  group_values <- group_values[!is.na(group_values)]
+    add_edge <- function(x, xend, y, yend) {
+      row <- tibble(x = x, xend = xend, y = y, yend = yend)
+      if (!is.null(facet_column)) row[[facet_column]] <- facet_value
+      segments[[length(segments) + 1L]] <<- row
+    }
 
-  for (group_value in group_values) {
-    gs <- g[!is.na(g[[group_column]]) & g[[group_column]] == group_value, , drop = FALSE]
-    facet_values <- as.character(gs[[facet_column]])
-    facet_values <- facet_values[!is.na(facet_values)]
-    facet_label <- if (length(facet_values)) facet_values[[1]] else as.character(group_value)
-
-    for (j in seq_along(thresholds)) {
-      threshold <- thresholds[[j]]
-      is_region <- function(x, y) {
-        z <- gs[gs$resolution_rank == x & gs$n_days == y, , drop = FALSE]
-        if (nrow(z) != 1L) return(FALSE)
-        value <- z[[value_column]][[1]]
-        unresolved <- if ("cell_unresolved" %in% names(z)) isTRUE(z$cell_unresolved[[1]]) else FALSE
-        !unresolved && isTRUE(is.finite(value)) && isTRUE(value >= threshold - NUMERIC_TOL)
-      }
-
-      for (x in seq_along(fig5_res_levels)) {
-        for (y in fig5_days) {
-          if (!is_region(x, y)) next
-          x0 <- x
-          y0 <- y
-          if (x == 1L || !is_region(x - 1L, y)) {
-            segments[[length(segments) + 1L]] <- tibble(
-              facet_label = facet_label, region_level = threshold_labels[[j]],
-              x = x0 - half_width, xend = x0 - half_width,
-              y = y0 - half_width, yend = y0 + half_width
-            )
-          }
-          if (x == length(fig5_res_levels) || !is_region(x + 1L, y)) {
-            segments[[length(segments) + 1L]] <- tibble(
-              facet_label = facet_label, region_level = threshold_labels[[j]],
-              x = x0 + half_width, xend = x0 + half_width,
-              y = y0 - half_width, yend = y0 + half_width
-            )
-          }
-          if (y == min(fig5_days) || !is_region(x, y - 1L)) {
-            segments[[length(segments) + 1L]] <- tibble(
-              facet_label = facet_label, region_level = threshold_labels[[j]],
-              x = x0 - half_width, xend = x0 + half_width,
-              y = y0 - half_width, yend = y0 - half_width
-            )
-          }
-          if (y == max(fig5_days) || !is_region(x, y + 1L)) {
-            segments[[length(segments) + 1L]] <- tibble(
-              facet_label = facet_label, region_level = threshold_labels[[j]],
-              x = x0 - half_width, xend = x0 + half_width,
-              y = y0 + half_width, yend = y0 + half_width
-            )
-          }
+    for (x in seq_along(fig5_res_levels)) {
+      for (y in fig5_days) {
+        if (!is_region(x, y)) next
+        if (x == 1L || !is_region(x - 1L, y)) {
+          add_edge(x - half_width, x - half_width, y - half_width, y + half_width)
+        }
+        if (x == length(fig5_res_levels) || !is_region(x + 1L, y)) {
+          add_edge(x + half_width, x + half_width, y - half_width, y + half_width)
+        }
+        if (y == min(fig5_days) || !is_region(x, y - 1L)) {
+          add_edge(x - half_width, x + half_width, y - half_width, y - half_width)
+        }
+        if (y == max(fig5_days) || !is_region(x, y + 1L)) {
+          add_edge(x - half_width, x + half_width, y + half_width, y + half_width)
         }
       }
     }
   }
 
   if (!length(segments)) {
-    return(tibble(
-      facet_label = character(),
-      region_level = factor(character(), levels = threshold_labels),
-      x = numeric(), xend = numeric(), y = numeric(), yend = numeric()
-    ))
+    out <- tibble(x = numeric(), xend = numeric(), y = numeric(), yend = numeric())
+    if (!is.null(facet_column)) out[[facet_column]] <- character()
+    return(out)
   }
-  bind_rows(segments) |>
-    mutate(region_level = factor(region_level, levels = threshold_labels))
+  bind_rows(segments)
 }
 
-make_region_cells5 <- function(g, thresholds, value_column) {
-  threshold_labels <- paste0(">=", sprintf("%d%%", round(100 * thresholds)))
-  bind_rows(lapply(seq_along(thresholds), function(j) {
-    g |>
-      filter(
-        !cell_unresolved,
-        is.finite(.data[[value_column]]),
-        .data[[value_column]] >= thresholds[[j]] - NUMERIC_TOL
-      ) |>
-      mutate(region_level = threshold_labels[[j]])
-  })) |>
-    mutate(region_level = factor(region_level, levels = threshold_labels))
-}
-threshold_boundaries5 <- build_step_boundaries5(
-  entry_grid, FIG5_TOLERANCE_SLICES, "epsilon_entry_median"
+FIG5_TOLERANCE_COLORS <- c(
+  "#FBFAF7", "#F0E4CC", "#DEC08B", "#BC8C4D", "#80562C"
+)
+FIG5_FRACTION_COLORS <- c(
+  "#FAFBFB", "#E4ECEE", "#BCD1D7", "#7FA8B7", "#365F74"
+)
+FIG5_UNRESOLVED <- "#D8DCDE"
+FIG5_CELL_BORDER <- "#F0F2F2"
+
+# -----------------------------------------------------------------------------
+# a. Entry-tolerance phase diagram
+# -----------------------------------------------------------------------------
+# The fill carries the continuous entry-tolerance information. Only two decision
+# contours remain: epsilon = .50 is the primary frontier; .25 is a weak reference.
+entry_boundary25 <- build_stepped_boundary5(
+  entry_grid, .25, "epsilon_entry_median", direction = "le"
+)
+entry_boundary50 <- build_stepped_boundary5(
+  entry_grid, .50, "epsilon_entry_median", direction = "le"
 )
 
-# a. Overall joint entry-tolerance landscape. Unresolved boundary cells are
-# explicitly marked U and use a separate neutral grey.
 p5a <- ggplot(entry_grid, aes(resolution_rank, n_days, fill = epsilon_entry_median)) +
-  geom_tile(width = .92, height = .92, color = "white", linewidth = .34) +
+  geom_tile(width = .94, height = .94, color = FIG5_CELL_BORDER, linewidth = .14) +
   geom_tile(
     data = entry_grid |> filter(cell_unresolved),
-    aes(resolution_rank, n_days),
-    inherit.aes = FALSE, fill = "#D8DCDE", color = "white", linewidth = .34
+    aes(resolution_rank, n_days), inherit.aes = FALSE,
+    width = .94, height = .94, fill = FIG5_UNRESOLVED,
+    color = FIG5_CELL_BORDER, linewidth = .14
   ) +
-  geom_text(
-    aes(label = if_else(
-      is.finite(epsilon_entry_median),
-      formatC(epsilon_entry_median, format = "f", digits = 2), ""
-    )),
-    size = 1.48, color = "#4A5459", na.rm = TRUE
+  geom_segment(
+    data = entry_boundary25,
+    aes(x = x, y = y, xend = xend, yend = yend),
+    inherit.aes = FALSE, color = "#7F878B", linewidth = .27,
+    linetype = "22", lineend = "butt"
+  ) +
+  geom_segment(
+    data = entry_boundary50,
+    aes(x = x, y = y, xend = xend, yend = yend),
+    inherit.aes = FALSE, color = "#26373E", linewidth = .62,
+    lineend = "butt"
   ) +
   geom_text(
     data = entry_grid |> filter(cell_unresolved),
     aes(resolution_rank, n_days, label = "U"),
-    inherit.aes = FALSE, size = 2.2, fontface = "bold", color = "#596064"
+    inherit.aes = FALSE, size = 1.95, fontface = "bold", color = "#596064"
   ) +
-  geom_segment(
-    data = threshold_boundaries5,
-    aes(x = x, y = y, xend = xend, yend = yend, linetype = epsilon_label),
-    inherit.aes = FALSE, color = "#29383F", linewidth = .34, lineend = "butt"
-  ) +
-  scale_fill_ms_sequential(
+  scale_fill_gradientn(
+    colours = FIG5_TOLERANCE_COLORS,
     limits = entry_fill_limits5, oob = scales::squish,
     trans = scales::transform_asinh(),
-    na.value = "#F0F2F2",
-    name = "entry tolerance epsilon\n(R_obs)"
-  ) +
-  scale_linetype_manual(
-    values = c("solid", "dashed", "dotdash", "dotted"),
-    breaks = paste0("epsilon = ", sprintf("%.2f", FIG5_TOLERANCE_SLICES)),
-    labels = sprintf("%.2f", FIG5_TOLERANCE_SLICES),
-    name = "epsilon"
+    na.value = "#F1F2F2",
+    name = "entry tolerance, ε"
   ) +
   scale_x_continuous(
     breaks = seq_along(fig5_res_levels), labels = fig5_res_labels,
-    expand = expansion(add = .30)
+    expand = expansion(add = .28)
   ) +
   scale_y_continuous(
     breaks = fig5_days, labels = paste0(fig5_days, " d"),
-    expand = expansion(add = .30)
+    expand = expansion(add = .28)
   ) +
   coord_fixed(ratio = .86, clip = "off") +
   labs(
     title = "a  Joint entry-tolerance landscape",
-    subtitle = "darker = more permissive tolerance required; U = boundary unresolved",
-    x = "temporal resolution  (low to high burden)", y = "monitoring duration"
+    subtitle = "fill = median entry tolerance; thin dashed = ε 0.25; dark frontier = ε 0.50; U = unresolved",
+    x = "temporal resolution  (low → high burden)", y = "monitoring duration"
   ) +
-  theme_rq3(base_size = 6.1, legend_position = "bottom") +
+  theme_rq3(base_size = 6.0, legend_position = "bottom") +
   theme(
     panel.grid = element_blank(),
-    axis.text.x = element_text(angle = 30, hjust = 1, size = 4.85),
-    axis.text.y = element_text(size = 4.75),
-    plot.subtitle = element_text(size = 4.45, colour = "#666A6D", margin = margin(t = -1, b = 2)),
-    legend.text = element_text(size = 4.15),
-    legend.title = element_text(size = 4.25),
-    legend.key.width = grid::unit(5.8, "mm"),
-    legend.key.height = grid::unit(2.8, "mm"),
-    legend.box = "horizontal",
-    legend.box.just = "left",
-    legend.spacing.x = grid::unit(3, "mm")
+    axis.text.x = element_text(angle = 30, hjust = 1, size = 4.65),
+    axis.text.y = element_text(size = 4.65),
+    plot.subtitle = element_text(size = 4.10, colour = "#666A6D", margin = margin(t = -1, b = 2)),
+    legend.text = element_text(size = 4.0), legend.title = element_text(size = 4.10),
+    legend.key.height = grid::unit(2.5, "mm"),
+    legend.margin = margin(0, 0, 0, 0)
   ) +
-  guides(
-    fill = guide_colorbar(order = 1, title.position = "top", barwidth = grid::unit(20, "mm")),
-    linetype = guide_legend(order = 2, nrow = 1, byrow = TRUE)
-  )
+  guides(fill = guide_colorbar(
+    title.position = "top", barwidth = grid::unit(23, "mm"),
+    barheight = grid::unit(2.5, "mm"), ticks = TRUE
+  ))
 
-# b. Pareto occupancy at explicit tolerance slices. These are the frozen
-# interval-level Pareto flags, not tolerance-domain mean persistence. For a
-# selected epsilon beyond a metric facet's last observed breakpoint, the last
-# frozen interval is carried forward because the Pareto set is piecewise
-# constant after the final R_obs breakpoint.
+# -----------------------------------------------------------------------------
+# b. Pareto occupancy as a continuous phase field
+# -----------------------------------------------------------------------------
+# Pareto flags are read from the frozen epsilon-interval artifact. At each
+# tolerance slice, the cell fill is the fraction of available metric-facet
+# combinations occupying the frozen Pareto set; the only contour is 50%.
 FIG5_PARETO_SLICES <- c(.10, .25, .50)
 pareto_occupancy5 <- pareto_occupancy |>
   mutate(
@@ -488,10 +428,7 @@ if (any(pareto_slice_counts5$n_available.x != pareto_slice_counts5$n_available.y
 
 pareto_slice_summary5 <- pareto_slice5 |>
   group_by(epsilon, resolution_s, n_days) |>
-  summarise(
-    pareto_fraction = mean(pareto),
-    .groups = "drop"
-  )
+  summarise(pareto_fraction = mean(pareto), .groups = "drop")
 
 pareto_grid5 <- tidyr::crossing(
   epsilon = FIG5_PARETO_SLICES,
@@ -500,119 +437,92 @@ pareto_grid5 <- tidyr::crossing(
 ) |>
   left_join(
     pareto_slice_summary5 |>
-      mutate(
-        resolution_rank = match(resolution_s, fig5_res_levels),
-        epsilon_label = factor(
-          paste0("epsilon = ", sprintf("%.2f", epsilon)),
-          levels = paste0("epsilon = ", sprintf("%.2f", FIG5_PARETO_SLICES))
-        )
-      ) |>
-      select(epsilon, epsilon_label, resolution_rank, n_days, pareto_fraction),
+      mutate(resolution_rank = match(resolution_s, fig5_res_levels)) |>
+      select(epsilon, resolution_rank, n_days, pareto_fraction),
     by = c("epsilon", "resolution_rank", "n_days")
   ) |>
   left_join(joint_cell_status, by = c("resolution_rank", "n_days")) |>
   mutate(
+    epsilon_label = factor(
+      paste0("ε = ", sprintf("%.2f", epsilon)),
+      levels = paste0("ε = ", sprintf("%.2f", FIG5_PARETO_SLICES))
+    ),
     cell_unresolved = replace_na(cell_unresolved, FALSE),
     pareto_fraction = if_else(cell_unresolved, NA_real_, pareto_fraction)
   )
 
-pareto_region_thresholds5 <- c(.25, .50, .75)
-pareto_region_cells5 <- make_region_cells5(
-  pareto_grid5, pareto_region_thresholds5, "pareto_fraction"
-)
-pareto_presence_cells5 <- pareto_grid5 |>
-  filter(!cell_unresolved, is.finite(pareto_fraction), pareto_fraction > 0)
-pareto_region_boundaries5 <- build_region_boundaries5(
-  pareto_grid5, pareto_region_thresholds5, "pareto_fraction",
-  group_column = "epsilon", facet_column = "epsilon_label"
+pareto_boundary50 <- build_stepped_boundary5(
+  pareto_grid5, .50, "pareto_fraction", direction = "ge",
+  facet_column = "epsilon_label"
 ) |>
   mutate(epsilon_label = factor(
-    facet_label, levels = levels(pareto_grid5$epsilon_label)
+    epsilon_label, levels = levels(pareto_grid5$epsilon_label)
   ))
 
-p5b <- ggplot(pareto_grid5, aes(resolution_rank, n_days)) +
-  geom_tile(
-    width = .92, height = .92, fill = "#F7F9F9", color = "#E5EAEB", linewidth = .16
-  ) +
-  geom_tile(
-    data = pareto_presence_cells5,
-    aes(resolution_rank, n_days),
-    inherit.aes = FALSE, width = .92, height = .92,
-    fill = "#D7E8EA", color = NA
-  ) +
-  geom_tile(
-    data = pareto_region_cells5,
-    aes(resolution_rank, n_days, fill = region_level),
-    inherit.aes = FALSE,
-    width = .92, height = .92, alpha = .42, color = NA
-  ) +
+p5b <- ggplot(pareto_grid5, aes(resolution_rank, n_days, fill = pareto_fraction)) +
+  geom_tile(width = .94, height = .94, color = FIG5_CELL_BORDER, linewidth = .11) +
   geom_tile(
     data = pareto_grid5 |> filter(cell_unresolved),
-    aes(resolution_rank, n_days),
-    inherit.aes = FALSE, width = .92, height = .92,
-    fill = "#D8DCDE", color = NA
+    aes(resolution_rank, n_days), inherit.aes = FALSE,
+    width = .94, height = .94, fill = FIG5_UNRESOLVED,
+    color = FIG5_CELL_BORDER, linewidth = .11
+  ) +
+  geom_segment(
+    data = pareto_boundary50,
+    aes(x = x, y = y, xend = xend, yend = yend),
+    inherit.aes = FALSE, color = "#263E49", linewidth = .52,
+    lineend = "butt"
   ) +
   geom_text(
     data = pareto_grid5 |> filter(cell_unresolved),
     aes(resolution_rank, n_days, label = "U"),
-    inherit.aes = FALSE, size = 1.55, fontface = "bold", color = "#596064"
-  ) +
-  geom_segment(
-    data = pareto_region_boundaries5,
-    aes(
-      x = x, y = y, xend = xend, yend = yend,
-      linewidth = region_level
-    ),
-    inherit.aes = FALSE, color = "#355A6C", lineend = "butt"
+    inherit.aes = FALSE, size = 1.40, fontface = "bold", color = "#596064"
   ) +
   facet_wrap(~epsilon_label, nrow = 1) +
-  scale_fill_manual(
-    values = c(">=25%" = "#A8C6CC", ">=50%" = "#6F9CAD", ">=75%" = "#365F74"),
-    name = "Pareto occupancy region",
-    limits = names(c(">=25%" = 1, ">=50%" = 1, ">=75%" = 1)),
-    drop = FALSE,
-    guide = guide_legend(title.position = "top", nrow = 1, byrow = TRUE)
-  ) +
-  scale_linewidth_manual(
-    values = c(">=25%" = .30, ">=50%" = .43, ">=75%" = .58),
-    guide = "none"
+  scale_fill_gradientn(
+    colours = FIG5_FRACTION_COLORS, limits = c(0, 1), oob = scales::squish,
+    breaks = c(0, .25, .50, .75, 1), labels = scales::label_percent(accuracy = 1),
+    na.value = "#F1F2F2", name = "Pareto occupancy"
   ) +
   scale_x_continuous(
-    breaks = seq_along(fig5_res_levels), labels = fig5_res_labels,
-    expand = expansion(add = .16)
+    breaks = seq_along(fig5_res_levels), labels = fig5_res_labels_compact,
+    expand = expansion(add = .14)
   ) +
   scale_y_continuous(
     breaks = fig5_days, labels = paste0(fig5_days, " d"),
-    expand = expansion(add = .16)
+    expand = expansion(add = .14)
   ) +
   coord_fixed(ratio = .86, clip = "off") +
   labs(
-    title = "b  Pareto occupancy shifts as tolerance relaxes",
-    subtitle = "pale footprint = occupancy > 0; darker bands and boundaries = >= 25%, 50%, 75%",
+    title = "b  Pareto occupancy across tolerance",
+    subtitle = "continuous fill = fraction on the frozen Pareto set; dark frontier = 50%; U = unresolved",
     x = "temporal resolution", y = NULL
   ) +
-  theme_rq3(base_size = 5.5, legend_position = "bottom") +
+  theme_rq3(base_size = 5.45, legend_position = "bottom") +
   theme(
     panel.grid = element_blank(),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 3.35),
-    axis.text.y = element_text(size = 4.0),
-    axis.title.y = element_blank(),
-    strip.text = element_text(size = 4.7),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 3.25),
+    axis.text.y = element_text(size = 3.75), axis.title.y = element_blank(),
+    strip.text = element_text(size = 4.65, face = "bold"),
     plot.title = element_text(size = 6.0),
-    plot.subtitle = element_text(size = 3.95, colour = "#666A6D", margin = margin(t = -1, b = 1)),
-    panel.spacing = grid::unit(.6, "mm"),
-    legend.text = element_text(size = 3.9),
-    legend.title = element_text(size = 4.0),
-    legend.key.width = grid::unit(5.8, "mm"),
-    legend.key.height = grid::unit(2.6, "mm"),
+    plot.subtitle = element_text(size = 3.85, colour = "#666A6D", margin = margin(t = -1, b = 1)),
+    panel.spacing = grid::unit(.75, "mm"),
+    legend.text = element_text(size = 3.7), legend.title = element_text(size = 3.9),
+    legend.key.height = grid::unit(2.4, "mm"), legend.margin = margin(0, 0, 0, 0),
     plot.margin = margin(2.5, 1.5, 1.5, 1.5)
   ) +
-  guides(fill = guide_legend(title.position = "top", nrow = 1, byrow = TRUE))
+  guides(fill = guide_colorbar(
+    title.position = "top", barwidth = grid::unit(22, "mm"),
+    barheight = grid::unit(2.4, "mm"), ticks = TRUE
+  ))
 
-# c. Class-level sufficient-region geometry. A common epsilon = 0.50 keeps
-# all four requested classes structured rather than saturated in the current
-# frozen surface. Class fractions are computed after metric-level facet pooling.
-class_order5 <- c("timing", "duration", "level", "temporal dynamics")
+# -----------------------------------------------------------------------------
+# c. Class-specific sufficient-fraction phase diagrams
+# -----------------------------------------------------------------------------
+# At the shared epsilon = .50 slice, each cell is the fraction of metrics in the
+# class whose pooled entry tolerance is <= .50. Facets are ordered stringent to
+# permissive by the share of resolved lattice cells with >= 50% metrics sufficient.
+class_candidates5 <- c("timing", "duration", "level", "temporal dynamics")
 class_name5 <- c(
   "timing" = "Timing",
   "duration" = "Duration",
@@ -621,7 +531,7 @@ class_name5 <- c(
 )
 class_threshold5 <- .50
 class_metric_counts5 <- metric_class_lookup5 |>
-  filter(metric_class %in% class_order5) |>
+  filter(metric_class %in% class_candidates5) |>
   group_by(metric_class) |>
   summarise(n_class_metrics = n_distinct(metric), .groups = "drop")
 
@@ -633,7 +543,7 @@ metric_cell_status_all5 <- joint_plot_base |>
   )
 
 class_surface5 <- entry_metric_surface |>
-  filter(metric_class %in% class_order5) |>
+  filter(metric_class %in% class_candidates5) |>
   group_by(metric_class, resolution_rank, n_days) |>
   summarise(
     n_resolved_metrics = n_distinct(metric),
@@ -643,12 +553,12 @@ class_surface5 <- entry_metric_surface |>
 
 class_status5 <- metric_cell_status_all5 |>
   left_join(metric_class_lookup5, by = "metric") |>
-  filter(metric_class %in% class_order5) |>
+  filter(metric_class %in% class_candidates5) |>
   group_by(metric_class, resolution_rank, n_days) |>
   summarise(class_unresolved = any(cell_unresolved), .groups = "drop")
 
-class_grid5 <- tidyr::crossing(
-  metric_class = class_order5,
+class_grid_raw5 <- tidyr::crossing(
+  metric_class = class_candidates5,
   resolution_rank = seq_along(fig5_res_levels),
   n_days = fig5_days
 ) |>
@@ -658,126 +568,117 @@ class_grid5 <- tidyr::crossing(
   mutate(
     class_unresolved = replace_na(class_unresolved, FALSE),
     cell_unresolved = class_unresolved,
-    suff_fraction = if_else(class_unresolved, NA_real_, suff_fraction),
-    class_label = paste0(
-      unname(class_name5[metric_class]),
-      " (n = ", n_class_metrics, ")"
-    ),
-    class_label = factor(
-      class_label,
-      levels = paste0(unname(class_name5[class_order5]),
-                      " (n = ", class_metric_counts5$n_class_metrics[match(
-                        class_order5, class_metric_counts5$metric_class
-                      )], ")")
-    )
+    suff_fraction = if_else(class_unresolved, NA_real_, suff_fraction)
   )
 
-class_region_thresholds5 <- c(.25, .50, .75)
-class_region_cells5 <- make_region_cells5(
-  class_grid5, class_region_thresholds5, "suff_fraction"
-)
-class_region_boundaries5 <- build_region_boundaries5(
-  class_grid5, class_region_thresholds5, "suff_fraction",
-  group_column = "metric_class", facet_column = "class_label"
+class_rank5 <- class_grid_raw5 |>
+  group_by(metric_class) |>
+  summarise(
+    region_share = safe_mean(as.numeric(suff_fraction >= .50)),
+    mean_sufficient_fraction = safe_mean(suff_fraction),
+    .groups = "drop"
+  ) |>
+  arrange(region_share, mean_sufficient_fraction, metric_class) |>
+  mutate(
+    class_rank = row_number(),
+    class_label = paste0(
+      unname(class_name5[metric_class]), " · ",
+      if_else(is.finite(region_share), sprintf("%.0f%%", 100 * region_share), "NA")
+    )
+  )
+class_order5 <- class_rank5$metric_class
+class_label_levels5 <- class_rank5$class_label
+
+class_grid5 <- class_grid_raw5 |>
+  left_join(class_rank5, by = "metric_class") |>
+  mutate(class_label = factor(class_label, levels = class_label_levels5))
+
+class_boundary50 <- build_stepped_boundary5(
+  class_grid5, .50, "suff_fraction", direction = "ge",
+  facet_column = "class_label"
 ) |>
   mutate(class_label = factor(
-    facet_label, levels = levels(class_grid5$class_label)
+    class_label, levels = levels(class_grid5$class_label)
   ))
 
-class_region_fill_alpha5 <- c(">=25%" = .08, ">=50%" = .16, ">=75%" = .25)
-class_region_line_types5 <- c(">=25%" = "dotted", ">=50%" = "solid", ">=75%" = "dashed")
-class_region_line_widths5 <- c(">=25%" = .25, ">=50%" = .45, ">=75%" = .58)
-
-p5c <- ggplot(class_grid5, aes(resolution_rank, n_days)) +
-  geom_tile(
-    width = .92, height = .92, fill = "#FAFBFB", color = "#E5EAEB", linewidth = .16
-  ) +
-  geom_tile(
-    data = class_region_cells5,
-    aes(resolution_rank, n_days, alpha = region_level),
-    inherit.aes = FALSE, width = .92, height = .92,
-    fill = "#5A879B", color = NA
-  ) +
+p5c <- ggplot(class_grid5, aes(resolution_rank, n_days, fill = suff_fraction)) +
+  geom_tile(width = .94, height = .94, color = FIG5_CELL_BORDER, linewidth = .11) +
   geom_tile(
     data = class_grid5 |> filter(class_unresolved),
-    aes(resolution_rank, n_days),
-    inherit.aes = FALSE, width = .92, height = .92,
-    fill = "#D8DCDE", color = NA
+    aes(resolution_rank, n_days), inherit.aes = FALSE,
+    width = .94, height = .94, fill = FIG5_UNRESOLVED,
+    color = FIG5_CELL_BORDER, linewidth = .11
+  ) +
+  geom_segment(
+    data = class_boundary50,
+    aes(x = x, y = y, xend = xend, yend = yend),
+    inherit.aes = FALSE, color = "#263E49", linewidth = .54,
+    lineend = "butt"
   ) +
   geom_text(
     data = class_grid5 |> filter(class_unresolved),
     aes(resolution_rank, n_days, label = "U"),
-    inherit.aes = FALSE, size = 1.65, fontface = "bold", color = "#596064"
-  ) +
-  geom_segment(
-    data = class_region_boundaries5,
-    aes(
-      x = x, y = y, xend = xend, yend = yend,
-      linetype = region_level, linewidth = region_level
-    ),
-    inherit.aes = FALSE, color = "#365A6A", lineend = "butt"
+    inherit.aes = FALSE, size = 1.42, fontface = "bold", color = "#596064"
   ) +
   facet_wrap(~class_label, ncol = 4) +
-  scale_alpha_manual(values = class_region_fill_alpha5, guide = "none") +
-  scale_linetype_manual(
-    values = class_region_line_types5, name = "class sufficient fraction",
-    breaks = names(class_region_line_types5), labels = names(class_region_line_types5)
+  scale_fill_gradientn(
+    colours = FIG5_FRACTION_COLORS, limits = c(0, 1), oob = scales::squish,
+    breaks = c(0, .25, .50, .75, 1), labels = scales::label_percent(accuracy = 1),
+    na.value = "#F1F2F2", name = "fraction sufficient"
   ) +
-  scale_linewidth_manual(values = class_region_line_widths5, guide = "none") +
   scale_x_continuous(
-    breaks = seq_along(fig5_res_levels), labels = fig5_res_labels,
-    expand = expansion(add = .16)
+    breaks = seq_along(fig5_res_levels), labels = fig5_res_labels_compact,
+    expand = expansion(add = .14)
   ) +
   scale_y_continuous(
     breaks = fig5_days, labels = paste0(fig5_days, " d"),
-    expand = expansion(add = .16)
+    expand = expansion(add = .14)
   ) +
   coord_fixed(ratio = .86, clip = "off") +
   labs(
-    title = "c  Class-specific sufficient-region geometry",
+    title = "c  Class-specific sufficient regions",
     subtitle = paste0(
-      "shared epsilon = ", sprintf("%.2f", class_threshold5),
-      "; shaded regions = class fraction sufficient; solid = 50%; grey U = unresolved"
+      "shared ε = ", sprintf("%.2f", class_threshold5),
+      "; fill = class fraction sufficient; dark frontier = 50%; facets ordered stringent → permissive"
     ),
     x = "temporal resolution", y = "monitoring duration"
   ) +
-  theme_rq3(base_size = 5.5, legend_position = "bottom") +
+  theme_rq3(base_size = 5.45, legend_position = "bottom") +
   theme(
     panel.grid = element_blank(),
-    axis.text.x = element_text(angle = 50, hjust = 1, size = 3.05),
-    axis.text.y = element_text(size = 3.55),
-    strip.text = element_text(size = 4.3),
-    plot.title = element_text(size = 6.2),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 3.00),
+    axis.text.y = element_text(size = 3.40),
+    strip.text = element_text(size = 4.25, face = "bold"),
+    plot.title = element_text(size = 6.1),
     plot.subtitle = element_text(size = 3.55, colour = "#666A6D", margin = margin(t = -1, b = 1)),
-    panel.spacing = grid::unit(1.2, "mm"),
-    legend.text = element_text(size = 3.9),
-    legend.title = element_text(size = 4.0),
-    legend.key.width = grid::unit(5.8, "mm"),
-    legend.key.height = grid::unit(2.6, "mm"),
+    panel.spacing = grid::unit(1.15, "mm"),
+    legend.text = element_text(size = 3.75), legend.title = element_text(size = 3.9),
+    legend.key.height = grid::unit(2.4, "mm"), legend.margin = margin(0, 0, 0, 0),
     plot.margin = margin(2.5, 2, 1.5, 2)
   ) +
-  guides(
-    linetype = guide_legend(
-      title.position = "top", nrow = 1, byrow = TRUE
-    )
-  )
+  guides(fill = guide_colorbar(
+    title.position = "top", barwidth = grid::unit(24, "mm"),
+    barheight = grid::unit(2.4, "mm"), ticks = TRUE
+  ))
 
+# Keep the existing broad composition: one overall landscape, a tolerance
+# progression, then four class-specific landscapes. The global figure-polish
+# pass will normalize the final production box to the house style.
 fig5_top <- cowplot::plot_grid(
-  p5a, p5b, ncol = 2, rel_widths = c(.55, .45),
+  p5a, p5b, ncol = 2, rel_widths = c(.40, .60),
   align = "hv", axis = "tblr", greedy = TRUE
 )
 fig5_body <- cowplot::plot_grid(
-  fig5_top, p5c, ncol = 1, rel_heights = c(.68, .82),
+  fig5_top, p5c, ncol = 1, rel_heights = c(.82, 1.00),
   align = "v", axis = "l", greedy = TRUE
 )
-ms_plot_save(fig5_body, file.path(OUT_DIR, "Fig5_RQ3.png"), 7.2, 5.8)
-
+ms_plot_save(fig5_body, file.path(OUT_DIR, "Fig5_RQ3.png"), 7.40, 6.10)
 
 ms_plot_write_manifest(
   file.path(OUT_DIR, "figure_artifact_manifest.csv"),
   tibble(
-    figure = 'Fig5_RQ3',
-    input_artifact = 'rq3_joint_summary+rq3_pareto_occupancy',
+    figure = "Fig5_RQ3",
+    input_artifact = "rq3_joint_summary+rq3_pareto_occupancy",
     core_artifact_version = CORE_VERSION,
     rq1_analysis_version = RQ1_VERSION,
     rq2_analysis_version = NA_character_,
@@ -785,4 +686,4 @@ ms_plot_write_manifest(
   )
 )
 
-message("Fig. 5 complete: joint tolerance landscape and Pareto occupancy geometry.")
+message("Fig. 5 complete: entry tolerance, Pareto occupancy and class sufficiency as discrete phase fields.")
