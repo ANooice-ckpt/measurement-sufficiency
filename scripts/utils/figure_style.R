@@ -42,6 +42,7 @@ MS_DIVERGING <- c("#27577F", "#7FA8C7", "#F7F7F4", "#E3AE79", "#B96828")
 scale_color_ms_metric <- function(...) {
   ggplot2::scale_color_manual(values = MS_METRIC_COLORS, limits = MS_METRIC_CLASSES, drop = FALSE, ...)
 }
+scale_colour_ms_metric <- scale_color_ms_metric
 scale_fill_ms_metric <- function(...) {
   ggplot2::scale_fill_manual(values = MS_METRIC_COLORS, limits = MS_METRIC_CLASSES, drop = FALSE, ...)
 }
