@@ -4,9 +4,9 @@
 # scripts/13b_plot_fig3.R. It does not refit models, recompute gamma/Q/C, or
 # change the frozen interaction scope. The refinement is intentionally visual:
 #   - top block: distribution-first summaries, with raw metric scatter removed;
-#   - bottom block: summary-first transition backbones, with raw scatter removed;
+#   - bottom block: three profile small multiples with independent raw-Q y scales;
 #   - panel c adopts the same density + interval grammar as panel a;
-#   - the bottom block receives more vertical space.
+#   - all transition panels use one common profile grammar.
 
 ms_fig3_env_get <- function(env, name, default = NULL) {
   if (is.environment(env) && exists(name, envir = env, inherits = FALSE)) {
@@ -20,8 +20,9 @@ ms_fig3_refine_main <- function(env) {
   required <- c(
     "a_density", "a_stats", "fig3_q_axis", "fig3_q_breaks", "fig3_q_labels",
     "FIG3_CLASS_COLORS", "FIG3_DISPLAY_CLASSES", "coherence_polygons",
-    "coherence_class", "coherence_overall", "b_class_stats", "b_overall_stats",
-    "fig3_transition_order", "PAIR_CODES", "theme_rq2", "metric_legend_main"
+    "coherence_class", "coherence_overall", "b_class_stats_raw",
+    "b_overall_stats_raw", "fig3_transition_order", "PAIR_CODES",
+    "theme_rq2", "metric_legend_main"
   )
   objects <- lapply(required, function(nm) ms_fig3_env_get(env, nm))
   names(objects) <- required
@@ -37,8 +38,8 @@ ms_fig3_refine_main <- function(env) {
   coherence_polygons <- objects$coherence_polygons
   coherence_class <- objects$coherence_class
   coherence_overall <- objects$coherence_overall
-  b_class <- objects$b_class_stats
-  b_overall <- objects$b_overall_stats
+  b_class <- objects$b_class_stats_raw
+  b_overall <- objects$b_overall_stats_raw
   transition_order <- objects$fig3_transition_order
   pair_codes <- objects$PAIR_CODES
   theme_rq2_fn <- objects$theme_rq2
@@ -137,8 +138,6 @@ ms_fig3_refine_main <- function(env) {
 
   # ---------------------------------------------------------------------------
   # c. Directional coherence — same density + interval grammar as panel a.
-  # Raw metric points are intentionally omitted; the class summaries provide
-  # the second-level detail beneath the neutral overall density.
   # ---------------------------------------------------------------------------
   p3c <- ggplot2::ggplot() +
     ggplot2::geom_vline(xintercept = 0, linewidth = .34, colour = "#788186") +
@@ -204,17 +203,17 @@ ms_fig3_refine_main <- function(env) {
     )
 
   # ---------------------------------------------------------------------------
-  # b. Transition-specific non-additivity — no raw scatter. Overall median/IQR
-  # defines the backbone; coloured class medians/IQRs are the secondary layer.
+  # b. Transition-specific non-additivity.
+  #
+  # The three interaction pairs do not share an ordered x semantics, so they are
+  # treated as profile small multiples rather than one common coordinate field.
+  # Each panel keeps Q in its original units but receives its own 0-to-IQR-range
+  # y window. This removes the empty upper field created by the largest pair while
+  # preserving within-pair shape, class ordering and uncertainty. All three use
+  # the same grammar: neutral overall ribbon/backbone + coloured class profiles.
   # ---------------------------------------------------------------------------
-  class_x_offsets <- setNames(
-    seq(-.17, .17, length.out = length(display_classes)), display_classes
-  )
-
-  make_backbone_panel <- function(pair_name, title,
-                                  type = c("categorical", "ordered"),
-                                  show_y = TRUE, subtitle = NULL) {
-    type <- match.arg(type)
+  make_profile_panel <- function(pair_name, title, subtitle = NULL,
+                                 placement_linetypes = FALSE) {
     cls <- b_class |> dplyr::filter(pair_code == pair_name)
     overall <- b_overall |> dplyr::filter(pair_code == pair_name)
     steps <- transition_order |>
@@ -225,85 +224,87 @@ ms_fig3_refine_main <- function(env) {
       stop("Missing Fig. 3 transition summaries for ", pair_name, call. = FALSE)
     }
 
-    p <- ggplot2::ggplot() +
-      {if (isTRUE(q_axis$use_tail)) ggplot2::geom_hline(
-        yintercept = q_axis$focus, colour = "#C5C9CB",
-        linewidth = .22, linetype = "22", alpha = .90
-      ) else NULL}
-
-    if (identical(type, "categorical")) {
+    if (isTRUE(placement_linetypes)) {
       cls <- cls |>
-        dplyr::mutate(x_class = x_plot + unname(class_x_offsets[metric_class]))
-      p <- p +
-        ggplot2::geom_errorbar(
-          data = cls,
-          ggplot2::aes(
-            x = x_class, ymin = Q_q25_plot, ymax = Q_q75_plot,
-            colour = metric_class
-          ),
-          width = .040, linewidth = .42, alpha = .72
-        ) +
-        ggplot2::geom_point(
-          data = cls,
-          ggplot2::aes(x_class, Q_median_plot, colour = metric_class),
-          shape = 16, size = .96, alpha = .96
-        ) +
-        ggplot2::geom_errorbar(
-          data = overall,
-          ggplot2::aes(x = x_plot, ymin = Q_q25_plot, ymax = Q_q75_plot),
-          width = .072, linewidth = .92, colour = "#343B3F"
-        ) +
-        ggplot2::geom_point(
-          data = overall,
-          ggplot2::aes(x_plot, Q_median_plot),
-          shape = 21, size = 1.65, fill = "#343B3F", colour = "white", stroke = .20
+        dplyr::mutate(
+          profile_group = interaction(metric_class, placement, drop = TRUE),
+          profile_linetype = placement
+        )
+      overall <- overall |>
+        dplyr::mutate(
+          profile_group = placement,
+          profile_linetype = placement
         )
     } else {
-      p <- p +
-        ggplot2::geom_ribbon(
-          data = overall,
-          ggplot2::aes(
-            x = x_plot, ymin = Q_q25_plot, ymax = Q_q75_plot,
-            group = placement
-          ),
-          fill = "#6F777B", alpha = .11, colour = NA
-        ) +
-        ggplot2::geom_errorbar(
-          data = cls,
-          ggplot2::aes(
-            x = x_plot, ymin = Q_q25_plot, ymax = Q_q75_plot,
-            colour = metric_class
-          ),
-          width = .022, linewidth = .27, alpha = .34
-        ) +
-        ggplot2::geom_line(
-          data = cls,
-          ggplot2::aes(
-            x_plot, Q_median_plot, colour = metric_class,
-            linetype = placement, group = interaction(metric_class, placement)
-          ),
-          linewidth = .58, alpha = .82
-        ) +
-        ggplot2::geom_point(
-          data = cls,
-          ggplot2::aes(x_plot, Q_median_plot, colour = metric_class),
-          shape = 16, size = .92, alpha = .94
-        ) +
-        ggplot2::geom_line(
-          data = overall,
-          ggplot2::aes(
-            x_plot, Q_median_plot, linetype = placement, group = placement
-          ),
-          linewidth = 1.00, colour = "#343B3F"
-        ) +
-        ggplot2::geom_point(
-          data = overall,
-          ggplot2::aes(x_plot, Q_median_plot),
-          shape = 21, size = 1.55, fill = "#343B3F", colour = "white", stroke = .20
+      cls <- cls |>
+        dplyr::mutate(
+          profile_group = metric_class,
+          profile_linetype = "all"
+        )
+      overall <- overall |>
+        dplyr::mutate(
+          profile_group = "overall",
+          profile_linetype = "all"
         )
     }
 
-    p +
+    y_top_raw <- max(
+      c(cls$Q_q75, cls$Q_median, overall$Q_q75, overall$Q_median),
+      na.rm = TRUE
+    )
+    if (!is.finite(y_top_raw) || y_top_raw <= 0) y_top_raw <- .10
+    y_max <- y_top_raw * 1.14
+    y_acc <- if (y_max <= .15) .02 else if (y_max <= .35) .05 else .10
+    y_breaks <- scales::breaks_extended(n = 4)(c(0, y_max))
+    y_breaks <- sort(unique(c(
+      0,
+      y_breaks[is.finite(y_breaks) & y_breaks >= 0 & y_breaks <= y_max * 1.001]
+    )))
+
+    ggplot2::ggplot() +
+      ggplot2::geom_ribbon(
+        data = overall,
+        ggplot2::aes(
+          x = x_plot, ymin = Q_q25, ymax = Q_q75,
+          group = profile_group
+        ),
+        fill = "#7A8286", alpha = .10, colour = NA
+      ) +
+      ggplot2::geom_errorbar(
+        data = cls,
+        ggplot2::aes(
+          x = x_plot, ymin = Q_q25, ymax = Q_q75,
+          colour = metric_class
+        ),
+        width = .028, linewidth = .30, alpha = .42
+      ) +
+      ggplot2::geom_line(
+        data = cls,
+        ggplot2::aes(
+          x = x_plot, y = Q_median, colour = metric_class,
+          linetype = profile_linetype, group = profile_group
+        ),
+        linewidth = .60, alpha = .84
+      ) +
+      ggplot2::geom_point(
+        data = cls,
+        ggplot2::aes(x_plot, Q_median, colour = metric_class),
+        shape = 16, size = .96, alpha = .96
+      ) +
+      ggplot2::geom_line(
+        data = overall,
+        ggplot2::aes(
+          x = x_plot, y = Q_median,
+          linetype = profile_linetype, group = profile_group
+        ),
+        linewidth = 1.02, colour = "#343B3F"
+      ) +
+      ggplot2::geom_point(
+        data = overall,
+        ggplot2::aes(x_plot, Q_median),
+        shape = 21, size = 1.58,
+        fill = "#343B3F", colour = "white", stroke = .20
+      ) +
       ggplot2::scale_colour_manual(values = MS_METRIC_COLORS, guide = "none") +
       ggplot2::scale_linetype_manual(
         values = c(all = "solid", chest = "solid", wrist = "22"), guide = "none"
@@ -314,64 +315,68 @@ ms_fig3_refine_main <- function(env) {
         expand = ggplot2::expansion(mult = c(0, 0))
       ) +
       ggplot2::scale_y_continuous(
-        limits = c(0, q_axis$display_max), breaks = q_breaks,
-        labels = if (show_y) q_labels else NULL,
-        expand = ggplot2::expansion(mult = c(0, .010))
+        limits = c(0, y_max), breaks = y_breaks,
+        labels = scales::label_number(accuracy = y_acc)(y_breaks),
+        expand = ggplot2::expansion(mult = c(0, .012))
       ) +
-      ggplot2::labs(
-        title = title, subtitle = subtitle, x = NULL,
-        y = if (show_y) "Non-additivity, Q" else NULL
-      ) +
-      theme_rq2_fn(base_size = 5.30) +
+      ggplot2::labs(title = title, subtitle = subtitle, x = NULL, y = NULL) +
+      theme_rq2_fn(base_size = 5.35) +
       ggplot2::theme(
         panel.grid.major.x = ggplot2::element_blank(),
         panel.grid.major.y = ggplot2::element_line(colour = "#EDF0F1", linewidth = .17),
         axis.text.x = ggplot2::element_text(
           size = 3.88, lineheight = .82, margin = ggplot2::margin(t = 1)
         ),
-        axis.text.y = if (show_y) ggplot2::element_text(size = 3.88) else ggplot2::element_blank(),
-        axis.title.y = if (show_y) ggplot2::element_text(
-          size = 4.25, margin = ggplot2::margin(r = 2)
-        ) else ggplot2::element_blank(),
-        axis.ticks.y = if (show_y) ggplot2::element_line(
-          colour = "#505457", linewidth = .20
-        ) else ggplot2::element_blank(),
-        axis.line.y = ggplot2::element_blank(),
+        axis.text.y = ggplot2::element_text(size = 3.82),
+        axis.ticks.y = ggplot2::element_line(colour = "#505457", linewidth = .19),
+        axis.line.y = ggplot2::element_line(colour = "#505457", linewidth = .25),
         axis.line.x = ggplot2::element_line(colour = "#505457", linewidth = .27),
         axis.ticks.x = ggplot2::element_line(colour = "#505457", linewidth = .22),
         plot.title = ggplot2::element_text(
           size = 5.10, face = "bold", hjust = 0, margin = ggplot2::margin(b = 1)
         ),
         plot.subtitle = ggplot2::element_text(
-          size = 3.72, colour = "#666A6D", hjust = 0,
+          size = 3.68, colour = "#666A6D", hjust = 0,
           margin = ggplot2::margin(t = -1, b = 1)
         ),
-        plot.margin = ggplot2::margin(0, 2.5, 1.5, 2.5)
+        plot.margin = ggplot2::margin(0, 2.4, 1.2, 2.4)
       )
   }
 
-  p3b_po <- make_backbone_panel(
-    pair_codes[[1]], "Placement × optical", type = "categorical", show_y = TRUE
+  p3b_po <- make_profile_panel(
+    pair_codes[[1]], "Placement × optical",
+    subtitle = "chest ↔ wrist profile"
   )
-  p3b_ot <- make_backbone_panel(
-    pair_codes[[2]], "Optical × temporal", type = "ordered", show_y = FALSE
+  p3b_ot <- make_profile_panel(
+    pair_codes[[2]], "Optical × temporal"
   )
-  p3b_pt <- make_backbone_panel(
-    pair_codes[[3]], "Placement × temporal", type = "ordered", show_y = FALSE,
-    subtitle = "solid = chest · dashed = wrist"
+  p3b_pt <- make_profile_panel(
+    pair_codes[[3]], "Placement × temporal",
+    subtitle = "solid = chest · dashed = wrist",
+    placement_linetypes = TRUE
   )
 
   p3b_body <- cowplot::plot_grid(
     p3b_po, p3b_ot, p3b_pt, ncol = 3,
-    rel_widths = c(.82, 1.14, 1.30),
+    rel_widths = c(.86, 1.10, 1.26),
     align = "hv", axis = "tblr", greedy = TRUE
   )
   p3b <- cowplot::ggdraw() +
-    cowplot::draw_plot(p3b_body, x = 0, y = 0, width = 1, height = .925) +
+    cowplot::draw_plot(p3b_body, x = .032, y = 0, width = .968, height = .885) +
     cowplot::draw_label(
       "b  Transition-specific non-additivity",
-      x = .002, y = .996, hjust = 0, vjust = 1,
+      x = .002, y = .997, hjust = 0, vjust = 1,
       size = 6.25, fontface = "bold", colour = "#151515", fontfamily = MS_FONT
+    ) +
+    cowplot::draw_label(
+      "Independent y scales; profiles compare within each interaction pair",
+      x = .032, y = .958, hjust = 0, vjust = 1,
+      size = 3.75, colour = "#666A6D", fontfamily = MS_FONT
+    ) +
+    cowplot::draw_label(
+      "Non-additivity, Q",
+      x = .007, y = .44, angle = 90, hjust = .5, vjust = .5,
+      size = 4.55, colour = "#252B2E", fontfamily = MS_FONT
     )
 
   # Top block is intentionally a 3+1-column composition: panel a contains three
@@ -381,7 +386,7 @@ ms_fig3_refine_main <- function(env) {
     align = "hv", axis = "tblr", greedy = TRUE
   )
   p3_body <- cowplot::plot_grid(
-    p3_top, p3b, ncol = 1, rel_heights = c(.76, 1.24),
+    p3_top, p3b, ncol = 1, rel_heights = c(.82, 1.18),
     align = "v", axis = "lr", greedy = TRUE
   )
   p3 <- cowplot::plot_grid(
@@ -391,6 +396,6 @@ ms_fig3_refine_main <- function(env) {
 
   list(
     plot = p3, p3a = p3a, p3b = p3b, p3c = p3c,
-    width = 7.40, height = 7.05
+    width = 7.40, height = 6.90
   )
 }
