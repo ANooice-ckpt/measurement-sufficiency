@@ -1,16 +1,10 @@
-# Final display refinement for Fig. 1a.
+# Final display refinement for Fig. 1.
 #
-# This helper reuses only the already-computed RQ1 display summaries created by
+# This helper reuses only already-computed RQ1 display summaries created by
 # scripts/11_plot_fig1.R. It does not refit models, filter metrics, or redefine
-# any RQ1 estimand. The former nested marginal-quantile lozenges are replaced by
-# a direct cross grammar that matches the available statistics:
-#   - raw points: individual metric representations;
-#   - coloured crosses: metric-class marginal IQRs;
-#   - graphite crosses: dimension-level 10–90% ranges plus IQRs.
-#
-# Both coordinates use a zero-preserving pseudo-log display transform. This
-# expands the crowded near-zero region while compressing large values smoothly;
-# tick labels remain in the original A / rank-loss units.
+# any RQ1 estimand. Panel a uses a direct marginal-cross grammar; panel b keeps
+# the frozen target-aligned geometry but removes automatic extreme-metric labels
+# that compete with the data cloud.
 
 ms_fig1_env_get <- function(env, name, default = NULL) {
   if (is.environment(env) && exists(name, envir = env, inherits = FALSE)) {
@@ -41,13 +35,13 @@ ms_fig1_make_pseudolog_axis <- function(values, n_breaks = 6L) {
     ))
   }
 
-  # A low positive quantile defines the approximately-linear neighbourhood.
-  # The floor prevents a single near-zero numerical value from making the
-  # transformation excessively aggressive.
+  # Use a low positive quantile as the approximately linear neighbourhood.
+  # Compared with the previous 15th-percentile setting, the 10th percentile
+  # expands the crowded near-zero field a little more while still preserving 0.
   sigma <- as.numeric(stats::quantile(
-    positive, .15, na.rm = TRUE, names = FALSE, type = 8
+    positive, .10, na.rm = TRUE, names = FALSE, type = 8
   ))
-  sigma <- max(sigma, raw_max * .004, .Machine$double.eps)
+  sigma <- max(sigma, raw_max * .003, .Machine$double.eps)
 
   mapper <- function(x) {
     x <- suppressWarnings(as.numeric(x))
@@ -58,7 +52,7 @@ ms_fig1_make_pseudolog_axis <- function(values, n_breaks = 6L) {
   }
 
   mapped_max <- mapper(raw_max)
-  display_max <- mapped_max * 1.035
+  display_max <- mapped_max * 1.030
 
   # Build log-like nice raw-unit candidates, then retain a compact subset that
   # is approximately evenly spaced after transformation. Zero is always shown.
@@ -119,7 +113,7 @@ ms_fig1_make_pseudolog_axis <- function(values, n_breaks = 6L) {
 ms_fig1_refine_main <- function(env) {
   required <- c(
     "dimension_metric_a", "class_summary_a", "dimension_overall_a",
-    "theme_fig1"
+    "target_geometry", "theme_fig1"
   )
   objects <- lapply(required, function(nm) ms_fig1_env_get(env, nm))
   names(objects) <- required
@@ -128,9 +122,15 @@ ms_fig1_refine_main <- function(env) {
   metric_raw <- objects$dimension_metric_a
   cls_raw <- objects$class_summary_a
   overall_raw <- objects$dimension_overall_a
+  target_geometry <- objects$target_geometry
   theme_fig1_fn <- objects$theme_fig1
-  if (!nrow(metric_raw) || !nrow(cls_raw) || !nrow(overall_raw)) return(NULL)
+  if (!nrow(metric_raw) || !nrow(cls_raw) || !nrow(overall_raw) || !nrow(target_geometry)) {
+    return(NULL)
+  }
 
+  # ---------------------------------------------------------------------------
+  # a. Absolute and relational preservation
+  # ---------------------------------------------------------------------------
   x_axis <- ms_fig1_make_pseudolog_axis(metric_raw$A_typical, n_breaks = 6L)
   y_axis <- ms_fig1_make_pseudolog_axis(metric_raw$rank_loss_typical, n_breaks = 6L)
 
@@ -170,31 +170,27 @@ ms_fig1_refine_main <- function(env) {
         "Monitoring duration" = "Duration",
         .default = dimension_chr
       ),
-      label_dx = dplyr::case_when(
-        dimension_chr == "Temporal resolution" ~ .018,
-        dimension_chr == "Optical representation" ~ .018,
-        dimension_chr == "Monitoring duration" ~ .018,
-        TRUE ~ .018
-      ),
+      label_dx = .018,
       label_dy = dplyr::case_when(
-        dimension_chr == "Temporal resolution" ~ .036,
-        dimension_chr == "Optical representation" ~ .042,
-        dimension_chr == "Monitoring duration" ~ .040,
-        TRUE ~ .040
+        dimension_chr == "Temporal resolution" ~ .034,
+        dimension_chr == "Optical representation" ~ .040,
+        dimension_chr == "Monitoring duration" ~ .038,
+        TRUE ~ .038
       ),
       x_label = A_median_plot + label_dx * x_axis$display_max,
       y_label = rank_loss_median_plot + label_dy * y_axis$display_max
     )
 
-  p <- ggplot2::ggplot() +
-    # Individual representations: tertiary texture only.
+  p1a_core <- ggplot2::ggplot() +
+    # Individual representations are tertiary texture only.
     ggplot2::geom_point(
       data = metric,
       ggplot2::aes(A_plot, rank_loss_plot, colour = metric_class),
-      size = .38, alpha = .11, shape = 16
+      size = .34, alpha = .080, shape = 16
     ) +
 
-    # Metric-class summaries: marginal IQR cross.
+    # Metric-class summaries stay visible on close inspection but no longer
+    # compete with the dimension-level graphite backbone.
     ggplot2::geom_segment(
       data = cls,
       ggplot2::aes(
@@ -202,7 +198,7 @@ ms_fig1_refine_main <- function(env) {
         y = rank_loss_median_plot, yend = rank_loss_median_plot,
         colour = metric_class
       ),
-      linewidth = .46, alpha = .70, lineend = "round"
+      linewidth = .34, alpha = .50, lineend = "round"
     ) +
     ggplot2::geom_segment(
       data = cls,
@@ -211,23 +207,23 @@ ms_fig1_refine_main <- function(env) {
         y = rank_loss_q25_plot, yend = rank_loss_q75_plot,
         colour = metric_class
       ),
-      linewidth = .46, alpha = .70, lineend = "round"
+      linewidth = .34, alpha = .50, lineend = "round"
     ) +
     ggplot2::geom_point(
       data = cls,
       ggplot2::aes(A_median_plot, rank_loss_median_plot, colour = metric_class),
-      size = .98, alpha = .98, shape = 16
+      size = .86, alpha = .94, shape = 16
     ) +
 
-    # Dimension summaries: thin 10–90% cross, thick IQR cross, strong centre.
+    # Dimension summaries are the primary visual layer.
     ggplot2::geom_segment(
       data = overall,
       ggplot2::aes(
         x = A_q10_plot, xend = A_q90_plot,
         y = rank_loss_median_plot, yend = rank_loss_median_plot
       ),
-      inherit.aes = FALSE, colour = "#5E666A", linewidth = .36,
-      alpha = .46, lineend = "round"
+      inherit.aes = FALSE, colour = "#5E666A", linewidth = .34,
+      alpha = .44, lineend = "round"
     ) +
     ggplot2::geom_segment(
       data = overall,
@@ -235,8 +231,8 @@ ms_fig1_refine_main <- function(env) {
         x = A_median_plot, xend = A_median_plot,
         y = rank_loss_q10_plot, yend = rank_loss_q90_plot
       ),
-      inherit.aes = FALSE, colour = "#5E666A", linewidth = .36,
-      alpha = .46, lineend = "round"
+      inherit.aes = FALSE, colour = "#5E666A", linewidth = .34,
+      alpha = .44, lineend = "round"
     ) +
     ggplot2::geom_segment(
       data = overall,
@@ -244,8 +240,8 @@ ms_fig1_refine_main <- function(env) {
         x = A_q25_plot, xend = A_q75_plot,
         y = rank_loss_median_plot, yend = rank_loss_median_plot
       ),
-      inherit.aes = FALSE, colour = "#252B2E", linewidth = .88,
-      alpha = .94, lineend = "round"
+      inherit.aes = FALSE, colour = "#252B2E", linewidth = .90,
+      alpha = .96, lineend = "round"
     ) +
     ggplot2::geom_segment(
       data = overall,
@@ -253,50 +249,137 @@ ms_fig1_refine_main <- function(env) {
         x = A_median_plot, xend = A_median_plot,
         y = rank_loss_q25_plot, yend = rank_loss_q75_plot
       ),
-      inherit.aes = FALSE, colour = "#252B2E", linewidth = .88,
-      alpha = .94, lineend = "round"
+      inherit.aes = FALSE, colour = "#252B2E", linewidth = .90,
+      alpha = .96, lineend = "round"
     ) +
     ggplot2::geom_point(
       data = overall,
       ggplot2::aes(A_median_plot, rank_loss_median_plot),
-      inherit.aes = FALSE, shape = 23, size = 2.12,
+      inherit.aes = FALSE, shape = 23, size = 2.08,
       fill = "#252B2E", colour = "white", stroke = .30
     ) +
     ggplot2::geom_text(
       data = overall,
       ggplot2::aes(x_label, y_label, label = short_label),
       inherit.aes = FALSE, family = MS_FONT, fontface = "bold",
-      size = 1.70, colour = "#252B2E", hjust = 0, vjust = 0
+      size = 1.68, colour = "#252B2E", hjust = 0, vjust = 0
     ) +
 
     scale_color_ms_metric(guide = "none") +
     ggplot2::scale_x_continuous(
       limits = c(0, x_axis$display_max),
       breaks = x_axis$map(x_axis$breaks), labels = x_axis$labels,
-      expand = ggplot2::expansion(mult = c(0, .012))
+      expand = ggplot2::expansion(mult = c(0, .010))
     ) +
     ggplot2::scale_y_continuous(
       limits = c(0, y_axis$display_max),
       breaks = y_axis$map(y_axis$breaks), labels = y_axis$labels,
-      expand = ggplot2::expansion(mult = c(0, .018))
+      expand = ggplot2::expansion(mult = c(0, .015))
     ) +
     ggplot2::labs(
       x = "Absolute distortion, A",
       y = "Rank loss, 1 − Spearman ρ"
     ) +
-    theme_fig1_fn(base_size = 6.75) +
+    theme_fig1_fn(base_size = 6.70) +
     ggplot2::theme(
-      panel.grid.major = ggplot2::element_line(colour = "#EFF1F2", linewidth = .20),
+      panel.grid.major = ggplot2::element_line(colour = "#F0F2F3", linewidth = .18),
       panel.grid.minor = ggplot2::element_blank(),
-      axis.title = ggplot2::element_text(size = 5.25),
-      axis.text = ggplot2::element_text(size = 4.45),
-      plot.margin = ggplot2::margin(1.0, 2.0, 1.5, 2.0)
+      axis.title = ggplot2::element_text(size = 5.15),
+      axis.text = ggplot2::element_text(size = 4.35),
+      plot.margin = ggplot2::margin(.8, 2.0, 1.2, 2.0)
     )
 
-  subtitle <- paste0(
-    "zero-preserving pseudo-log axes · points = individual representations · ",
-    "coloured crosses = class IQR · graphite crosses = dimension 10–90% / IQR"
+  assoc_text <- "Crosses show marginal ranges across representations; axes use zero-preserving pseudo-log scaling."
+
+  # ---------------------------------------------------------------------------
+  # b. Target-aligned magnitude and directional coherence
+  # ---------------------------------------------------------------------------
+  # The old automatic labels selected the maximum-A and maximum-|B/A| metric in
+  # each facet. They often landed against plot boundaries or produced long raw
+  # metric strings. The frozen data are unchanged; the main panel now lets the
+  # distribution itself carry the message and leaves metric identities to audit
+  # outputs / supplementary views.
+  target_geometry_panel <- function(panel_name, show_x_title = TRUE) {
+    d <- target_geometry |> dplyr::filter(facet_label == panel_name)
+    if (!nrow(d)) stop("No target geometry rows for panel: ", panel_name)
+    y_lim <- dplyr::first(d$y_limit)
+    panel_title <- dplyr::case_when(
+      panel_name == "Placement · chest/wrist → eye" ~ "Placement ·\nchest/wrist → eye",
+      panel_name == "Optical representation · LIGHT → MEDI" ~ "Optical representation ·\nLIGHT → MEDI",
+      TRUE ~ panel_name
+    )
+
+    ggplot2::ggplot() +
+      ggplot2::geom_vline(xintercept = 0, linewidth = .28, colour = "#A8ADB0") +
+      ggplot2::geom_point(
+        data = d |> dplyr::filter(!offscale),
+        ggplot2::aes(coherence, A_display, colour = metric_class, shape = transition),
+        size = 1.24, alpha = .80
+      ) +
+      ggplot2::geom_point(
+        data = d |> dplyr::filter(offscale),
+        ggplot2::aes(coherence, A_display),
+        inherit.aes = FALSE, shape = 4, size = 1.42, stroke = .40,
+        colour = "#303437"
+      ) +
+      scale_color_ms_metric(guide = "none") +
+      ggplot2::scale_shape_discrete(name = NULL) +
+      ggplot2::scale_x_continuous(
+        limits = c(-1, 1),
+        breaks = c(-1, -.5, 0, .5, 1),
+        expand = ggplot2::expansion(mult = c(.012, .012))
+      ) +
+      ggplot2::scale_y_continuous(
+        limits = c(0, y_lim),
+        breaks = scales::breaks_extended(n = 4),
+        expand = ggplot2::expansion(mult = c(0, .025))
+      ) +
+      ggplot2::labs(
+        title = panel_title,
+        x = if (show_x_title) "Directional coherence, B/A" else NULL,
+        y = NULL
+      ) +
+      theme_fig1_fn(base_size = 7.0) +
+      ggplot2::theme(
+        panel.grid.major = ggplot2::element_blank(),
+        plot.title = ggplot2::element_text(
+          size = 5.75, lineheight = .90, face = "bold", hjust = .5,
+          margin = ggplot2::margin(b = 1)
+        ),
+        axis.text.x = ggplot2::element_text(size = 5.0),
+        plot.margin = ggplot2::margin(1.5, 2.5, 1.5, 2.5)
+      )
+  }
+
+  p1b_top <- target_geometry_panel("Placement · chest/wrist → eye", show_x_title = FALSE)
+  p1b_bottom <- target_geometry_panel("Optical representation · LIGHT → MEDI", show_x_title = TRUE)
+  p1b_core <- cowplot::plot_grid(
+    p1b_top, p1b_bottom,
+    ncol = 1, rel_heights = c(1, 1),
+    align = "v", axis = "lr", greedy = TRUE
   )
 
-  list(p1a_core = p, assoc_text = subtitle)
+  p1b_shape_legend <- cowplot::get_legend(
+    ggplot2::ggplot(
+      target_geometry |> dplyr::filter(!offscale),
+      ggplot2::aes(coherence, A_display, shape = transition)
+    ) +
+      ggplot2::geom_point(size = 1.45, colour = "#3B3B3B") +
+      ggplot2::scale_shape_discrete(name = NULL) +
+      ggplot2::theme_void(base_family = MS_FONT) +
+      ggplot2::theme(
+        legend.position = "bottom",
+        legend.text = ggplot2::element_text(size = 4.10),
+        legend.key.width = grid::unit(2.4, "mm"),
+        legend.spacing.x = grid::unit(.32, "mm"),
+        legend.margin = ggplot2::margin(0, 0, 0, 0)
+      )
+  )
+
+  list(
+    p1a_core = p1a_core,
+    assoc_text = assoc_text,
+    p1b_core = p1b_core,
+    p1b_shape_legend = p1b_shape_legend
+  )
 }
