@@ -78,12 +78,13 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
   # ---------------------------------------------------------------------------
   # a. Overall coefficient backbone + clearly separated dimension fingerprint
   # ---------------------------------------------------------------------------
-  # The four secondary dimension summaries are spread farther from the central
-  # overall row. White underlays act as a halo where thin dimension IQRs cross
-  # the graphite overall IQR, preventing the secondary marks from disappearing.
+  # Dimension summaries are separated primarily by vertical displacement and
+  # their own graphite strokes. No white halo is used: the secondary fingerprint
+  # should remain visually continuous rather than cutting holes through the
+  # overall coefficient backbone.
   refined_offsets <- c(
-    placement = -.19, optical = -.063,
-    temporal = .063, duration = .19
+    placement = -.20, optical = -.067,
+    temporal = .067, duration = .20
   )
   dim <- coef_summary_dim_plot |>
     dplyr::mutate(y_refined = y + unname(refined_offsets[dimension]))
@@ -111,41 +112,28 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
       ggplot2::geom_segment(
         data = overall,
         ggplot2::aes(x = estimate_q05_plot, xend = estimate_q95_plot, y = y, yend = y),
-        linewidth = .26, alpha = .29, colour = "#596166", lineend = "round"
+        linewidth = .24, alpha = .26, colour = "#687075", lineend = "round"
       ) +
       ggplot2::geom_segment(
         data = overall,
         ggplot2::aes(x = estimate_q25_plot, xend = estimate_q75_plot, y = y, yend = y),
-        linewidth = .70, alpha = .82, colour = "#3F474B", lineend = "round"
+        linewidth = .60, alpha = .76, colour = "#4A5256", lineend = "round"
       ) +
       ggplot2::geom_point(
         data = overall,
         ggplot2::aes(estimate_q50_plot, y, colour = predictor_family),
-        shape = 18, size = .92, alpha = 1
-      ) +
-      # White halo behind dimension-specific IQRs.
-      ggplot2::geom_segment(
-        data = dim_i,
-        ggplot2::aes(x = estimate_q25_plot, xend = estimate_q75_plot,
-                     y = y_refined, yend = y_refined),
-        linewidth = .62, alpha = .98, colour = "white", lineend = "round"
+        shape = 18, size = .90, alpha = 1
       ) +
       ggplot2::geom_segment(
         data = dim_i,
         ggplot2::aes(x = estimate_q25_plot, xend = estimate_q75_plot,
                      y = y_refined, yend = y_refined),
-        linewidth = .18, alpha = .58, colour = "#70787C", lineend = "round"
-      ) +
-      # White point underlay keeps open dimension glyphs legible on the backbone.
-      ggplot2::geom_point(
-        data = dim_i,
-        ggplot2::aes(estimate_q50_plot, y_refined, shape = dimension_label),
-        size = .96, stroke = .72, colour = "white", fill = "white", alpha = 1
+        linewidth = .22, alpha = .72, colour = "#747C80", lineend = "round"
       ) +
       ggplot2::geom_point(
         data = dim_i,
         ggplot2::aes(estimate_q50_plot, y_refined, shape = dimension_label),
-        size = .60, stroke = .25, colour = "#616A6F", fill = "white", alpha = .96
+        size = .66, stroke = .32, colour = "#596267", fill = "white", alpha = .98
       ) +
       ggplot2::geom_text(
         data = miss_i,
@@ -254,32 +242,32 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
         data = raw,
         ggplot2::aes(delta_A, delta_direction,
                      group = interaction(metric, metric_class), colour = metric_class),
-        linewidth = .09, alpha = .032
+        linewidth = .11, alpha = .085
       ) +
       ggplot2::geom_point(
         data = raw |> dplyr::filter(state_num > 1L),
         ggplot2::aes(delta_A, delta_direction, colour = metric_class),
-        size = .20, alpha = .070
+        size = .26, alpha = .15
       ) +
       ggplot2::geom_path(
         data = cls,
         ggplot2::aes(delta_A, delta_direction, group = metric_class, colour = metric_class),
-        linewidth = .50, alpha = .74
+        linewidth = .56, alpha = .84
       ) +
       ggplot2::geom_point(
         data = cls |> dplyr::filter(state_num > 1L),
         ggplot2::aes(delta_A, delta_direction, colour = metric_class, shape = state),
-        size = .86, alpha = .96
+        size = .94, alpha = .98
       ) +
       ggplot2::geom_path(
         data = ov,
         ggplot2::aes(delta_A, delta_direction, group = 1),
-        linewidth = 1.00, colour = "#343B3F"
+        linewidth = .98, colour = "#343B3F"
       ) +
       ggplot2::geom_point(
         data = ov,
         ggplot2::aes(delta_A, delta_direction, shape = state),
-        size = 1.34, colour = "#343B3F", fill = "white", stroke = .30
+        size = 1.32, colour = "#343B3F", fill = "white", stroke = .30
       ) +
       ggplot2::geom_text(
         data = ov |> dplyr::filter(state_num > 1L),
