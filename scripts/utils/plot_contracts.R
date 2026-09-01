@@ -21,6 +21,10 @@ if (!exists("ms_fig2_refine_main", mode = "function") &&
     file.exists("scripts/utils/fig2_refinement.R")) {
   source("scripts/utils/fig2_refinement.R")
 }
+if (!exists("ms_fig3_refine_main", mode = "function") &&
+    file.exists("scripts/utils/fig3_refinement.R")) {
+  source("scripts/utils/fig3_refinement.R")
+}
 
 # The final composition pass is visual only. Main scripts still construct every
 # panel and scientific layer; this helper only regularizes layout immediately
@@ -198,6 +202,24 @@ ms_plot_save <- function(plot, path, width, height,
       if (!is.null(refined$p2c)) assign("p2c", refined$p2c, envir = caller_env)
       if (!is.null(refined$top_recoverable)) {
         assign("fig2_top_recoverable", refined$top_recoverable, envir = caller_env)
+      }
+    }
+  }
+
+  if (identical(basename(path), "Fig3_RQ2.png") &&
+      exists("ms_fig3_refine_main", mode = "function")) {
+    refined <- ms_fig3_refine_main(caller_env)
+    if (is.list(refined) && !is.null(refined$plot)) {
+      plot <- refined$plot
+      assign("p3", refined$plot, envir = caller_env)
+      if (!is.null(refined$p3a)) assign("p3a", refined$p3a, envir = caller_env)
+      if (!is.null(refined$p3b)) assign("p3b", refined$p3b, envir = caller_env)
+      if (!is.null(refined$p3c)) assign("p3c", refined$p3c, envir = caller_env)
+      if (!is.null(refined$width) && is.finite(refined$width[[1]])) {
+        width <- as.numeric(refined$width[[1]])
+      }
+      if (!is.null(refined$height) && is.finite(refined$height[[1]])) {
+        height <- as.numeric(refined$height[[1]])
       }
     }
   }
