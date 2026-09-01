@@ -37,6 +37,38 @@ ms_fig2_robust_symmetric_limit <- function(values, foreground = numeric(),
   lim
 }
 
+# Three deterministic symmetric ticks preserve the signed, zero-centred geometry
+# while guaranteeing that compact panels show more than the origin alone.
+ms_fig2_three_symmetric_breaks <- function(lim) {
+  lim <- abs(as.numeric(lim)[[1]])
+  if (!is.finite(lim) || lim <= 0) return(0)
+  target <- .72 * lim
+  exponent <- floor(log10(target))
+  fraction <- target / (10 ^ exponent)
+  nice_fraction <- if (fraction < 1.5) 1 else if (fraction < 3.5) 2 else if (fraction < 7.5) 5 else 10
+  tick <- nice_fraction * (10 ^ exponent)
+  if (!is.finite(tick) || tick <= 0) tick <- lim / 2
+  if (tick >= lim) tick <- tick / 2
+  c(-tick, 0, tick)
+}
+
+ms_fig2_short_metric <- function(x) {
+  x <- stringr::str_replace_all(as.character(x), "_", " ")
+  x <- stringr::str_squish(x)
+  x <- stringr::str_replace(x, stringr::regex("^frequency crossing\\s*", ignore_case = TRUE),
+                            "Crossing freq. ")
+  x <- stringr::str_replace(x, stringr::regex("^total duration pulses above\\s*", ignore_case = TRUE),
+                            "Pulse duration > ")
+  x <- stringr::str_replace(x, stringr::regex("^total duration pulses\\s*", ignore_case = TRUE),
+                            "Pulse duration ")
+  x <- stringr::str_replace(x, stringr::regex("^bright mean level$", ignore_case = TRUE),
+                            "Mean bright level")
+  x <- stringr::str_replace(x, stringr::regex("^bright threshold$", ignore_case = TRUE),
+                            "Bright threshold")
+  x <- stringr::str_replace(x, stringr::regex("^dose$", ignore_case = TRUE), "Dose")
+  stringr::str_trunc(x, width = 18, side = "right", ellipsis = "…")
+}
+
 ms_fig2_add_family_guides <- function(plot, boundaries) {
   if (length(boundaries)) {
     plot + ggplot2::geom_hline(
@@ -53,7 +85,7 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
     "PREDICTOR_COLORS", "DIMENSION_SHAPES", "coef_window_global",
     "conditional_shift_path_metric", "conditional_shift_class_path",
     "conditional_shift_overall_path", "DIMENSIONS", "DIM_TITLES",
-    "joint_cv_metric_panel", "metric_legend_right"
+    "joint_cv_metric_panel"
   )
   objects <- lapply(required, function(nm) ms_fig2_env_get(env, nm))
   names(objects) <- required
@@ -207,13 +239,31 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
       c(cls$delta_direction, ov$delta_direction),
       prob = .95, pad = 1.16, fallback = .06, hard_cap = 2.05
     )
+    x_breaks <- ms_fig2_three_symmetric_breaks(x_lim)
+    y_breaks <- ms_fig2_three_symmetric_breaks(y_lim)
+
+    # M/H are data-identical points even when they sit nearly on top of one
+    # another. Separate only their text labels, with short leader lines; the
+    # plotted coordinates themselves remain linear and untouched.
     ov <- ov |>
       dplyr::mutate(
         state_label = dplyr::case_when(
           state_num == 2L ~ "M",
           state_num == 3L ~ "H",
           TRUE ~ ""
-        )
+        ),
+        label_dx = dplyr::case_when(
+          state_num == 2L ~ -.070,
+          state_num == 3L ~  .070,
+          TRUE ~ 0
+        ),
+        label_dy = dplyr::case_when(
+          state_num == 2L ~  .085,
+          state_num == 3L ~  .105,
+          TRUE ~ 0
+        ),
+        label_x = delta_A + label_dx * x_lim,
+        label_y = delta_direction + label_dy * y_lim
       )
 
     ggplot2::ggplot() +
@@ -250,10 +300,15 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
         ggplot2::aes(delta_A, delta_direction, shape = state),
         size = 1.32, colour = "#343B3F", fill = "white", stroke = .30
       ) +
+      ggplot2::geom_segment(
+        data = ov |> dplyr::filter(state_num > 1L),
+        ggplot2::aes(x = delta_A, y = delta_direction, xend = label_x, yend = label_y),
+        inherit.aes = FALSE, linewidth = .16, colour = "#7A8084", alpha = .78
+      ) +
       ggplot2::geom_text(
         data = ov |> dplyr::filter(state_num > 1L),
-        ggplot2::aes(delta_A, delta_direction, label = state_label),
-        nudge_x = .045 * x_lim, nudge_y = .055 * y_lim,
+        ggplot2::aes(label_x, label_y, label = state_label),
+        inherit.aes = FALSE,
         size = 1.38, colour = "#343B3F", fontface = "bold"
       ) +
       scale_colour_ms_metric(guide = "none") +
@@ -261,11 +316,11 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
         values = c("Low" = 1, "Middle" = 16, "High" = 18), guide = "none"
       ) +
       ggplot2::scale_x_continuous(
-        limits = c(-x_lim, x_lim), breaks = scales::breaks_extended(n = 3),
+        limits = c(-x_lim, x_lim), breaks = x_breaks,
         expand = ggplot2::expansion(mult = c(0, 0))
       ) +
       ggplot2::scale_y_continuous(
-        limits = c(-y_lim, y_lim), breaks = scales::breaks_extended(n = 3),
+        limits = c(-y_lim, y_lim), breaks = y_breaks,
         expand = ggplot2::expansion(mult = c(0, 0))
       ) +
       ggplot2::labs(title = unname(DIM_TITLES[[dim_name]]), x = NULL, y = NULL) +
@@ -343,8 +398,7 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
   )
   positive <- positive |>
     dplyr::mutate(
-      metric_text = stringr::str_replace_all(as.character(metric), "_", " "),
-      metric_text = stringr::str_trunc(metric_text, width = 21, side = "right", ellipsis = "…"),
+      metric_text = ms_fig2_short_metric(metric),
       outcome_code = dplyr::if_else(outcome_label == "Absolute distortion", "|z|", "z"),
       task_code = paste0(unname(dim_short[dimension]), "  ", outcome_code),
       row_key = paste(metric, dimension, outcome_label, dplyr::row_number(), sep = "|||"),
@@ -401,7 +455,7 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
 
   p2c_body <- cowplot::plot_grid(
     p2c_labels, p2c_rank,
-    ncol = 2, rel_widths = c(.34, .66),
+    ncol = 2, rel_widths = c(.31, .69),
     align = "hv", axis = "tb", greedy = TRUE
   )
   p2c <- cowplot::ggdraw() +
@@ -421,13 +475,34 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
   # ---------------------------------------------------------------------------
   # Final composition
   # ---------------------------------------------------------------------------
-  # All legends share one bottom band. This removes the former metric-class
-  # legend from above panel b, prevents title overlap, and gives the left and
-  # right figure columns the same usable body height.
-  metric_legend_right <- objects$metric_legend_right
+  # Rebuild the metric-class legend as a single row rather than reusing the
+  # two-row compact legend from the original Fig. 2 script.
+  metric_legend_single <- cowplot::get_legend(
+    ggplot2::ggplot(
+      tibble::tibble(
+        metric_class = factor(MS_METRIC_CLASSES, levels = MS_METRIC_CLASSES),
+        x = seq_along(MS_METRIC_CLASSES), y = 1
+      ), ggplot2::aes(x, y, colour = metric_class)
+    ) +
+      ggplot2::geom_point(size = 1.00) +
+      scale_colour_ms_metric() +
+      ggplot2::guides(colour = ggplot2::guide_legend(
+        title = NULL, nrow = 1, byrow = TRUE,
+        override.aes = list(size = 1.00, alpha = 1)
+      )) +
+      ggplot2::theme_void(base_family = MS_FONT) +
+      ggplot2::theme(
+        legend.position = "bottom",
+        legend.text = ggplot2::element_text(size = 3.35),
+        legend.key.width = grid::unit(1.8, "mm"),
+        legend.spacing.x = grid::unit(.30, "mm"),
+        legend.margin = ggplot2::margin(0, 0, 0, 0)
+      )
+  )
+
   legend_band <- cowplot::plot_grid(
-    predictor_legend, dimension_legend, metric_legend_right,
-    ncol = 3, rel_widths = c(.28, .32, .40),
+    predictor_legend, dimension_legend, metric_legend_single,
+    ncol = 3, rel_widths = c(.24, .30, .46),
     align = "h", axis = "b", greedy = TRUE
   )
   right_column <- cowplot::plot_grid(
@@ -442,7 +517,7 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
   )
   final <- cowplot::plot_grid(
     main_body, legend_band,
-    ncol = 1, rel_heights = c(.91, .09),
+    ncol = 1, rel_heights = c(.935, .065),
     align = "v", axis = "lr", greedy = TRUE
   )
 
