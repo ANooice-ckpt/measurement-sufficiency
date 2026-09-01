@@ -177,6 +177,12 @@ ms_plot_save <- function(plot, path, width, height,
       if (!is.null(refined$assoc_text)) {
         assign("assoc_text", refined$assoc_text, envir = caller_env)
       }
+      if (!is.null(refined$p1b_core)) {
+        assign("p1b_core", refined$p1b_core, envir = caller_env)
+      }
+      if (!is.null(refined$p1b_shape_legend)) {
+        assign("p1b_shape_legend", refined$p1b_shape_legend, envir = caller_env)
+      }
     }
   }
 
