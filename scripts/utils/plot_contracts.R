@@ -13,6 +13,10 @@ if (!exists("ms_direction_ratio", mode = "function") &&
 # Figure-specific final display refinements may reuse already-built display
 # summaries immediately before export. They may recompose or filter descriptive
 # display rows, but must not refit models or alter canonical RQ estimands.
+if (!exists("ms_fig1_refine_main", mode = "function") &&
+    file.exists("scripts/utils/fig1_refinement.R")) {
+  source("scripts/utils/fig1_refinement.R")
+}
 if (!exists("ms_fig2_refine_main", mode = "function") &&
     file.exists("scripts/utils/fig2_refinement.R")) {
   source("scripts/utils/fig2_refinement.R")
@@ -165,6 +169,17 @@ ms_plot_save <- function(plot, path, width, height,
   # calls. Figure-specific final display refinements can reuse already-computed
   # display objects without moving canonical estimands out of the RQ script.
   caller_env <- parent.frame()
+  if (identical(basename(path), "Fig1_RQ1.png") &&
+      exists("ms_fig1_refine_main", mode = "function")) {
+    refined <- ms_fig1_refine_main(caller_env)
+    if (is.list(refined) && !is.null(refined$p1a_core)) {
+      assign("p1a_core", refined$p1a_core, envir = caller_env)
+      if (!is.null(refined$assoc_text)) {
+        assign("assoc_text", refined$assoc_text, envir = caller_env)
+      }
+    }
+  }
+
   if (identical(basename(path), "Fig2_RQ2.png") &&
       exists("ms_fig2_refine_main", mode = "function")) {
     refined <- ms_fig2_refine_main(caller_env)
