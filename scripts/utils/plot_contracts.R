@@ -10,6 +10,14 @@ if (!exists("ms_direction_ratio", mode = "function") &&
   source("scripts/utils/figure_atlas.R")
 }
 
+# Figure-specific final display refinements may reuse already-built display
+# summaries immediately before export. They may recompose or filter descriptive
+# display rows, but must not refit models or alter canonical RQ estimands.
+if (!exists("ms_fig2_refine_main", mode = "function") &&
+    file.exists("scripts/utils/fig2_refinement.R")) {
+  source("scripts/utils/fig2_refinement.R")
+}
+
 # The final composition pass is visual only. Main scripts still construct every
 # panel and scientific layer; this helper only regularizes layout immediately
 # before the PNG is written.
@@ -154,9 +162,25 @@ ms_plot_save <- function(plot, path, width, height,
   }
 
   # Capture the script evaluation environment before entering any further helper
-  # calls. The visual pass can then reuse already-built panel objects without
-  # moving scientific construction out of the RQ-specific main script.
+  # calls. Figure-specific final display refinements can reuse already-computed
+  # display objects without moving canonical estimands out of the RQ script.
   caller_env <- parent.frame()
+  if (identical(basename(path), "Fig2_RQ2.png") &&
+      exists("ms_fig2_refine_main", mode = "function")) {
+    refined <- ms_fig2_refine_main(caller_env)
+    if (is.list(refined) && !is.null(refined$plot)) {
+      plot <- refined$plot
+      # Keep the interactive object in sync with the exported main figure.
+      assign("p2", refined$plot, envir = caller_env)
+      if (!is.null(refined$p2a)) assign("p2a", refined$p2a, envir = caller_env)
+      if (!is.null(refined$p2b)) assign("p2b", refined$p2b, envir = caller_env)
+      if (!is.null(refined$p2c)) assign("p2c", refined$p2c, envir = caller_env)
+      if (!is.null(refined$top_recoverable)) {
+        assign("fig2_top_recoverable", refined$top_recoverable, envir = caller_env)
+      }
+    }
+  }
+
   if (exists("ms_polish_main_figure", mode = "function")) {
     polished <- ms_polish_main_figure(plot, path, caller_env, width, height)
     if (is.list(polished) && !is.null(polished$plot)) plot <- polished$plot
