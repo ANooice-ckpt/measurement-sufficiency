@@ -109,25 +109,25 @@ ms_polish_fig1 <- function(plot, env, width, height) {
   }
 
   p1a_core <- ms_polish_ggplot(
-    p1a_core, margin = ggplot2::margin(1, 3, 2, 3)
+    p1a_core, margin = ggplot2::margin(.5, 3, 1.3, 3)
   )
   p1a <- ms_polish_panel_frame(
     p1a_core,
     "a  Absolute and relational preservation",
     assoc_text,
-    title_size = 6.35, subtitle_size = 3.85, body_height = .855
+    title_size = 6.35, subtitle_size = 3.60, body_height = .845
   )
 
   p1b_body <- if (!is.null(p1b_shape_legend)) {
     cowplot::plot_grid(
       p1b_core, p1b_shape_legend, ncol = 1,
-      rel_heights = c(.91, .09), align = "v", axis = "lr", greedy = TRUE
+      rel_heights = c(.925, .075), align = "v", axis = "lr", greedy = TRUE
     )
   } else {
     p1b_core
   }
   p1b_axis <- cowplot::ggdraw() +
-    cowplot::draw_plot(p1b_body, x = .060, y = 0, width = .940, height = .965) +
+    cowplot::draw_plot(p1b_body, x = .055, y = 0, width = .945, height = .972) +
     cowplot::draw_label(
       "Absolute distortion, A", x = .012, y = .49, angle = 90,
       hjust = .5, vjust = .5, size = 5.65,
@@ -135,12 +135,12 @@ ms_polish_fig1 <- function(plot, env, width, height) {
     )
   p1b <- ms_polish_panel_frame(
     p1b_axis, "b  Magnitude and directional coherence",
-    title_size = 6.35, body_height = .905
+    title_size = 6.35, body_height = .915
   )
 
   p1c <- ms_polish_panel_frame(
     right_core, "c  Where ordered-axis distortion accrues",
-    title_size = 6.35, body_height = .905
+    title_size = 6.35, body_height = .915
   )
 
   bottom <- cowplot::plot_grid(
@@ -148,11 +148,11 @@ ms_polish_fig1 <- function(plot, env, width, height) {
     align = "hv", axis = "tblr", greedy = TRUE
   )
   body <- cowplot::plot_grid(
-    p1a, bottom, ncol = 1, rel_heights = c(.92, 1.08),
+    p1a, bottom, ncol = 1, rel_heights = c(.82, 1.18),
     align = "v", axis = "lr", greedy = TRUE
   )
   final <- cowplot::plot_grid(
-    metric_legend, body, ncol = 1, rel_heights = c(.050, 1),
+    metric_legend, body, ncol = 1, rel_heights = c(.046, 1),
     align = "v", axis = "l", greedy = TRUE
   )
   list(plot = final, width = 7.40, height = 5.90)
