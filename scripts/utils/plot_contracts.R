@@ -25,6 +25,10 @@ if (!exists("ms_fig3_refine_main", mode = "function") &&
     file.exists("scripts/utils/fig3_refinement.R")) {
   source("scripts/utils/fig3_refinement.R")
 }
+if (!exists("ms_fig3_atlas_refine_main", mode = "function") &&
+    file.exists("scripts/utils/fig3_atlas_refinement.R")) {
+  source("scripts/utils/fig3_atlas_refinement.R")
+}
 
 # The final composition pass is visual only. Main scripts still construct every
 # panel and scientific layer; this helper only regularizes layout immediately
@@ -207,8 +211,13 @@ ms_plot_save <- function(plot, path, width, height,
   }
 
   if (identical(basename(path), "Fig3_RQ2.png") &&
-      exists("ms_fig3_refine_main", mode = "function")) {
-    refined <- ms_fig3_refine_main(caller_env)
+      (exists("ms_fig3_atlas_refine_main", mode = "function") ||
+       exists("ms_fig3_refine_main", mode = "function"))) {
+    refined <- if (exists("ms_fig3_atlas_refine_main", mode = "function")) {
+      ms_fig3_atlas_refine_main(caller_env)
+    } else {
+      ms_fig3_refine_main(caller_env)
+    }
     if (is.list(refined) && !is.null(refined$plot)) {
       plot <- refined$plot
       assign("p3", refined$plot, envir = caller_env)
