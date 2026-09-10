@@ -38,14 +38,43 @@ if (!exists("ms_polish_main_figure", mode = "function") &&
   source("scripts/utils/figure_polish.R")
 }
 
+# Inserted Fig. 2 is an RQ1 downstream-inference figure. Mature RQ2/RQ3 plotting
+# implementations retain their historical internal names, while all exported
+# main-figure identifiers are shifted by one through this central compatibility
+# map. This avoids editing scientific plotting logic solely for renumbering.
+ms_main_figure_name_map <- function(name) {
+  map <- c(
+    "Fig2_RQ2.png" = "Fig3_RQ2.png",
+    "Fig2_RQ2.pdf" = "Fig3_RQ2.pdf",
+    "Fig3_RQ2.png" = "Fig4_RQ2.png",
+    "Fig3_RQ2.pdf" = "Fig4_RQ2.pdf",
+    "Fig4_RQ3.png" = "Fig5_RQ3.png",
+    "Fig4_RQ3.pdf" = "Fig5_RQ3.pdf",
+    "Fig5_RQ3.png" = "Fig6_RQ3.png",
+    "Fig5_RQ3.pdf" = "Fig6_RQ3.pdf"
+  )
+  hit <- unname(map[name])
+  if (length(hit) == 1L && !is.na(hit)) hit else name
+}
+
+ms_main_figure_id_map <- function(x) {
+  dplyr::recode(
+    as.character(x),
+    "Fig2_RQ2" = "Fig3_RQ2",
+    "Fig3_RQ2" = "Fig4_RQ2",
+    "Fig4_RQ3" = "Fig5_RQ3",
+    "Fig5_RQ3" = "Fig6_RQ3",
+    .default = as.character(x)
+  )
+}
+
 ms_plot_prep_only <- function() {
   # Explicit override remains available for diagnostics.
   if (identical(Sys.getenv("MS_PLOT_PREP_ONLY", unset = "0"), "1")) return(TRUE)
 
   # The centralized supplementary entrypoint sources main-figure scripts only to
   # reconstruct their frozen display objects. Suppress save/manifest side effects
-  # only while one of those five explicit main scripts is present on the call
-  # stack. FigS saves executed directly by 16_plot_supplementary.R are unaffected.
+  # while those implementation scripts are present on the call stack.
   file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
   if (!length(file_arg)) return(FALSE)
   top_script <- basename(sub("^--file=", "", file_arg[[1]]))
@@ -53,10 +82,11 @@ ms_plot_prep_only <- function() {
 
   main_plot_scripts <- c(
     "11_plot_fig1.R",
-    "13a_plot_fig2.R",
-    "13b_plot_fig3.R",
-    "15a_plot_fig4.R",
-    "15b_plot_fig5.R"
+    "11b_plot_fig2.R",
+    "13a_plot_fig2.R", "13a_plot_fig3.R",
+    "13b_plot_fig3.R", "13b_plot_fig4.R",
+    "15a_plot_fig4.R", "15a_plot_fig5.R",
+    "15b_plot_fig5.R", "15b_plot_fig6.R"
   )
   call_text <- vapply(
     sys.calls(),
@@ -132,6 +162,9 @@ ms_plot_write_manifest <- function(path, figure_rows) {
   if (ms_plot_prep_only()) return(invisible(path))
 
   figure_rows <- tibble::as_tibble(figure_rows)
+  if ("figure" %in% names(figure_rows)) {
+    figure_rows$figure <- ms_main_figure_id_map(figure_rows$figure)
+  }
   figure_rows$generated_at_utc <- format(Sys.time(), tz = "UTC", usetz = TRUE)
 
   # Plot scripts historically place the manifest inside results/rq*/figures.
@@ -164,6 +197,10 @@ ms_plot_save <- function(plot, path, width, height,
   # second time. Standalone main-figure execution is unchanged.
   if (ms_plot_prep_only()) return(invisible(path))
 
+  mapped_name <- ms_main_figure_name_map(basename(path))
+  if (!identical(mapped_name, basename(path))) {
+    path <- file.path(dirname(path), mapped_name)
+  }
   ext <- tolower(tools::file_ext(path))
 
   # PDF export is intentionally disabled. Existing plot scripts may retain paired
@@ -194,12 +231,13 @@ ms_plot_save <- function(plot, path, width, height,
     }
   }
 
-  if (identical(basename(path), "Fig2_RQ2.png") &&
+  # Historical refinement function names are retained; exported figure numbers
+  # are shifted by one after insertion of the new RQ1 Fig. 2.
+  if (identical(basename(path), "Fig3_RQ2.png") &&
       exists("ms_fig2_refine_main", mode = "function")) {
     refined <- ms_fig2_refine_main(caller_env)
     if (is.list(refined) && !is.null(refined$plot)) {
       plot <- refined$plot
-      # Keep the interactive object in sync with the exported main figure.
       assign("p2", refined$plot, envir = caller_env)
       if (!is.null(refined$p2a)) assign("p2a", refined$p2a, envir = caller_env)
       if (!is.null(refined$p2b)) assign("p2b", refined$p2b, envir = caller_env)
@@ -210,7 +248,7 @@ ms_plot_save <- function(plot, path, width, height,
     }
   }
 
-  if (identical(basename(path), "Fig3_RQ2.png") &&
+  if (identical(basename(path), "Fig4_RQ2.png") &&
       (exists("ms_fig3_atlas_refine_main", mode = "function") ||
        exists("ms_fig3_refine_main", mode = "function"))) {
     refined <- if (exists("ms_fig3_atlas_refine_main", mode = "function")) {
