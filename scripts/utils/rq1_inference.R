@@ -1,5 +1,5 @@
 # Downstream association preservation; no light-series or metric operators.
-# Outcomes are linear within-person projections in their native diary units.
+# Outcomes are linear within-person projections in their native diary/EMA units.
 source("scripts/utils/analysis_design.R")
 source("scripts/utils/artifact_validation.R")
 source("scripts/utils/rq1_inference_contract.R")
@@ -8,7 +8,7 @@ if (!exists("rq1_pairwise_load", mode = "function")) {
 }
 
 rq1_inference_version <- function(rq1_version) {
-  paste0("rq1_inference_v2_anchor8__", rq1_version)
+  paste0("rq1_inference_v3_domains_anchor8__", rq1_version)
 }
 
 rq1_inference_anchor_map <- function() {
@@ -25,8 +25,18 @@ rq1_inference_anchor_map <- function() {
   )
 }
 
+rq1_outcome_metadata <- function(outcomes = rq1_inference_contract()$outcomes) {
+  contract <- rq1_inference_contract()
+  tibble::tibble(
+    outcome = outcomes,
+    outcome_domain = unname(contract$outcome_domain[outcomes]),
+    outcome_label = unname(contract$outcome_label[outcomes])
+  )
+}
+
 rq1_sleep_outcomes <- function(x, site) {
   contract <- rq1_inference_contract()
+  sleep_outcomes <- names(contract$outcome_domain)[contract$outcome_domain == "Sleep"]
   required <- c("Id", "wake", "sleepprep", "sleepquality", "awakenings", "awake_duration")
   if (!all(required %in% names(x))) stop(site, " sleepdiary lacks required outcome fields")
   tz <- attr(x$wake, "tzone")
@@ -45,7 +55,6 @@ rq1_sleep_outcomes <- function(x, site) {
     wake_date = as.Date(x$wake, tz = tz),
     # D's complete calendar-day exposure is paired with the next morning D+1.
     Date = as.Date(x$wake, tz = tz) - 1L,
-    diary_timezone = tz,
     valid_interval = !is.na(x$sleepprep) & !is.na(x$wake) & x$wake > x$sleepprep,
     sleep_quality = as.numeric(match(quality, quality_levels)),
     awakenings = as.numeric(x$awakenings), awake_duration = awake
@@ -53,7 +62,7 @@ rq1_sleep_outcomes <- function(x, site) {
   ms_assert_unique(out, c("site", "Id", "Date"), paste(site, "sleepdiary"))
   out |>
     tidyr::pivot_longer(
-      dplyr::all_of(contract$outcomes), names_to = "outcome", values_to = "outcome_value"
+      dplyr::all_of(sleep_outcomes), names_to = "outcome", values_to = "outcome_value"
     ) |>
     dplyr::mutate(
       outcome_reason = dplyr::case_when(
@@ -63,8 +72,119 @@ rq1_sleep_outcomes <- function(x, site) {
         outcome == "awakenings" & outcome_value != floor(outcome_value) ~ "noninteger_count",
         TRUE ~ NA_character_
       ),
-      outcome_value = dplyr::if_else(is.na(outcome_reason), outcome_value, NA_real_)
+      outcome_value = dplyr::if_else(is.na(outcome_reason), outcome_value, NA_real_),
+      outcome_n_observations = dplyr::if_else(is.na(outcome_reason), 1L, 0L),
+      outcome_source = "sleepdiary"
+    ) |>
+    dplyr::select(site, Id, Date, outcome, outcome_value, outcome_reason,
+                  outcome_n_observations, outcome_source) |>
+    dplyr::left_join(rq1_outcome_metadata(sleep_outcomes), by = "outcome", relationship = "many-to-one")
+}
+
+rq1_ema_scale_numeric <- function(x, labels, first_code) {
+  if (is.factor(x)) {
+    observed_levels <- levels(x)
+    if (!identical(observed_levels, labels)) {
+      stop("EMA factor labels differ from the frozen MeLiDos questionnaire scale", call. = FALSE)
+    }
+    out <- as.integer(x) + first_code - 1L
+  } else if (is.numeric(x)) {
+    out <- as.numeric(x)
+  } else {
+    ch <- as.character(x)
+    out <- suppressWarnings(as.numeric(ch))
+    unresolved <- !is.na(ch) & !nzchar(trimws(ch)) == FALSE & !is.finite(out)
+    if (any(unresolved)) {
+      idx <- match(ch[unresolved], labels)
+      if (anyNA(idx)) stop("EMA values do not match the frozen MeLiDos questionnaire scale", call. = FALSE)
+      out[unresolved] <- idx + first_code - 1L
+    }
+  }
+  allowed <- seq.int(first_code, length(labels) + first_code - 1L)
+  out[!is.na(out) & !out %in% allowed] <- NA_real_
+  as.numeric(out)
+}
+
+rq1_ema_daily_outcomes <- function(x, site) {
+  contract <- rq1_inference_contract()
+  required <- c("Id", "Datetime", "anxious", "elated", "sad", "angry", "irritable", "energetic", "kss")
+  if (!all(required %in% names(x))) stop(site, " currentconditions lacks required EMA fields")
+  if (!inherits(x$Datetime, "POSIXct")) stop(site, " currentconditions Datetime must be POSIXct")
+  tz <- attr(x$Datetime, "tzone")
+  if (length(tz) != 1L || !nzchar(tz)) stop(site, " currentconditions has no explicit local timezone")
+
+  mood_labels <- c("Not at all", "Slightly", "Somewhat", "Moderately", "Quite a bit", "Very much so", "Extremely")
+  kss_labels <- c(
+    "Extremely alert", "Very alert", "Alert", "Rather alert", "Neither alert nor sleepy",
+    "Some signs of sleepiness", "Sleepy, but no effort to keep awake",
+    "Sleepy, but some effort to keep awake",
+    "Very sleepy, great effort to keep awake, fighting sleep",
+    "Extremely sleepy, can't keep awake"
+  )
+  mood_vars <- c("anxious", "elated", "sad", "angry", "irritable", "energetic")
+  z <- tibble::as_tibble(x) |>
+    dplyr::transmute(
+      site = site, Id = as.character(Id), Datetime,
+      anxious = rq1_ema_scale_numeric(anxious, mood_labels, 0L),
+      elated = rq1_ema_scale_numeric(elated, mood_labels, 0L),
+      sad = rq1_ema_scale_numeric(sad, mood_labels, 0L),
+      angry = rq1_ema_scale_numeric(angry, mood_labels, 0L),
+      irritable = rq1_ema_scale_numeric(irritable, mood_labels, 0L),
+      energetic = rq1_ema_scale_numeric(energetic, mood_labels, 0L),
+      kss = rq1_ema_scale_numeric(kss, kss_labels, 1L)
+    ) |>
+    dplyr::filter(!is.na(Datetime)) |>
+    dplyr::mutate(
+      Date = as.Date(Datetime, tz = tz),
+      local_minute = as.numeric(format(Datetime, "%H", tz = tz)) * 60 +
+        as.numeric(format(Datetime, "%M", tz = tz)) +
+        as.numeric(format(Datetime, "%S", tz = tz)) / 60
     )
+  if (!nrow(z)) return(tibble::tibble())
+
+  slot_minutes <- contract$ema_slots_h * 60
+  distance_matrix <- abs(outer(z$local_minute, slot_minutes, "-"))
+  nearest <- max.col(-distance_matrix, ties.method = "first")
+  z$ema_slot_h <- contract$ema_slots_h[nearest]
+  z$slot_distance_min <- distance_matrix[cbind(seq_len(nrow(z)), nearest)]
+  z <- z |>
+    dplyr::filter(slot_distance_min <= contract$ema_slot_tolerance_min) |>
+    dplyr::arrange(site, Id, Date, ema_slot_h, slot_distance_min, Datetime) |>
+    dplyr::group_by(site, Id, Date, ema_slot_h) |>
+    dplyr::slice_head(n = 1L) |>
+    dplyr::ungroup() |>
+    dplyr::mutate(
+      positive_affect = dplyr::if_else(
+        is.finite(elated) & is.finite(energetic), (elated + energetic) / 2, NA_real_
+      ),
+      negative_affect = dplyr::if_else(
+        is.finite(anxious) & is.finite(sad) & is.finite(angry) & is.finite(irritable),
+        (anxious + sad + angry + irritable) / 4, NA_real_
+      )
+    )
+
+  ema_outcomes <- c("kss", "positive_affect", "negative_affect")
+  out <- z |>
+    dplyr::select(site, Id, Date, ema_slot_h, dplyr::all_of(ema_outcomes)) |>
+    tidyr::pivot_longer(dplyr::all_of(ema_outcomes), names_to = "outcome", values_to = "response_value") |>
+    dplyr::group_by(site, Id, Date, outcome) |>
+    dplyr::summarise(
+      outcome_n_observations = sum(is.finite(response_value)),
+      outcome_value = if (outcome_n_observations >= contract$ema_min_slots) {
+        mean(response_value[is.finite(response_value)])
+      } else NA_real_,
+      .groups = "drop"
+    ) |>
+    dplyr::mutate(
+      outcome_reason = dplyr::if_else(
+        outcome_n_observations >= contract$ema_min_slots,
+        NA_character_, "insufficient_ema_slots"
+      ),
+      outcome_source = "currentconditions"
+    ) |>
+    dplyr::left_join(rq1_outcome_metadata(ema_outcomes), by = "outcome", relationship = "many-to-one")
+  ms_assert_unique(out, c("site", "Id", "Date", "outcome"), paste(site, "daily EMA outcomes"))
+  out
 }
 
 # RQ1 already freezes the exact participant-day support and both state values for
