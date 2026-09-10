@@ -17,7 +17,15 @@ check_sources <- function(expr) {
 invisible(lapply(files, function(path) check_sources(parse(path))))
 expect_error <- function(expr) stopifnot(inherits(tryCatch(force(expr), error = identity), "error"))
 
-# Calendar alignment uses the diary's local zone, not the host zone/UTC.
+contract <- rq1_inference_contract()
+stopifnot(
+  length(contract$outcomes) == 6L,
+  identical(unname(unique(contract$outcome_domain)), c("Sleep", "Alertness", "Affect")),
+  contract$ema_min_slots == 2L,
+  identical(contract$ema_slots_h, c(11, 14, 17, 20))
+)
+
+# Sleep: calendar alignment uses the diary's local zone, not host zone/UTC.
 diary <- tibble(
   Id = "001",
   wake = as.POSIXct("2025-04-02 01:00:00", tz = "Europe/Berlin"),
@@ -27,7 +35,9 @@ diary <- tibble(
 )
 d <- rq1_sleep_outcomes(diary, "test")
 stopifnot(
+  nrow(d) == 3L,
   all(d$Date == as.Date("2025-04-01")),
+  all(d$outcome_domain == "Sleep"),
   d$outcome_value[d$outcome == "sleep_quality"] == 4,
   d$outcome_value[d$outcome == "awake_duration"] == 12
 )
@@ -35,7 +45,43 @@ expect_error(rq1_sleep_outcomes(bind_rows(diary, diary), "test"))
 bad <- diary; bad$sleepquality <- "Unexpected"
 expect_error(rq1_sleep_outcomes(bad, "test"))
 
-# Downstream health inference is deliberately restricted to eight single-axis
+# EMA: retain the nearest response to each nominal 11/14/17/20 h slot, reject
+# out-of-window extras, and aggregate KSS / positive affect / negative affect.
+mood_levels <- c("Not at all", "Slightly", "Somewhat", "Moderately", "Quite a bit", "Very much so", "Extremely")
+kss_levels <- c(
+  "Extremely alert", "Very alert", "Alert", "Rather alert", "Neither alert nor sleepy",
+  "Some signs of sleepiness", "Sleepy, but no effort to keep awake",
+  "Sleepy, but some effort to keep awake",
+  "Very sleepy, great effort to keep awake, fighting sleep",
+  "Extremely sleepy, can't keep awake"
+)
+ema_times <- as.POSIXct(
+  c("2025-04-01 10:55:00", "2025-04-01 14:05:00", "2025-04-01 17:10:00", "2025-04-01 20:05:00", "2025-04-01 23:30:00"),
+  tz = "Europe/Berlin"
+)
+ema <- tibble(
+  Id = "001", Datetime = ema_times,
+  anxious = factor(rep("Slightly", 5), levels = mood_levels),
+  elated = factor(rep("Somewhat", 5), levels = mood_levels),
+  sad = factor(rep("Not at all", 5), levels = mood_levels),
+  angry = factor(rep("Not at all", 5), levels = mood_levels),
+  irritable = factor(rep("Slightly", 5), levels = mood_levels),
+  energetic = factor(rep("Moderately", 5), levels = mood_levels),
+  kss = factor(rep("Rather alert", 5), levels = kss_levels)
+)
+e <- rq1_ema_daily_outcomes(ema, "test")
+stopifnot(
+  nrow(e) == 3L,
+  all(e$Date == as.Date("2025-04-01")),
+  all(e$outcome_n_observations == 4L),
+  e$outcome_value[e$outcome == "kss"] == 4,
+  e$outcome_value[e$outcome == "positive_affect"] == 2.5,
+  e$outcome_value[e$outcome == "negative_affect"] == 0.5,
+  e$outcome_domain[e$outcome == "kss"] == "Alertness",
+  all(e$outcome_domain[e$outcome != "kss"] == "Affect")
+)
+
+# Downstream inference is deliberately restricted to eight single-axis
 # contrasts against eye/MEDI/10 s; no Cartesian multi-axis grid or reserve state.
 anchors <- rq1_inference_anchor_map()
 stopifnot(
@@ -173,16 +219,13 @@ for (compression in c("gzip", "bzip2", "xz", "none")) {
 }
 if (is.na(previous)) Sys.unsetenv("RQ1_PART_COMPRESSION") else Sys.setenv(RQ1_PART_COMPRESSION = previous)
 
-# RQ2 extracted helpers retain direct functional tests; one-time HEAD-based
-# refactor equivalence checks were intentionally removed because they silently
-# stop testing the pre-refactor code once the refactor commit becomes HEAD.
+# RQ2 extracted helpers retain direct functional tests.
 source("scripts/utils/rq2_model_helpers.R")
 helpers <- rq2_model_helpers()
 scaled_helper <- helpers$scale_train_test(tibble(x = c(1, 2, 3)), tibble(x = c(10, 20)), "x")
 stopifnot(identical(scaled_helper$te$x, c(8, 18)), helpers$performance(c(1, 2), c(1, 2))$r2 == 1)
 
-# Figure identity/routing is tested once in its package-free contract test rather
-# than duplicated here with another set of hard-coded mapping assertions.
+# Figure identity/routing is tested once in its package-free contract test.
 source("scripts/tests/validate_figure_registry.R")
 
-cat("PASS: all R sources parse; frozen-pairwise anchor8 diary/support/FE/bootstrap/circular/version/compression checks\n")
+cat("PASS: all R sources parse; three-domain frozen-pairwise outcome/support/FE/bootstrap/circular/version/compression checks\n")
