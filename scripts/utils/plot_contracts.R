@@ -2,6 +2,10 @@
 # Plot scripts may reshape frozen summaries for display, but must not refit,
 # recompute estimands, or silently fall back to legacy data/derived paths.
 
+if (!exists("ms_main_figure_registry", mode = "function") &&
+    file.exists("scripts/utils/figure_registry.R")) {
+  source("scripts/utils/figure_registry.R")
+}
 if (!exists("ms_direction_ratio", mode = "function") &&
     file.exists("scripts/utils/figure_atlas.R")) {
   source("scripts/utils/figure_atlas.R")
@@ -29,43 +33,6 @@ if (!exists("ms_polish_main_figure", mode = "function") &&
   source("scripts/utils/figure_polish.R")
 }
 
-# Inserted Fig. 2 is an RQ1 downstream-inference figure. Mature RQ2/RQ3 plotting
-# implementations retain their historical internal names, while all exported
-# main-figure identifiers are shifted by one through this central compatibility
-# map. This avoids editing scientific plotting logic solely for renumbering.
-ms_main_figure_name_map <- function(name) {
-  map <- c(
-    "Fig2_RQ2.png" = "Fig3_RQ2.png",
-    "Fig2_RQ2.pdf" = "Fig3_RQ2.pdf",
-    "Fig3_RQ2.png" = "Fig4_RQ2.png",
-    "Fig3_RQ2.pdf" = "Fig4_RQ2.pdf",
-    "Fig4_RQ3.png" = "Fig5_RQ3.png",
-    "Fig4_RQ3.pdf" = "Fig5_RQ3.pdf",
-    "Fig5_RQ3.png" = "Fig6_RQ3.png",
-    "Fig5_RQ3.pdf" = "Fig6_RQ3.pdf"
-  )
-  hit <- unname(map[name])
-  if (length(hit) == 1L && !is.na(hit)) hit else name
-}
-
-ms_main_figure_id_map <- function(x) {
-  dplyr::recode(
-    as.character(x),
-    "Fig2_RQ2" = "Fig3_RQ2",
-    "Fig3_RQ2" = "Fig4_RQ2",
-    "Fig4_RQ3" = "Fig5_RQ3",
-    "Fig5_RQ3" = "Fig6_RQ3",
-    .default = as.character(x)
-  )
-}
-
-ms_current_main_figure_ids <- function() {
-  c(
-    "Fig1_RQ1", "Fig2_RQ1_inferential_preservation",
-    "Fig3_RQ2", "Fig4_RQ2", "Fig5_RQ3", "Fig6_RQ3"
-  )
-}
-
 ms_plot_prep_only <- function() {
   if (identical(Sys.getenv("MS_PLOT_PREP_ONLY", unset = "0"), "1")) return(TRUE)
 
@@ -74,21 +41,13 @@ ms_plot_prep_only <- function() {
   top_script <- basename(sub("^--file=", "", file_arg[[1]]))
   if (!identical(top_script, "16_plot_supplementary.R")) return(FALSE)
 
-  main_plot_scripts <- c(
-    "11_plot_fig1.R",
-    "11b_plot_fig2.R",
-    "13a_plot_fig2.R", "13a_plot_fig3.R",
-    "13b_plot_fig3.R", "13b_plot_fig4.R",
-    "15a_plot_fig4.R", "15a_plot_fig5.R",
-    "15b_plot_fig5.R", "15b_plot_fig6.R"
-  )
   call_text <- vapply(
     sys.calls(),
     function(cl) paste(deparse(cl, width.cutoff = 500L), collapse = " "),
     character(1)
   )
   any(vapply(
-    main_plot_scripts,
+    ms_main_plot_scripts(include_implementations = TRUE),
     function(script) any(grepl(script, call_text, fixed = TRUE)),
     logical(1)
   ))
@@ -153,7 +112,7 @@ ms_plot_write_manifest <- function(path, figure_rows) {
 
   figure_rows <- tibble::as_tibble(figure_rows)
   if ("figure" %in% names(figure_rows)) {
-    figure_rows$figure <- ms_main_figure_id_map(figure_rows$figure)
+    figure_rows$figure <- ms_main_figure_resolve_id(figure_rows$figure)
   }
   figure_rows$generated_at_utc <- format(Sys.time(), tz = "UTC", usetz = TRUE)
 
@@ -167,14 +126,14 @@ ms_plot_write_manifest <- function(path, figure_rows) {
     path
   }
 
-  # A later supplementary write must not erase a main figure that was generated
-  # earlier in the same run. Preserve only canonical main-figure rows whose PNG
-  # actually exists now; this prevents stale historical figure identifiers from
-  # surviving after the runner clears results/figures/.
+  # Later figure/supplementary writes may update the same per-RQ manifest. Keep
+  # earlier canonical main-figure rows only when their PNG still exists; the
+  # downstream runner clears results/figures first, so stale main figures cannot
+  # survive a complete rerun.
   if (file.exists(manifest_path) && "figure" %in% names(figure_rows)) {
     previous <- suppressMessages(readr::read_csv(manifest_path, show_col_types = FALSE, progress = FALSE))
     if ("figure" %in% names(previous)) {
-      previous$figure <- ms_main_figure_id_map(previous$figure)
+      previous$figure <- ms_main_figure_resolve_id(previous$figure)
       current_ids <- ms_current_main_figure_ids()
       existing_ids <- current_ids[
         file.exists(file.path("results", "figures", paste0(current_ids, ".png")))
@@ -184,9 +143,7 @@ ms_plot_write_manifest <- function(path, figure_rows) {
           figure %in% existing_ids,
           !figure %in% figure_rows$figure
         )
-      if (nrow(keep_previous)) {
-        figure_rows <- dplyr::bind_rows(keep_previous, figure_rows)
-      }
+      if (nrow(keep_previous)) figure_rows <- dplyr::bind_rows(keep_previous, figure_rows)
     }
   }
 
@@ -206,14 +163,31 @@ ms_plot_write_manifest <- function(path, figure_rows) {
   invisible(manifest_path)
 }
 
+ms_plot_apply_current_crossrefs <- function(current_id, caller_env) {
+  # The pre-insertion RQ3 Fig. 4 implementation points its tolerance guides to
+  # the then-current Fig. 5. After insertion of the RQ1 Fig. 2 that destination
+  # is Fig. 6. Correct only the visible cross-reference; data and geometry are
+  # untouched. This compatibility correction can disappear when the legacy
+  # implementation is eventually retired.
+  if (identical(current_id, "Fig5_RQ3") &&
+      is.environment(caller_env) && exists("p4c", envir = caller_env, inherits = FALSE)) {
+    p4c <- get("p4c", envir = caller_env, inherits = FALSE)
+    if (inherits(p4c, "ggplot")) {
+      p4c <- p4c + ggplot2::labs(
+        subtitle = "open points = ε50; faint vertical guides = Fig. 6 tolerance slices"
+      )
+      assign("p4c", p4c, envir = caller_env)
+    }
+  }
+  invisible(NULL)
+}
+
 ms_plot_save <- function(plot, path, width, height,
                          dpi = if (exists("MS_RASTER_DPI", inherits = TRUE)) MS_RASTER_DPI else 600) {
   if (ms_plot_prep_only()) return(invisible(path))
 
-  mapped_name <- ms_main_figure_name_map(basename(path))
-  if (!identical(mapped_name, basename(path))) {
-    path <- file.path(dirname(path), mapped_name)
-  }
+  resolved_name <- ms_main_figure_resolve_filename(basename(path))
+  if (!identical(resolved_name, basename(path))) path <- file.path(dirname(path), resolved_name)
   ext <- tolower(tools::file_ext(path))
 
   if (identical(ext, "pdf")) return(invisible(NULL))
@@ -221,27 +195,27 @@ ms_plot_save <- function(plot, path, width, height,
     stop("Figure outputs must be PNG; unsupported path: ", path, call. = FALSE)
   }
 
+  current_id <- tools::file_path_sans_ext(basename(path))
+  legacy_id <- ms_main_figure_legacy_id(current_id)
   caller_env <- parent.frame()
-  if (identical(basename(path), "Fig1_RQ1.png") &&
+
+  if (identical(current_id, "Fig1_RQ1") &&
       exists("ms_fig1_refine_main", mode = "function")) {
     refined <- ms_fig1_refine_main(caller_env)
     if (is.list(refined) && !is.null(refined$p1a_core)) {
       assign("p1a_core", refined$p1a_core, envir = caller_env)
-      if (!is.null(refined$assoc_text)) {
-        assign("assoc_text", refined$assoc_text, envir = caller_env)
-      }
-      if (!is.null(refined$p1b_core)) {
-        assign("p1b_core", refined$p1b_core, envir = caller_env)
-      }
+      if (!is.null(refined$assoc_text)) assign("assoc_text", refined$assoc_text, envir = caller_env)
+      if (!is.null(refined$p1b_core)) assign("p1b_core", refined$p1b_core, envir = caller_env)
       if (!is.null(refined$p1b_shape_legend)) {
         assign("p1b_shape_legend", refined$p1b_shape_legend, envir = caller_env)
       }
     }
   }
 
-  # Historical refinement function names are retained; exported figure numbers
-  # are shifted by one after insertion of the new RQ1 Fig. 2.
-  if (identical(basename(path), "Fig3_RQ2.png") &&
+  # Refinement helpers retain the component names of their mature legacy
+  # implementations. Route by legacy identity rather than hard-coding the
+  # current manuscript number in several places.
+  if (identical(legacy_id, "Fig2_RQ2") &&
       exists("ms_fig2_refine_main", mode = "function")) {
     refined <- ms_fig2_refine_main(caller_env)
     if (is.list(refined) && !is.null(refined$plot)) {
@@ -256,7 +230,7 @@ ms_plot_save <- function(plot, path, width, height,
     }
   }
 
-  if (identical(basename(path), "Fig4_RQ2.png") &&
+  if (identical(legacy_id, "Fig3_RQ2") &&
       (exists("ms_fig3_atlas_refine_main", mode = "function") ||
        exists("ms_fig3_refine_main", mode = "function"))) {
     refined <- if (exists("ms_fig3_atlas_refine_main", mode = "function")) {
@@ -270,27 +244,19 @@ ms_plot_save <- function(plot, path, width, height,
       if (!is.null(refined$p3a)) assign("p3a", refined$p3a, envir = caller_env)
       if (!is.null(refined$p3b)) assign("p3b", refined$p3b, envir = caller_env)
       if (!is.null(refined$p3c)) assign("p3c", refined$p3c, envir = caller_env)
-      if (!is.null(refined$width) && is.finite(refined$width[[1]])) {
-        width <- as.numeric(refined$width[[1]])
-      }
-      if (!is.null(refined$height) && is.finite(refined$height[[1]])) {
-        height <- as.numeric(refined$height[[1]])
-      }
+      if (!is.null(refined$width) && is.finite(refined$width[[1]])) width <- as.numeric(refined$width[[1]])
+      if (!is.null(refined$height) && is.finite(refined$height[[1]])) height <- as.numeric(refined$height[[1]])
     }
   }
 
+  ms_plot_apply_current_crossrefs(current_id, caller_env)
+
   if (exists("ms_polish_main_figure", mode = "function")) {
-    polished <- if (identical(basename(path), "Fig3_RQ2.png") && exists("ms_polish_fig2", mode = "function")) {
-      ms_polish_fig2(plot, caller_env, width, height)
-    } else if (identical(basename(path), "Fig4_RQ2.png") && exists("ms_polish_fig3", mode = "function")) {
-      ms_polish_fig3(plot, caller_env, width, height)
-    } else if (identical(basename(path), "Fig5_RQ3.png") && exists("ms_polish_fig4", mode = "function")) {
-      ms_polish_fig4(plot, caller_env, width, height)
-    } else if (identical(basename(path), "Fig6_RQ3.png") && exists("ms_polish_fig5", mode = "function")) {
-      ms_polish_fig5(plot, caller_env, width, height)
-    } else {
-      ms_polish_main_figure(plot, path, caller_env, width, height)
-    }
+    # figure_polish.R intentionally retains legacy component identities. Passing
+    # the registry-resolved legacy filename preserves the exact mature layout
+    # without a second current-number dispatch table here.
+    polish_path <- file.path(dirname(path), paste0(legacy_id, ".png"))
+    polished <- ms_polish_main_figure(plot, polish_path, caller_env, width, height)
     if (is.list(polished) && !is.null(polished$plot)) plot <- polished$plot
     if (is.list(polished) && length(polished$width) && is.finite(polished$width[[1]])) {
       width <- as.numeric(polished$width[[1]])
