@@ -1,4 +1,4 @@
-# Canonical Fig. 5 entrypoint after insertion of RQ1 inferential-preservation Fig. 2.
-# The mature RQ3 plotting implementation remains in its pre-renumbering source;
-# shared plot contracts remap its exported figure/manifest identifiers to Fig. 5.
-source("scripts/15a_plot_fig4.R", local = FALSE)
+# Canonical numbered entrypoint. Figure identity and implementation source are
+# defined once in scripts/utils/figure_registry.R.
+source("scripts/utils/figure_registry.R")
+source(ms_main_figure_implementation("Fig5_RQ3"), local = FALSE)
