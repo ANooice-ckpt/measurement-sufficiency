@@ -7,7 +7,6 @@ The scientific object is:
 ```text
 configuration state -> observed exposure process -> target representation
                     -> pairwise representation change
-                    -> downstream association preservation
                     -> conditional / cross-dimensional structure
                     -> observed stability and measurement sufficiency
 ```
@@ -91,7 +90,7 @@ RQ1-RQ3 remain the canonical scientific analysis sources. The inferential-preser
 
 The active Fig. 2 artifact is `results/rq1/inference/rq1_inferential_preservation_anchor8.rds`. Reference and candidate exposure associations use identical participant-day support, participant fixed effects and paired site-stratified participant bootstrap resampling. These are descriptive association-preservation analyses; eye/MEDI/10 s remains an empirical high-information anchor, not biological truth.
 
-The RQ2 and RQ3 scientific plotting implementations predate insertion of Fig. 2. Their original implementation files remain in place, while `13a_plot_fig3.R`, `13b_plot_fig4.R`, `15a_plot_fig5.R` and `15b_plot_fig6.R` are the canonical numbered entrypoints. Shared plot contracts remap external filenames/manifests without altering their scientific plotting logic.
+Main-figure identity is centralized in `scripts/utils/figure_registry.R`. The public Fig. 1–6 IDs and canonical numbered entrypoints live there once; the mature RQ2/RQ3 implementation filenames may retain their pre-insertion numbers internally. `scripts/utils/plot_contracts.R` converts only implementation-emitted legacy identities to current output identities and never renumbers an already-written current manifest. Existing historical `fig2_*`/`fig3_*`/`fig4_*`/`fig5_*` audit CSV filenames are retained for output compatibility.
 
 RQ1 keeps concrete nested duration-window comparisons in its canonical pairwise artifact but projects them to generic 1–6 day comparison types before pooled summaries and bootstrap inference. The RQ2 entrypoint contains the streamed conditional analysis directly and, in the same R process, adds the layered contextual models. Those models reuse existing ERA5 fields from `unit_context` and harmonized MeLiDos light-exposure, exercise and sleep diaries; they do not introduce an alternate core/weather preprocessing path.
 
