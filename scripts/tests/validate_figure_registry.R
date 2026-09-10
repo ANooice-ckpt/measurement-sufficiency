@@ -51,4 +51,13 @@ stopifnot(
   identical(ms_main_figure_to_legacy_id("Fig5_RQ3"), "Fig4_RQ3")
 )
 
-cat("PASS: main-figure registry identities, paths and conversion directions are consistent\n")
+# Orchestration is intentionally explicit, but it must invoke every canonical
+# numbered entrypoint from the registry rather than a historical implementation.
+runner <- readLines("scripts/run_downstream_server.sh", warn = FALSE)
+stopifnot(all(vapply(
+  registry$canonical_script,
+  function(path) any(grepl(path, runner, fixed = TRUE)),
+  logical(1)
+)))
+
+cat("PASS: main-figure registry identities, paths, conversion directions and runner entrypoints are consistent\n")
