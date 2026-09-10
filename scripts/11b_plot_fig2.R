@@ -31,7 +31,7 @@ contract <- rq1_inference_contract()
 INFERENCE_RDS <- file.path("results", "rq1", "inference", contract$artifact_filename)
 RQ1_SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
 OUT_DIR <- file.path("results", "rq1", "figures")
-FIG2_WIDTH_IN <- 7.6
+FIG2_WIDTH_IN <- 8.2
 FIG2_HEIGHT_IN <- 7.6
 ms_plot_require_files(c(INFERENCE_RDS, RQ1_SUMMARY_CSV), "Fig. 2 plotting inputs")
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
@@ -45,7 +45,7 @@ CORE_VERSION <- ms_plot_assert_core(a$core_artifact_version)
 RQ1_VERSION <- ms_plot_one_version(a$rq1_analysis_version, "rq1_analysis_version")
 INFERENCE_VERSION <- ms_plot_one_version(a$rq1_inference_version, "rq1_inference_version")
 ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
-ms_plot_assert_prefix(INFERENCE_VERSION, "rq1_inference_v2_anchor8__", "rq1_inference_version")
+ms_plot_assert_prefix(INFERENCE_VERSION, "rq1_inference_v3_domains_anchor8__", "rq1_inference_version")
 
 rq1_summary <- readr::read_csv(RQ1_SUMMARY_CSV, show_col_types = FALSE, progress = FALSE)
 ms_plot_assert_core(rq1_summary$core_artifact_version, CORE_VERSION)
@@ -58,13 +58,13 @@ contrast <- tibble::as_tibble(a$contrast_summary)
 anchor_map <- tibble::as_tibble(a$anchor_map)
 ms_plot_require_columns(
   reference,
-  c("metric", "metric_class", "outcome", "reference_association_strength", "status"),
+  c("metric", "metric_class", "outcome", "outcome_domain", "reference_association_strength", "status"),
   "reference association summary"
 )
 ms_plot_require_columns(
   contrast,
   c("candidate_config", "contrast_label", "contrast_order", "dimension", "metric", "metric_class",
-    "outcome", "inference_deviation", "rq1_distortion_A", "status"),
+    "outcome", "outcome_domain", "inference_deviation", "rq1_distortion_A", "status"),
   "inferential preservation summary"
 )
 if (nrow(anchor_map) != contract$anchor_count || n_distinct(anchor_map$candidate_config) != contract$anchor_count) {
@@ -76,15 +76,13 @@ if (n_distinct(reference$metric) != contract$daily_metric_count ||
 }
 
 OUTCOME_LEVELS <- contract$outcomes
-OUTCOME_LABELS <- c(
-  sleep_quality = "Sleep quality",
-  awakenings = "Awakenings",
-  awake_duration = "Awake duration"
-)
+OUTCOME_LABELS <- contract$outcome_label
+DOMAIN_LEVELS <- c("Sleep", "Alertness", "Affect")
 metric_order <- ms_metric_order(rq1_summary)
 
 reference_plot <- reference |>
   mutate(
+    outcome_domain = factor(outcome_domain, levels = DOMAIN_LEVELS),
     outcome = factor(outcome, levels = OUTCOME_LEVELS, labels = unname(OUTCOME_LABELS[OUTCOME_LEVELS])),
     reference_association_strength = if_else(
       is.finite(reference_association_strength), reference_association_strength, NA_real_
@@ -94,6 +92,7 @@ reference_plot <- reference |>
 
 contrast_plot <- contrast |>
   mutate(
+    outcome_domain = factor(outcome_domain, levels = DOMAIN_LEVELS),
     outcome = factor(outcome, levels = OUTCOME_LEVELS, labels = unname(OUTCOME_LABELS[OUTCOME_LEVELS])),
     contrast_label = factor(contrast_label, levels = anchor_map$contrast_label[order(anchor_map$contrast_order)]),
     metric_class = factor(metric_class, levels = MS_METRIC_CLASSES)
@@ -102,25 +101,26 @@ contrast_plot <- contrast |>
 if (!nrow(contrast_plot)) stop("No finite inferential-preservation results for Fig. 2", call. = FALSE)
 
 # -----------------------------------------------------------------------------
-# a. Canonical high-information reference association landscape
+# a. Canonical high-information reference association landscape across domains
 # -----------------------------------------------------------------------------
 p2a <- ggplot(reference_plot, aes(outcome, metric, fill = reference_association_strength)) +
   geom_tile(color = "white", linewidth = .12) +
-  facet_grid(metric_class ~ ., scales = "free_y", space = "free_y", switch = "y") +
+  facet_grid(metric_class ~ outcome_domain, scales = "free", space = "free", switch = "y") +
   scale_fill_ms_sequential(
     trans = scales::transform_asinh(), na.value = "#ECEFF0",
     name = "Reference association\nstrength"
   ) +
   labs(
     title = "a  Reference association landscape",
-    subtitle = "Eye · MEDI · 10 s; bootstrap-standardized within-participant association magnitude",
+    subtitle = "Eye · MEDI · 10 s; day-level Sleep, Alertness and Affect outcomes",
     x = NULL, y = NULL
   ) +
   ms_atlas_theme(base_size = 5.9, x_angle = 28) +
   theme(
-    axis.text.y = element_text(size = 4.25),
-    axis.text.x = element_text(size = 5.0, angle = 28, hjust = 1),
-    strip.text.y.left = element_text(size = 4.65),
+    axis.text.y = element_text(size = 4.15),
+    axis.text.x = element_text(size = 4.7, angle = 28, hjust = 1),
+    strip.text.y.left = element_text(size = 4.55),
+    strip.text.x = element_text(size = 4.9, face = "bold"),
     legend.position = "bottom",
     legend.title = element_text(size = 4.6), legend.text = element_text(size = 4.3),
     plot.title = element_text(size = 6.8),
@@ -128,12 +128,13 @@ p2a <- ggplot(reference_plot, aes(outcome, metric, fill = reference_association_
   )
 
 # -----------------------------------------------------------------------------
-# b. Distribution of downstream inferential degradation across 52 metrics
+# b. Domain-level degradation distributions across metric-outcome combinations
 # -----------------------------------------------------------------------------
 contrast_summary <- contrast_plot |>
-  group_by(outcome, contrast_label, contrast_order, dimension) |>
+  group_by(outcome_domain, contrast_label, contrast_order, dimension) |>
   summarise(
-    n_metrics = n_distinct(metric),
+    n_outcomes = n_distinct(outcome),
+    n_metric_outcomes = n(),
     deviation_q25 = quantile(inference_deviation, .25, na.rm = TRUE, names = FALSE, type = 8),
     deviation_median = median(inference_deviation, na.rm = TRUE),
     deviation_q75 = quantile(inference_deviation, .75, na.rm = TRUE, names = FALSE, type = 8),
@@ -143,7 +144,7 @@ contrast_summary <- contrast_plot |>
 p2b <- ggplot(contrast_plot, aes(contrast_label, inference_deviation, color = metric_class)) +
   geom_point(
     position = position_jitter(width = .16, height = 0, seed = 211),
-    size = .52, alpha = .18
+    size = .48, alpha = .15
   ) +
   geom_linerange(
     data = contrast_summary,
@@ -155,12 +156,12 @@ p2b <- ggplot(contrast_plot, aes(contrast_label, inference_deviation, color = me
     aes(x = contrast_label, y = deviation_median),
     inherit.aes = FALSE, shape = 18, size = 1.65, color = "#202426"
   ) +
-  facet_wrap(~outcome, nrow = 1) +
+  facet_wrap(~outcome_domain, nrow = 1) +
   scale_color_ms_metric(guide = "none") +
   scale_y_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
   labs(
-    title = "b  Inferential degradation by measurement contrast",
-    subtitle = "Faint points = metrics; black diamonds/IQRs = cross-metric median and interquartile range",
+    title = "b  Inferential degradation across human-state domains",
+    subtitle = "Faint points = metric–outcome pairs; diamonds/IQRs summarize each domain",
     x = NULL,
     y = "Inferential deviation\n(reference-bootstrap uncertainty units)"
   ) +
@@ -175,12 +176,12 @@ p2b <- ggplot(contrast_plot, aes(contrast_label, inference_deviation, color = me
   )
 
 # -----------------------------------------------------------------------------
-# c. Frozen RQ1 representation distortion -> downstream inferential deviation
+# c. Frozen RQ1 representation distortion -> inferential deviation by domain
 # -----------------------------------------------------------------------------
 link_bins <- contrast_plot |>
-  group_by(outcome) |>
+  group_by(outcome_domain) |>
   mutate(distortion_bin = ntile(rq1_distortion_A, 5L)) |>
-  group_by(outcome, distortion_bin) |>
+  group_by(outcome_domain, distortion_bin) |>
   summarise(
     rq1_distortion_A = median(rq1_distortion_A, na.rm = TRUE),
     inference_deviation = median(inference_deviation, na.rm = TRUE),
@@ -188,7 +189,7 @@ link_bins <- contrast_plot |>
   )
 
 link_assoc <- contrast_plot |>
-  group_by(outcome) |>
+  group_by(outcome_domain) |>
   summarise(
     n = n(),
     rho = suppressWarnings(cor(rq1_distortion_A, inference_deviation,
@@ -198,10 +199,10 @@ link_assoc <- contrast_plot |>
   mutate(label = if_else(is.finite(rho), sprintf("Spearman rₛ = %.2f", rho), "Spearman rₛ = NA"))
 
 p2c <- ggplot(contrast_plot, aes(rq1_distortion_A, inference_deviation, color = metric_class)) +
-  geom_point(size = .54, alpha = .18) +
+  geom_point(size = .50, alpha = .15) +
   geom_line(
     data = link_bins,
-    aes(rq1_distortion_A, inference_deviation, group = outcome),
+    aes(rq1_distortion_A, inference_deviation, group = outcome_domain),
     inherit.aes = FALSE, linewidth = .78, color = "#202426"
   ) +
   geom_point(
@@ -215,13 +216,13 @@ p2c <- ggplot(contrast_plot, aes(rq1_distortion_A, inference_deviation, color = 
     inherit.aes = FALSE, hjust = -.04, vjust = 1.12,
     size = 2.05, color = "#303437"
   ) +
-  facet_wrap(~outcome, nrow = 1) +
+  facet_wrap(~outcome_domain, nrow = 1) +
   scale_color_ms_metric(guide = "none") +
   scale_x_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
   scale_y_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
   labs(
     title = "c  Representation distortion propagates to downstream inference",
-    subtitle = "x-axis uses the frozen RQ1 distortion estimate; black line connects distortion-quintile medians",
+    subtitle = "Frozen RQ1 distortion on x; black trajectory connects domain-specific distortion quintiles",
     x = "Frozen RQ1 representation distortion, A",
     y = "Inferential deviation\n(reference-bootstrap uncertainty units)"
   ) +
@@ -239,7 +240,7 @@ right <- cowplot::plot_grid(
   align = "v", axis = "lr", greedy = TRUE
 )
 body <- cowplot::plot_grid(
-  p2a, right, ncol = 2, rel_widths = c(.40, .60),
+  p2a, right, ncol = 2, rel_widths = c(.42, .58),
   align = "hv", axis = "tblr", greedy = TRUE
 )
 fig2 <- cowplot::plot_grid(
@@ -249,17 +250,19 @@ fig2 <- cowplot::plot_grid(
 
 readr::write_csv(
   reference_plot |>
-    mutate(metric = as.character(metric), metric_class = as.character(metric_class), outcome = as.character(outcome)),
+    mutate(metric = as.character(metric), metric_class = as.character(metric_class),
+           outcome = as.character(outcome), outcome_domain = as.character(outcome_domain)),
   file.path("results", "rq1", "inference", "fig2_reference_association_landscape.csv"), na = ""
 )
 readr::write_csv(
-  contrast_summary |> mutate(outcome = as.character(outcome), contrast_label = as.character(contrast_label)),
+  contrast_summary |>
+    mutate(outcome_domain = as.character(outcome_domain), contrast_label = as.character(contrast_label)),
   file.path("results", "rq1", "inference", "fig2_inferential_degradation.csv"), na = ""
 )
 readr::write_csv(
   contrast_plot |>
     mutate(metric_class = as.character(metric_class), outcome = as.character(outcome),
-           contrast_label = as.character(contrast_label)),
+           outcome_domain = as.character(outcome_domain), contrast_label = as.character(contrast_label)),
   file.path("results", "rq1", "inference", "fig2_distortion_inference_link.csv"), na = ""
 )
 
@@ -270,7 +273,7 @@ ms_plot_write_manifest(
     figure = c("Fig1_RQ1", "Fig2_RQ1_inferential_preservation"),
     input_artifact = c(
       "rq1_pairwise_change_long + rq1_pairwise_summary + rq1_local_transition_summary",
-      "rq1_inferential_preservation_anchor8 + rq1_pairwise_summary"
+      "rq1_inferential_preservation_domains_anchor8 + rq1_pairwise_summary"
     ),
     core_artifact_version = CORE_VERSION,
     rq1_analysis_version = RQ1_VERSION,
@@ -279,4 +282,4 @@ ms_plot_write_manifest(
     rq3_analysis_version = NA_character_
   )
 )
-message("Fig. 2 complete: reference association landscape, anchor-contrast inferential degradation, and RQ1 distortion-to-inference propagation.")
+message("Fig. 2 complete: three-domain reference landscape, inferential degradation, and RQ1 distortion-to-inference propagation.")
