@@ -15,7 +15,7 @@ configuration pair → observed exposure-process change → target-representatio
 The RQ1 downstream-consequence extension adds one deliberately narrow link:
 
 ```text
-frozen RQ1 representation distortion → exposure–sleep association perturbation
+frozen RQ1 representation distortion → day-level human-state association perturbation
 ```
 
 The 54 published exposure metrics remain the analytical units. Metric classes
@@ -69,9 +69,9 @@ All active supplementary drawing code remains centralized in:
 
 The historical RQ1 inference drawing block still present in that file reads only
 the retired v1 artifact path `rq1_inferential_preservation.rds`. The current
-v2 analysis writes `rq1_inferential_preservation_anchor8.rds` and removes the
-legacy path, so active inferential-preservation plotting belongs exclusively to
-`11b_plot_fig2.R`.
+v3 analysis writes `rq1_inferential_preservation_domains_anchor8.rds` and removes
+both the v1 path and the intermediate sleep-only `rq1_inferential_preservation_anchor8.rds`,
+so active inferential-preservation plotting belongs exclusively to `11b_plot_fig2.R`.
 
 The supplementary script sources the mature RQ2/RQ3 implementations inside
 RQ-specific local environments to reconstruct frozen display objects.
@@ -151,27 +151,37 @@ remain supplementary.
 ## Figure 2 — RQ1 downstream inferential preservation
 
 `11b_plot_fig2.R` reads the frozen
-`results/rq1/inference/rq1_inferential_preservation_anchor8.rds` artifact.
+`results/rq1/inference/rq1_inferential_preservation_domains_anchor8.rds` artifact.
 It does not fit exposure–outcome models itself.
 
 The analysis is intentionally restricted to the 52 participant-day exposure
-representations, three next-morning sleep outcomes and eight single-axis
-contrasts against eye/MEDI/10 s. Duration, participant-level IS/IV and
-placement × optical × cadence Cartesian combinations are not part of this figure.
+representations, six day-level outcomes spanning **Sleep, Alertness and Affect**,
+and eight single-axis contrasts against eye/MEDI/10 s. Duration, participant-level
+IS/IV and placement × optical × cadence Cartesian combinations are not part of
+this figure.
+
+The six outcomes are sleep quality, awakenings, awake duration, daily KSS,
+positive affect and negative affect. Sleep outcomes use exposure day D followed
+by the next-morning diary. KSS and MoodZoom responses are harmonized to the
+nominal 11/14/17/20 h EMA slots and summarized within day; these same-day
+associations are descriptive day-level relationships rather than acute causal
+response estimates.
 
 Fig. 2 presents:
 
 - Fig. 2a: the eye/MEDI/10-s reference association landscape across the 52 daily
-  representations and three sleep outcomes. Cell intensity is the magnitude of
-  the within-participant association in reference-bootstrap uncertainty units;
-  it is descriptive and is not a significance-screening heatmap;
+  representations and all six outcomes, visibly grouped into the three human-state
+  domains. Cell intensity is the magnitude of the within-participant association
+  in reference-bootstrap uncertainty units; it is descriptive and is not a
+  significance-screening heatmap;
 - Fig. 2b: inferential degradation for each of the eight measurement contrasts,
-  retaining faint metric-level observations and overlaying cross-metric median
-  and interquartile range separately for each sleep outcome;
+  retaining faint metric–outcome observations while overlaying median and
+  interquartile range at the domain level;
 - Fig. 2c: propagation from the already-frozen RQ1 representation distortion
-  `A_mean_absolute` to downstream inferential deviation. Metric-level points
-  remain visible, a binned median trajectory exposes the overall tendency, and
-  the within-outcome Spearman association summarizes monotone propagation.
+  `A_mean_absolute` to downstream inferential deviation. Metric–outcome points
+  remain visible, domain-specific binned median trajectories expose the overall
+  tendency, and a Spearman association summarizes monotone propagation within
+  each domain.
 
 The main x-axis in Fig. 2c must come from the frozen RQ1 summary. The distortion
 recomputed on outcome-matched support is an audit quantity only and must never
@@ -274,6 +284,7 @@ delegates the downstream portion to `scripts/run_downstream_server.sh`.
 
 Files under `results/legacy/pre_refactor` are retained for audit only and are
 not valid inputs to current plotting scripts. The old unversioned inference
-artifact `results/rq1/inference/rq1_inferential_preservation.rds` is likewise
-retired. Historical implementation filenames are internal compatibility details;
-the numbered Fig. 1–6 graph and `figure_registry.R` are canonical.
+artifact `results/rq1/inference/rq1_inferential_preservation.rds` and the
+intermediate sleep-only `rq1_inferential_preservation_anchor8.rds` are retired.
+Historical implementation filenames are internal compatibility details; the
+numbered Fig. 1–6 graph and `figure_registry.R` are canonical.
