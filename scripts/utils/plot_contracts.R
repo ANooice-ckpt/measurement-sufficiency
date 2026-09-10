@@ -59,6 +59,13 @@ ms_main_figure_id_map <- function(x) {
   )
 }
 
+ms_current_main_figure_ids <- function() {
+  c(
+    "Fig1_RQ1", "Fig2_RQ1_inferential_preservation",
+    "Fig3_RQ2", "Fig4_RQ2", "Fig5_RQ3", "Fig6_RQ3"
+  )
+}
+
 ms_plot_prep_only <- function() {
   if (identical(Sys.getenv("MS_PLOT_PREP_ONLY", unset = "0"), "1")) return(TRUE)
 
@@ -158,6 +165,36 @@ ms_plot_write_manifest <- function(path, figure_rows) {
     file.path(rq_dir, basename(path))
   } else {
     path
+  }
+
+  # A later supplementary write must not erase a main figure that was generated
+  # earlier in the same run. Preserve only canonical main-figure rows whose PNG
+  # actually exists now; this prevents stale historical figure identifiers from
+  # surviving after the runner clears results/figures/.
+  if (file.exists(manifest_path) && "figure" %in% names(figure_rows)) {
+    previous <- suppressMessages(readr::read_csv(manifest_path, show_col_types = FALSE, progress = FALSE))
+    if ("figure" %in% names(previous)) {
+      previous$figure <- ms_main_figure_id_map(previous$figure)
+      current_ids <- ms_current_main_figure_ids()
+      existing_ids <- current_ids[
+        file.exists(file.path("results", "figures", paste0(current_ids, ".png")))
+      ]
+      keep_previous <- previous |>
+        dplyr::filter(
+          figure %in% existing_ids,
+          !figure %in% figure_rows$figure
+        )
+      if (nrow(keep_previous)) {
+        figure_rows <- dplyr::bind_rows(keep_previous, figure_rows)
+      }
+    }
+  }
+
+  if ("figure" %in% names(figure_rows)) {
+    order_ids <- ms_current_main_figure_ids()
+    figure_rows <- figure_rows |>
+      dplyr::distinct(figure, .keep_all = TRUE) |>
+      dplyr::arrange(match(figure, order_ids), figure)
   }
 
   dir.create(dirname(manifest_path), recursive = TRUE, showWarnings = FALSE)
