@@ -37,13 +37,14 @@ source("scripts/utils/rq1_pairwise_artifacts.R")
 source("scripts/utils/rq1_inference.R")
 
 rq1_expand_sleep_support <- function(pairs, outcomes) {
+  outcome_names <- rq1_inference_contract()$outcomes
   joined <- pairs |>
     left_join(outcomes, by = c("site", "Id", "Date"), relationship = "many-to-many") |>
     mutate(outcome_reason = if_else(is.na(outcome), "no_next_morning_diary", outcome_reason))
   missing <- joined |> filter(is.na(outcome)) |> select(-outcome)
   bind_rows(
     joined |> filter(!is.na(outcome)),
-    tidyr::crossing(missing, outcome = c("sleep_quality", "awakenings", "awake_duration"))
+    tidyr::crossing(missing, outcome = outcome_names)
   )
 }
 
@@ -66,6 +67,7 @@ rq1_fit_inference_groups <- function(pairs, keys, B, seed_base) {
 }
 
 rq1_run_inference <- function() {
+  contract <- rq1_inference_contract()
   metric_path <- file.path(core_root(), "metric_cube.csv.gz")
   rq1_path <- file.path(rq_root("rq1"), "rq1_pairwise_change_long.rds")
   rq1_summary_path <- file.path(rq_root("rq1"), "rq1_pairwise_summary.csv")
@@ -88,6 +90,14 @@ rq1_run_inference <- function() {
     col_types = cols(Id = col_character())
   )
   ms_assert_version(cube, "core_artifact_version", core_artifact_version())
+  daily_metrics <- cube |>
+    filter(analysis_unit_type == "participant_day") |>
+    distinct(metric) |>
+    pull(metric)
+  if (length(daily_metrics) != contract$daily_metric_count) {
+    stop("Expected ", contract$daily_metric_count, " participant-day metrics; found ", length(daily_metrics))
+  }
+
   rq1_summary <- readr::read_csv(rq1_summary_path, show_col_types = FALSE, progress = FALSE)
   ms_assert_version(rq1_summary, "core_artifact_version", core_artifact_version())
   ms_assert_version(rq1_summary, "rq1_analysis_version", rq1_version)
@@ -105,12 +115,20 @@ rq1_run_inference <- function() {
       load_raw_file(raw_data_path(s, "sleepdiaries"), "sleepdiaries"), s
     )
   )
+  if (!setequal(unique(outcomes$outcome), contract$outcomes)) {
+    stop("Harmonized sleep outcomes do not match the frozen inferential-preservation contract")
+  }
 
   anchor_map <- rq1_inference_anchor_map()
   ms_assert_unique(anchor_map, "candidate_config", "RQ1 inference anchor map")
-  if (nrow(anchor_map) != 8L) stop("RQ1 inferential preservation must contain exactly eight anchor contrasts")
+  if (nrow(anchor_map) != contract$anchor_count) {
+    stop("RQ1 inferential preservation must contain exactly ", contract$anchor_count, " anchor contrasts")
+  }
 
   pairs <- rq1_inference_pairs(cube) |> rq1_expand_sleep_support(outcomes)
+  if (n_distinct(pairs$metric) != contract$daily_metric_count) {
+    stop("Inferential contrast pairing does not span all participant-day metrics")
+  }
   contrast_keys <- c(
     "candidate_config", "support_id", "placement", "optical", "resolution_s",
     "dimension", "comparison_pair_id", "contrast_label", "contrast_order",
@@ -119,6 +137,9 @@ rq1_run_inference <- function() {
   contrast_results <- rq1_fit_inference_groups(pairs, contrast_keys, B, 20260911L)
 
   reference_pairs <- rq1_inference_reference_pairs(cube) |> rq1_expand_sleep_support(outcomes)
+  if (n_distinct(reference_pairs$metric) != contract$daily_metric_count) {
+    stop("Reference association pairing does not span all participant-day metrics")
+  }
   reference_keys <- c(
     "candidate_config", "support_id", "metric", "metric_class", "metric_geometry", "outcome"
   )
@@ -143,6 +164,15 @@ rq1_run_inference <- function() {
   reference_summary <- collect(reference_results, "task_summary")
   reference_support <- collect(reference_results, "support")
   reference_bootstrap <- collect(reference_results, "bootstrap")
+
+  expected_contrast_tasks <- contract$anchor_count * contract$daily_metric_count * length(contract$outcomes)
+  expected_reference_tasks <- contract$daily_metric_count * length(contract$outcomes)
+  if (nrow(contrast_summary) != expected_contrast_tasks) {
+    stop("Expected ", expected_contrast_tasks, " metric-outcome-contrast tasks; found ", nrow(contrast_summary))
+  }
+  if (nrow(reference_summary) != expected_reference_tasks) {
+    stop("Expected ", expected_reference_tasks, " reference metric-outcome tasks; found ", nrow(reference_summary))
+  }
 
   rq1_lookup <- anchor_map |>
     select(candidate_config, dimension, comparison_pair_id, contrast_label, contrast_order) |>
@@ -212,9 +242,9 @@ rq1_run_inference <- function() {
 
   # v2 uses a distinct artifact path so the legacy supplementary inference block
   # cannot silently render a second, obsolete version of the main Fig. 2.
-  legacy_path <- file.path(out, "rq1_inferential_preservation.rds")
+  legacy_path <- file.path(out, contract$legacy_artifact_filename)
   unlink(c(legacy_path, paste0(legacy_path, ".ok")), force = TRUE)
-  path <- file.path(out, "rq1_inferential_preservation_anchor8.rds")
+  path <- file.path(out, contract$artifact_filename)
   rq1_write_part_atomic(artifact, path)
   readr::write_csv(artifact$contrast_summary,
                    file.path(out, "rq1_inferential_preservation_summary.csv"), na = "")
