@@ -163,19 +163,8 @@ helpers <- rq2_model_helpers()
 scaled_helper <- helpers$scale_train_test(tibble(x = c(1, 2, 3)), tibble(x = c(10, 20)), "x")
 stopifnot(identical(scaled_helper$te$x, c(8, 18)), helpers$performance(c(1, 2), c(1, 2))$r2 == 1)
 
-# Main-figure renumbering is centralized so mature RQ2/RQ3 plotting logic remains
-# unchanged while external filenames/manifests shift from 2-5 to 3-6.
-source("scripts/utils/plot_contracts.R")
-stopifnot(
-  ms_main_figure_name_map("Fig2_RQ2.png") == "Fig3_RQ2.png",
-  ms_main_figure_name_map("Fig3_RQ2.png") == "Fig4_RQ2.png",
-  ms_main_figure_name_map("Fig4_RQ3.png") == "Fig5_RQ3.png",
-  ms_main_figure_name_map("Fig5_RQ3.png") == "Fig6_RQ3.png",
-  ms_main_figure_name_map("Fig2_RQ1_inferential_preservation.png") == "Fig2_RQ1_inferential_preservation.png",
-  identical(
-    ms_main_figure_id_map(c("Fig2_RQ2", "Fig3_RQ2", "Fig4_RQ3", "Fig5_RQ3")),
-    c("Fig3_RQ2", "Fig4_RQ2", "Fig5_RQ3", "Fig6_RQ3")
-  )
-)
+# Figure identity/routing is tested once in its package-free contract test rather
+# than duplicated here with another set of hard-coded mapping assertions.
+source("scripts/tests/validate_figure_registry.R")
 
-cat("PASS: all R sources parse; anchor8 diary/support/FE/bootstrap/circular/version/compression/figure-renumber checks\n")
+cat("PASS: all R sources parse; anchor8 diary/support/FE/bootstrap/circular/version/compression checks\n")
