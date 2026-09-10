@@ -21,6 +21,9 @@ jobs:
           if (!length(files)) stop("No R scripts found")
           invisible(lapply(files, parse))
           message("All ", length(files), " R scripts parsed successfully.")
+      - name: Validate figure registry
+        shell: Rscript {0}
+        run: source("scripts/tests/validate_figure_registry.R")
       - name: Check every shell script
         shell: bash
         run: |
