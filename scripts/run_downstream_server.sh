@@ -130,25 +130,28 @@ LOG="results/logs/downstream_v5.log"
   echo "===== RQ1 INFERENTIAL PRESERVATION (FROZEN DAILY METRICS) ====="
   Rscript scripts/10b_rq1_inferential_preservation.R
 
+  echo "===== FIGURE 2 (RQ1 DOWNSTREAM INFERENCE) ====="
+  Rscript scripts/11b_plot_fig2.R
+
   echo "===== RQ2 + LAYERED CONTEXT ====="
   # The canonical RQ2 entrypoint and layered extension share one R process and
   # therefore one set of validated canonical transition objects.
   Rscript scripts/12_rq2_analysis.R
 
-  echo "===== FIGURE 2 ====="
-  Rscript scripts/13a_plot_fig2.R
-
   echo "===== FIGURE 3 ====="
-  Rscript scripts/13b_plot_fig3.R
+  Rscript scripts/13a_plot_fig3.R
+
+  echo "===== FIGURE 4 ====="
+  Rscript scripts/13b_plot_fig4.R
 
   echo "===== RQ3 ====="
   Rscript scripts/14_rq3_analysis.R
 
-  echo "===== FIGURE 4 ====="
-  Rscript scripts/15a_plot_fig4.R
-
   echo "===== FIGURE 5 ====="
-  Rscript scripts/15b_plot_fig5.R
+  Rscript scripts/15a_plot_fig5.R
+
+  echo "===== FIGURE 6 ====="
+  Rscript scripts/15b_plot_fig6.R
 
   echo "===== SUPPLEMENTARY FIGURES ====="
   Rscript scripts/16_plot_supplementary.R
