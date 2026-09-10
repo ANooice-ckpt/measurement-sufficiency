@@ -3,6 +3,9 @@
 source("scripts/utils/analysis_design.R")
 source("scripts/utils/artifact_validation.R")
 source("scripts/utils/rq1_inference_contract.R")
+if (!exists("rq1_pairwise_load", mode = "function")) {
+  source("scripts/utils/rq1_pairwise_artifacts.R")
+}
 
 rq1_inference_version <- function(rq1_version) {
   paste0("rq1_inference_v2_anchor8__", rq1_version)
@@ -64,75 +67,86 @@ rq1_sleep_outcomes <- function(x, site) {
     )
 }
 
-rq1_inference_pairs <- function(cube) {
+# RQ1 already freezes the exact participant-day support and both state values for
+# every scientific pair. Reuse those values directly rather than depending on the
+# larger Core metric cube again. For all eight anchor contrasts state_a is the
+# lower-information candidate and state_b is the eye/MEDI/10-s reference.
+rq1_inference_pairs <- function(pairwise) {
   contract <- rq1_inference_contract()
-  x <- cube |>
-    dplyr::filter(analysis_unit_type == "participant_day", resolution_s %in% ms_primary_temporal_s()) |>
-    dplyr::mutate(Id = as.character(Id), Date = as.Date(Date))
-  keys <- c("support_id", "site", "Id", "Date", "metric")
-  ms_assert_unique(x, c(keys, "config_id"), "daily metric cube")
-  configs <- rq1_inference_anchor_map()
-  dual <- contract$dual_channel_metrics
-
-  dplyr::bind_rows(lapply(seq_len(nrow(configs)), function(i) {
-    cfg <- configs[i, ]
-    prefix <- if (cfg$placement[[1]] == "eye") "eye" else paste0("eye_", cfg$placement[[1]])
-    full_support <- paste0(prefix, "_full")
-    default_support <- if (cfg$optical[[1]] == "LIGHT") full_support else paste0(prefix, "_medi")
-    z <- x |>
-      dplyr::filter(
-        (metric %in% dual & support_id == full_support) |
-          (!metric %in% dual & support_id == default_support)
-      )
-    ref <- z |>
-      dplyr::filter(placement == "eye", optical == "MEDI", resolution_s == 10L) |>
-      dplyr::select(dplyr::all_of(keys), metric_class, metric_geometry,
-                    reference_value = value, reference_available = available)
-    cand <- z |>
-      dplyr::filter(placement == cfg$placement[[1]], optical == cfg$optical[[1]],
-                    resolution_s == cfg$resolution_s[[1]]) |>
-      dplyr::select(dplyr::all_of(keys), candidate_value = value, candidate_available = available)
-    dplyr::left_join(ref, cand, by = keys, relationship = "one-to-one") |>
-      dplyr::mutate(
-        candidate_config = cfg$candidate_config[[1]],
-        placement = cfg$placement[[1]], optical = cfg$optical[[1]], resolution_s = cfg$resolution_s[[1]],
-        dimension = cfg$dimension[[1]], comparison_pair_id = cfg$comparison_pair_id[[1]],
-        contrast_label = cfg$contrast_label[[1]], contrast_order = cfg$contrast_order[[1]],
-        reference_config = contract$reference_config,
-        pair_reason = dplyr::case_when(
-          cfg$optical[[1]] == "LIGHT" & metric %in% dual ~ "LIGHT_only_metric_unavailable",
-          !dplyr::coalesce(reference_available, FALSE) | !is.finite(reference_value) ~ "reference_unavailable",
-          !dplyr::coalesce(candidate_available, FALSE) | !is.finite(candidate_value) ~ "candidate_unavailable",
-          TRUE ~ NA_character_
+  anchors <- rq1_inference_anchor_map()
+  wanted <- paste(anchors$dimension, anchors$comparison_pair_id, sep = "|")
+  columns <- c(
+    "dimension", "comparison_pair_id", "support_id", "site", "Id",
+    "analysis_unit_type", "Date", "metric", "metric_class", "metric_scope",
+    "metric_geometry", "value_a", "value_b", "available_a", "available_b",
+    "pair_available", "pair_unavailable_reason"
+  )
+  x <- rq1_pairwise_load(
+    pairwise,
+    columns = columns,
+    filter_fn = function(z) {
+      z |>
+        dplyr::filter(
+          analysis_unit_type == "participant_day",
+          paste(dimension, comparison_pair_id, sep = "|") %in% wanted
         )
+    }
+  ) |>
+    dplyr::mutate(Id = as.character(Id), Date = as.Date(Date)) |>
+    dplyr::inner_join(
+      anchors,
+      by = c("dimension", "comparison_pair_id"),
+      relationship = "many-to-one"
+    ) |>
+    dplyr::transmute(
+      support_id, site, Id, Date, metric, metric_class, metric_scope, metric_geometry,
+      reference_value = value_b, candidate_value = value_a,
+      reference_available = available_b, candidate_available = available_a,
+      candidate_config, placement, optical, resolution_s, dimension, comparison_pair_id,
+      contrast_label, contrast_order, reference_config = contract$reference_config,
+      pair_reason = dplyr::case_when(
+        !dplyr::coalesce(reference_available, FALSE) | !is.finite(reference_value) ~ "reference_unavailable",
+        !dplyr::coalesce(candidate_available, FALSE) | !is.finite(candidate_value) ~
+          dplyr::coalesce(pair_unavailable_reason, "candidate_unavailable"),
+        !dplyr::coalesce(pair_available, FALSE) ~ dplyr::coalesce(pair_unavailable_reason, "pair_unavailable"),
+        TRUE ~ NA_character_
       )
-  }))
+    )
+
+  ms_assert_unique(
+    x,
+    c("candidate_config", "support_id", "site", "Id", "Date", "metric"),
+    "RQ1 frozen inferential anchor pairs"
+  )
+  x
 }
 
-rq1_inference_reference_pairs <- function(cube) {
+# The 20-s-vs-10-s anchor uses the canonical eye-only maximal support already
+# defined by RQ1: eye_medi for ordinary metrics and eye_full for MDER/nvRD. Its
+# state_b therefore provides one canonical eye/MEDI/10-s reference landscape
+# without reopening the Core metric cube.
+rq1_inference_reference_pairs <- function(anchor_pairs) {
   contract <- rq1_inference_contract()
-  dual <- contract$dual_channel_metrics
-  x <- cube |>
-    dplyr::filter(
-      analysis_unit_type == "participant_day", placement == "eye", optical == "MEDI", resolution_s == 10L,
-      (metric %in% dual & support_id == "eye_full") |
-        (!metric %in% dual & support_id == "eye_medi")
-    ) |>
-    dplyr::mutate(Id = as.character(Id), Date = as.Date(Date))
-  ms_assert_unique(x, c("support_id", "site", "Id", "Date", "metric", "config_id"),
-                   "canonical reference daily metric cube")
-  x |>
+  x <- anchor_pairs |>
+    dplyr::filter(candidate_config == "eye__MEDI__20s") |>
     dplyr::transmute(
-      support_id, site, Id, Date, metric, metric_class, metric_geometry,
-      reference_value = value, candidate_value = value,
-      reference_available = available, candidate_available = available,
+      support_id, site, Id, Date, metric, metric_class, metric_scope, metric_geometry,
+      reference_value, candidate_value = reference_value,
+      reference_available, candidate_available = reference_available,
       candidate_config = contract$reference_config, reference_config = contract$reference_config,
       placement = "eye", optical = "MEDI", resolution_s = 10L,
       dimension = "reference", comparison_pair_id = "reference", contrast_label = "Reference", contrast_order = 0L,
       pair_reason = dplyr::if_else(
-        dplyr::coalesce(available, FALSE) & is.finite(value), NA_character_, "reference_unavailable"
+        dplyr::coalesce(reference_available, FALSE) & is.finite(reference_value),
+        NA_character_, "reference_unavailable"
       )
     )
+  ms_assert_unique(
+    x,
+    c("support_id", "site", "Id", "Date", "metric"),
+    "canonical RQ1 reference association pairs"
+  )
+  x
 }
 
 # Sufficient statistics after participant demeaning. A bootstrap draw weights
