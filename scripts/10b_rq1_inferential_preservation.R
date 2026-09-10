@@ -210,7 +210,11 @@ rq1_run_inference <- function() {
     diary_audit = outcomes
   )
 
-  path <- file.path(out, "rq1_inferential_preservation.rds")
+  # v2 uses a distinct artifact path so the legacy supplementary inference block
+  # cannot silently render a second, obsolete version of the main Fig. 2.
+  legacy_path <- file.path(out, "rq1_inferential_preservation.rds")
+  unlink(c(legacy_path, paste0(legacy_path, ".ok")), force = TRUE)
+  path <- file.path(out, "rq1_inferential_preservation_anchor8.rds")
   rq1_write_part_atomic(artifact, path)
   readr::write_csv(artifact$contrast_summary,
                    file.path(out, "rq1_inferential_preservation_summary.csv"), na = "")
