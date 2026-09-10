@@ -7,9 +7,9 @@ scripts/10_rq1_analysis.R                  -> scripts/11_plot_fig1.R
 scripts/10b_rq1_inferential_preservation.R -> scripts/11b_plot_fig2.R
 ```
 
-The first pair defines the canonical representation-change analysis. The second is a downstream consequence extension that asks whether the already-observed representation distortion propagates into exposure–sleep association estimates. It remains within RQ1 and does not create a new research question.
+The first pair defines the canonical representation-change analysis. The second is a downstream consequence extension that asks whether the already-observed representation distortion propagates into day-level human-state association estimates across Sleep, Alertness and Affect. It remains within RQ1 and does not create a new research question.
 
-`10_rq1_analysis.R` reads the durable core metric and duration artifacts. `11_plot_fig1.R` reads only frozen RQ1 outputs. `10b_rq1_inferential_preservation.R` reads the frozen daily metric cube, frozen RQ1 summaries and harmonized sleep diaries, then writes an independent versioned inference artifact. `11b_plot_fig2.R` reads only those frozen results and does not refit models.
+`10_rq1_analysis.R` reads the durable core metric and duration artifacts. `11_plot_fig1.R` reads only frozen RQ1 outputs. `10b_rq1_inferential_preservation.R` reuses participant-day candidate/reference values from the frozen RQ1 pairwise artifact, joins harmonized sleep diaries and current-conditions EMA, and writes an independent versioned inference artifact. It does not reopen or recompute Core. `11b_plot_fig2.R` reads only those frozen results and does not refit models.
 
 Main PNG figures are redirected by the shared plot contract to `results/figures/`, while the RQ1 figure manifest remains under `results/rq1/`.
 
@@ -47,19 +47,21 @@ All pairs within a lattice join one standardizer. Primary scaling is SD; IQR/1.3
 
 ## Downstream inferential-preservation extension
 
-The health-related extension is intentionally narrower than the full RQ1 configuration lattice. It evaluates whether representation distortion has an observable downstream consequence without turning the paper into a separate health-effect analysis.
+The downstream extension is intentionally narrower than the full RQ1 configuration lattice. It evaluates whether representation distortion has an observable consequence for association estimates without turning the paper into a separate health-effect study.
 
-### Eligible representations and outcomes
+### Eligible representations and outcome domains
 
 Only the 52 participant-day metrics enter this layer. Participant-level interdaily stability and intradaily variability are excluded because their temporal support does not match repeated daily outcomes.
 
-Three next-morning sleep-diary outcomes are used:
+Six day-level outcomes span three domains:
 
-- sleep quality, scored 1–5 from Very poor to Very good;
-- number of awakenings;
-- awake duration in minutes.
+- **Sleep:** sleep quality (1–5, Very poor to Very good), number of awakenings, and awake duration in minutes;
+- **Alertness:** daily Karolinska Sleepiness Scale (KSS; 1–10, higher = sleepier);
+- **Affect:** daily positive affect = mean(elated, energetic) and negative affect = mean(anxious, sad, angry, irritable), using the 0–6 MoodZoom item scale.
 
 Complete calendar-day exposure on day D is paired with the sleep diary whose local wake date is D+1. Sleep-onset time, sleep duration and other diary-derived timing outcomes are not used because they would be structurally coupled to exposure representations whose calculation windows already depend on diary sleep/wake timing.
+
+Current-conditions EMA is treated as repeated sampling of day-level human state rather than as an acute causal-response design. Responses are assigned to the nearest nominal **11:00, 14:00, 17:00 and 20:00** slot within ±120 min, with at most one nearest response retained per slot; at least two valid slots are required to form each daily KSS or affect outcome. Same-day complete exposure and the resulting daily EMA phenotype are therefore interpreted only as a descriptive day-level association.
 
 ### Eight single-axis contrasts
 
@@ -98,13 +100,13 @@ This quantity measures configuration sensitivity of the observed association est
 
 ### Frozen RQ1 distortion is the upstream predictor
 
-The main Fig. 2 propagation analysis does **not** recompute RQ1 distortion on the sleep-outcome subset. Instead, each eligible metric/contrast is joined to the already-frozen `A_mean_absolute` from `rq1_pairwise_summary.csv`.
+The main Fig. 2 propagation analysis does **not** recompute RQ1 distortion on outcome-specific subsets. Instead, each eligible metric/contrast is joined to the already-frozen `A_mean_absolute` from `rq1_pairwise_summary.csv`.
 
 An outcome-matched distortion is still calculated inside the paired model fit for support auditing, but it is stored as `matched_support_distortion_A/B` and must not replace the frozen RQ1 distortion in the main downstream-consequence result.
 
 ### Reference association landscape
 
-A separate eye/MEDI/10-s association profile is estimated for each metric and outcome on that metric's own maximal eligible daily support. Its role is descriptive: it shows the structure of the association landscape whose stability is subsequently tested. It is not a discovery screen and should not be presented as a multiple-testing health-effect atlas.
+A separate eye/MEDI/10-s association profile is estimated for each metric and outcome on that metric's own maximal eligible daily support. Its role is descriptive: it shows the association landscape whose stability is subsequently tested across three human-state domains. It is not a discovery screen and should not be presented as a multiple-testing health-effect atlas.
 
 ## Outputs
 
@@ -123,10 +125,11 @@ results/rq1/
   figure_artifact_manifest.csv
 
 results/rq1/inference/
-  rq1_inferential_preservation_anchor8.rds
+  rq1_inferential_preservation_domains_anchor8.rds
   rq1_inferential_preservation_summary.csv
   rq1_inferential_preservation_term_summary.csv
   rq1_reference_association_summary.csv
+  rq1_downstream_outcome_audit.csv
   fig2_reference_association_landscape.csv
   fig2_inferential_degradation.csv
   fig2_distortion_inference_link.csv
@@ -137,7 +140,7 @@ results/figures/
   FigS_RQ1_*.png
 ```
 
-The historical `results/rq1/inference/rq1_inferential_preservation.rds` path belonged to the earlier all-configuration prototype and is retired. The v2 analysis explicitly removes that path before writing the anchor8 artifact so the legacy supplementary plotting block cannot be mistaken for the active Fig. 2.
+The historical `rq1_inferential_preservation.rds` all-configuration prototype and the intermediate sleep-only `rq1_inferential_preservation_anchor8.rds` artifact are retired. The v3 analysis removes both before writing the three-domain artifact so legacy drawing code cannot be mistaken for the active Fig. 2.
 
 Duration cohort/run/window audit is written under `results/diagnostics/`. RQ2 loads only selected primary pairwise columns/rows through the manifest loader; RQ3 uses the frozen summary/local projections and manifest version. Plot scripts read frozen outputs only.
 
