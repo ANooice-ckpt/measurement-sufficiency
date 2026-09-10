@@ -4,6 +4,7 @@ suppressPackageStartupMessages(library(tidyverse))
 source("scripts/utils/rq1_inference.R")
 source("scripts/utils/rq1_pairwise_artifacts.R")
 source("scripts/utils/melidos_io.R")
+source("scripts/10b_rq1_inferential_preservation.R")
 
 files <- list.files("scripts", pattern = "\\.R$", recursive = TRUE, full.names = TRUE)
 invisible(lapply(files, parse))
@@ -79,6 +80,26 @@ stopifnot(
   e$outcome_value[e$outcome == "negative_affect"] == 0.5,
   e$outcome_domain[e$outcome == "kss"] == "Alertness",
   all(e$outcome_domain[e$outcome != "kss"] == "Affect")
+)
+
+# Outcome expansion must keep observed valid rows valid; only absent outcomes
+# receive the generic outcome_not_observed reason.
+outcome_rows <- bind_rows(d, e)
+mini_pair <- tibble(site = "test", Id = "001", Date = as.Date("2025-04-01"), marker = 1L)
+expanded <- rq1_expand_outcome_support(mini_pair, outcome_rows)
+stopifnot(
+  nrow(expanded) == 6L,
+  setequal(expanded$outcome, contract$outcomes),
+  all(is.na(expanded$outcome_reason)),
+  all(expanded$outcome_n_observations > 0L)
+)
+expanded_missing <- rq1_expand_outcome_support(
+  mini_pair,
+  outcome_rows |> filter(outcome != "kss")
+)
+stopifnot(
+  expanded_missing$outcome_reason[expanded_missing$outcome == "kss"] == "outcome_not_observed",
+  all(is.na(expanded_missing$outcome_reason[expanded_missing$outcome != "kss"]))
 )
 
 # Downstream inference is deliberately restricted to eight single-axis
