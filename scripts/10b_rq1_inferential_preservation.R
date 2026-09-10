@@ -7,11 +7,11 @@
 #   chest/wrist vs eye, LIGHT vs MEDI, and 20/30/40/60/120 s vs 10 s.
 #   No multiday metrics, duration windows, reserve 300-s state, or multi-axis
 #   configuration combinations enter this downstream consequence layer.
-# - Pair-specific maximal support is retained for each candidate/reference fit.
-#   The exposure distortion used as the upstream explanatory quantity is NOT
-#   re-estimated here: it is joined from the frozen RQ1 pairwise summary for the
-#   same metric and scientific contrast. Matched-support distortion is retained
-#   only as an audit quantity.
+# - Candidate/reference exposure values and pair-specific support are read directly
+#   from the frozen RQ1 pairwise artifact; Core is not reopened or recomputed.
+#   The exposure distortion used as the upstream explanatory quantity is likewise
+#   joined from the frozen RQ1 pairwise summary for the same metric/contrast.
+#   Matched-support distortion is retained only as an audit quantity.
 # - Each outcome gets identical candidate/reference complete cases, retaining
 #   participants with >=2 matched days. Site is absorbed by participant fixed
 #   effects; participants are keyed by site + Id, not treated as iid days.
@@ -27,8 +27,9 @@
 # - Coefficient intervals use the SAME participant bootstrap draw for reference
 #   and candidate fits, stratified by site. Intervals are pointwise and do not
 #   establish equivalence or adjust for multiplicity.
-# - A canonical eye/MEDI/10-s reference association landscape is estimated once
-#   on its own metric-specific maximal support for Fig. 2a.
+# - A canonical eye/MEDI/10-s reference association landscape is recovered from
+#   the frozen 20-s-vs-10-s RQ1 anchor, which already uses the canonical eye-only
+#   metric-specific support.
 suppressPackageStartupMessages(library(tidyverse))
 source("scripts/utils/paths.R")
 source("scripts/utils/melidos_io.R")
@@ -68,10 +69,9 @@ rq1_fit_inference_groups <- function(pairs, keys, B, seed_base) {
 
 rq1_run_inference <- function() {
   contract <- rq1_inference_contract()
-  metric_path <- file.path(core_root(), "metric_cube.csv.gz")
   rq1_path <- file.path(rq_root("rq1"), "rq1_pairwise_change_long.rds")
   rq1_summary_path <- file.path(rq_root("rq1"), "rq1_pairwise_summary.csv")
-  for (p in c(metric_path, rq1_path, rq1_summary_path)) {
+  for (p in c(rq1_path, rq1_summary_path)) {
     if (!file.exists(p)) stop("Missing frozen input: ", p)
   }
 
@@ -79,23 +79,16 @@ rq1_run_inference <- function() {
   rq1_version <- rq1_pairwise_version(upstream)
   ms_assert_version(upstream, "core_artifact_version", core_artifact_version())
   ms_assert_version(upstream, "analysis_design_id", ms_analysis_design_id())
+  pair_part_paths <- rq1_pairwise_part_paths(upstream)
+  if (rq1_pairwise_is_partitioned(upstream) &&
+      (!length(pair_part_paths) || any(!file.exists(pair_part_paths)))) {
+    stop("Frozen RQ1 pairwise parts are missing; cannot recover participant-day anchor values")
+  }
+
   version <- rq1_inference_version(rq1_version)
   B <- suppressWarnings(as.integer(Sys.getenv("RQ1_INFERENCE_BOOT", "1000")))
   if (length(B) != 1L || !is.finite(B) || B < 0L) {
     stop("RQ1_INFERENCE_BOOT must be a nonnegative integer")
-  }
-
-  cube <- readr::read_csv(
-    metric_path, show_col_types = FALSE, progress = FALSE,
-    col_types = cols(Id = col_character())
-  )
-  ms_assert_version(cube, "core_artifact_version", core_artifact_version())
-  daily_metrics <- cube |>
-    filter(analysis_unit_type == "participant_day") |>
-    distinct(metric) |>
-    pull(metric)
-  if (length(daily_metrics) != contract$daily_metric_count) {
-    stop("Expected ", contract$daily_metric_count, " participant-day metrics; found ", length(daily_metrics))
   }
 
   rq1_summary <- readr::read_csv(rq1_summary_path, show_col_types = FALSE, progress = FALSE)
@@ -106,7 +99,21 @@ rq1_run_inference <- function() {
     stop("rq1_pairwise_summary.csv lacks required inferential-link columns")
   }
 
-  sites <- sort(unique(cube$site))
+  anchor_map <- rq1_inference_anchor_map()
+  ms_assert_unique(anchor_map, "candidate_config", "RQ1 inference anchor map")
+  if (nrow(anchor_map) != contract$anchor_count) {
+    stop("RQ1 inferential preservation must contain exactly ", contract$anchor_count, " anchor contrasts")
+  }
+
+  base_pairs <- rq1_inference_pairs(upstream)
+  if (n_distinct(base_pairs$metric) != contract$daily_metric_count) {
+    stop("Frozen RQ1 anchor pairs do not span all ", contract$daily_metric_count, " participant-day metrics")
+  }
+  if (n_distinct(base_pairs$candidate_config) != contract$anchor_count) {
+    stop("Frozen RQ1 anchor pairs do not contain all ", contract$anchor_count, " inferential contrasts")
+  }
+
+  sites <- sort(unique(base_pairs$site))
   diary_paths <- vapply(sites, raw_data_path, character(1), modality = "sleepdiaries")
   if (any(!file.exists(diary_paths))) stop("Missing harmonized sleep diaries")
   outcomes <- map_dfr(
@@ -119,16 +126,7 @@ rq1_run_inference <- function() {
     stop("Harmonized sleep outcomes do not match the frozen inferential-preservation contract")
   }
 
-  anchor_map <- rq1_inference_anchor_map()
-  ms_assert_unique(anchor_map, "candidate_config", "RQ1 inference anchor map")
-  if (nrow(anchor_map) != contract$anchor_count) {
-    stop("RQ1 inferential preservation must contain exactly ", contract$anchor_count, " anchor contrasts")
-  }
-
-  pairs <- rq1_inference_pairs(cube) |> rq1_expand_sleep_support(outcomes)
-  if (n_distinct(pairs$metric) != contract$daily_metric_count) {
-    stop("Inferential contrast pairing does not span all participant-day metrics")
-  }
+  pairs <- base_pairs |> rq1_expand_sleep_support(outcomes)
   contrast_keys <- c(
     "candidate_config", "support_id", "placement", "optical", "resolution_s",
     "dimension", "comparison_pair_id", "contrast_label", "contrast_order",
@@ -136,7 +134,7 @@ rq1_run_inference <- function() {
   )
   contrast_results <- rq1_fit_inference_groups(pairs, contrast_keys, B, 20260911L)
 
-  reference_pairs <- rq1_inference_reference_pairs(cube) |> rq1_expand_sleep_support(outcomes)
+  reference_pairs <- rq1_inference_reference_pairs(base_pairs) |> rq1_expand_sleep_support(outcomes)
   if (n_distinct(reference_pairs$metric) != contract$daily_metric_count) {
     stop("Reference association pairing does not span all participant-day metrics")
   }
@@ -206,6 +204,7 @@ rq1_run_inference <- function() {
 
   out <- file.path(rq_root("rq1"), "inference")
   ensure_result_dirs(out)
+  provenance_paths <- unique(c(rq1_path, pair_part_paths, rq1_summary_path, diary_paths))
   artifact <- list(
     artifact_type = "rq1_inferential_preservation",
     core_artifact_version = core_artifact_version(),
@@ -218,11 +217,12 @@ rq1_run_inference <- function() {
     date_alignment = "exposure Date D -> local wake date D+1",
     model = "participant fixed effects; native outcome linear projection; paired site-stratified participant bootstrap",
     inference_deviation = "reference-bootstrap uncertainty norm: absolute/SE for linear; Mahalanobis norm for circular sin/cos",
-    analysis_scope = "eight single-axis RQ1 anchor contrasts; duration and multi-axis combinations excluded",
+    analysis_scope = "eight single-axis frozen RQ1 anchor contrasts; duration and multi-axis combinations excluded",
+    exposure_input = "frozen RQ1 participant-day pair values (state_a candidate; state_b eye/MEDI/10-s reference)",
     scale = "reference SD on matched repeated-measures support, fixed across paired bootstrap draws; circular sin/cos unscaled",
     input_provenance = tibble(
-      path = c(metric_path, rq1_path, rq1_summary_path, diary_paths),
-      md5 = unname(tools::md5sum(c(metric_path, rq1_path, rq1_summary_path, diary_paths)))
+      path = provenance_paths,
+      md5 = unname(tools::md5sum(provenance_paths))
     ),
     anchor_map = anchor_map,
     rq1_distortion_lookup = stamp(rq1_lookup),
@@ -240,8 +240,6 @@ rq1_run_inference <- function() {
     diary_audit = outcomes
   )
 
-  # v2 uses a distinct artifact path so the legacy supplementary inference block
-  # cannot silently render a second, obsolete version of the main Fig. 2.
   legacy_path <- file.path(out, contract$legacy_artifact_filename)
   unlink(c(legacy_path, paste0(legacy_path, ".ok")), force = TRUE)
   path <- file.path(out, contract$artifact_filename)
