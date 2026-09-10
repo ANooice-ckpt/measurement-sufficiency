@@ -43,19 +43,25 @@ Each main-text figure has one canonical numbered plotting entrypoint:
 - `scripts/15a_plot_fig5.R` → Fig. 5
 - `scripts/15b_plot_fig6.R` → Fig. 6
 
-The mature RQ2/RQ3 scientific plotting implementations predate insertion of
-Fig. 2 and remain in:
+Main-figure identity is defined once in `scripts/utils/figure_registry.R`. For
+each figure the registry records its current manuscript/output ID, canonical
+entrypoint and implementation source. RQ2/RQ3 implementations predate insertion
+of the RQ1 inferential-preservation Fig. 2, so their internal figure IDs remain:
 
 - `scripts/13a_plot_fig2.R`
 - `scripts/13b_plot_fig3.R`
 - `scripts/15a_plot_fig4.R`
 - `scripts/15b_plot_fig5.R`
 
-The new numbered entrypoints are thin compatibility wrappers around those
-implementations. `scripts/utils/plot_contracts.R` is the only layer allowed to
-remap their external main-figure filenames and manifest identifiers from the
-historical Fig. 2–5 sequence to the current Fig. 3–6 sequence. Scientific plot
-code is not duplicated merely to change numbering.
+The numbered entrypoints do not duplicate this mapping; they request their
+implementation from the registry. `scripts/utils/plot_contracts.R` converts an
+ID emitted by a legacy implementation to the current public ID exactly once at
+save/manifest-write time. The reverse current → legacy conversion is used only
+to select the mature refinement/polish logic. These directions are deliberately
+separate because a current ID can equal the legacy ID of another figure (for
+example current `Fig3_RQ2` was also the pre-insertion ID of current Fig. 4).
+Persisted manifests therefore contain current IDs and are never renumbered a
+second time.
 
 All active supplementary drawing code remains centralized in:
 
@@ -67,12 +73,12 @@ v2 analysis writes `rq1_inferential_preservation_anchor8.rds` and removes the
 legacy path, so active inferential-preservation plotting belongs exclusively to
 `11b_plot_fig2.R`.
 
-The supplementary script sources the relevant mature plotting implementations
-inside RQ-specific local environments to reconstruct frozen display objects.
-`scripts/utils/plot_contracts.R` detects this prep-only sourcing path and
-suppresses main-figure saves and main-only manifest writes while those sources
-are on the call stack. Therefore running `16_plot_supplementary.R` does not
-regenerate or overwrite Fig. 1–6.
+The supplementary script sources the mature RQ2/RQ3 implementations inside
+RQ-specific local environments to reconstruct frozen display objects.
+`scripts/utils/plot_contracts.R` detects this prep-only sourcing path from the
+registry and suppresses main-figure saves and main-only manifest writes while
+those sources are on the call stack. Therefore running
+`16_plot_supplementary.R` does not regenerate or overwrite Fig. 1–6.
 
 ## Main-figure visual composition contract
 
@@ -118,12 +124,14 @@ folders and written at the corresponding RQ root:
 - `results/rq3/figure_artifact_manifest.csv`
 
 The downstream runner clears `results/figures/` before plotting so obsolete
-figure files cannot survive a complete downstream rerun.
+figure files cannot survive a complete downstream rerun. Existing audit/display
+CSV names inside mature RQ2/RQ3 implementations retain their historical `fig2_`,
+`fig3_`, `fig4_` and `fig5_` prefixes for output compatibility; those filenames
+are implementation artifacts, not current manuscript figure identities.
 
 Every RQ artifact version incorporates the current analysis-design identifier.
-Plotting wrappers check or reconstruct ordered-axis levels from the same frozen
-design so a historical hard-coded temporal lattice cannot silently survive a
-design change.
+Ordered-axis levels are read or reconstructed from the same frozen design so a
+historical hard-coded temporal lattice cannot silently survive a design change.
 
 ## Figure 1 — RQ1 configuration response
 
@@ -178,8 +186,7 @@ observation rather than two unrelated timing coefficients.
 
 ## Figure 3 — RQ2 contextual dependence
 
-`13a_plot_fig3.R` is the canonical numbered entrypoint and delegates to the
-mature `13a_plot_fig2.R` implementation. It presents:
+`13a_plot_fig3.R` is the canonical numbered entrypoint. It presents:
 
 - Fig. 3a: a contextual predictor atlas spanning the prespecified external
   opportunity, micro-environment, behaviour and exposure-state predictors,
@@ -196,8 +203,7 @@ incremental grouped-CV information diagnostic remain supplementary.
 
 ## Figure 4 — RQ2 cross-dimensional non-additivity
 
-`13b_plot_fig4.R` is the canonical numbered entrypoint and delegates to the
-mature `13b_plot_fig3.R` implementation. It presents:
+`13b_plot_fig4.R` is the canonical numbered entrypoint. It presents:
 
 - Fig. 4a: class-level distributions of metric-level non-additivity magnitude,
   using the display projection `Q_mp = median_t(Q_mpt)`;
@@ -212,8 +218,7 @@ it enters multidimensional stability directly in RQ3.
 
 ## Figure 5 — RQ3 single-dimension sufficiency
 
-`15a_plot_fig5.R` is the canonical numbered entrypoint and delegates to the
-mature `15a_plot_fig4.R` implementation. It presents:
+`15a_plot_fig5.R` is the canonical numbered entrypoint. It presents:
 
 - Fig. 5a: tolerance-dependent 100% stacked distributions of the minimum
   sufficient measurement state for the overall metric set and each metric
@@ -222,16 +227,16 @@ mature `15a_plot_fig4.R` implementation. It presents:
 - Fig. 5b: empirical residual instability `R_obs` across increasing ordered-axis
   measurement burden, with the unresolved upper boundary omitted;
 - Fig. 5c: empirical placement/optical substitutability curves as tolerance
-  relaxes, including the 50% substitutability entry point where observed.
+  relaxes, including the 50% substitutability entry point where observed. Its
+  vertical tolerance guides refer to the joint tolerance slices in Fig. 6.
 
 The detailed adjacent-transition convergence and metric-level sufficiency
 trajectories remain supplementary.
 
 ## Figure 6 — RQ3 joint temporal × duration sufficiency geometry
 
-`15b_plot_fig6.R` is the canonical numbered entrypoint and delegates to the
-mature `15b_plot_fig5.R` implementation. It presents the frozen 6 × 6
-temporal-resolution × duration candidate lattice:
+`15b_plot_fig6.R` is the canonical numbered entrypoint. It presents the frozen
+6 × 6 temporal-resolution × duration candidate lattice:
 
 - Fig. 6a: the joint entry-tolerance landscape based on metric-equal pooling of
   resolved `epsilon_entry`, with boundary-unresolved cells marked explicitly;
@@ -270,5 +275,5 @@ delegates the downstream portion to `scripts/run_downstream_server.sh`.
 Files under `results/legacy/pre_refactor` are retained for audit only and are
 not valid inputs to current plotting scripts. The old unversioned inference
 artifact `results/rq1/inference/rq1_inferential_preservation.rds` is likewise
-retired. Compatibility plotting entrypoints and historical implementation file
-names are migration aids only; the numbered Fig. 1–6 graph above is canonical.
+retired. Historical implementation filenames are internal compatibility details;
+the numbered Fig. 1–6 graph and `figure_registry.R` are canonical.
