@@ -35,6 +35,9 @@ LOG="results/logs/downstream_v5.log"
     cat("All canonical downstream analysis and plotting sources parse successfully\n")
   '
 
+  echo "===== SYNTHETIC ENGINEERING PREFLIGHT ====="
+  Rscript --vanilla scripts/tests/validate_engineering.R
+
   echo "===== STRUCTURAL PREFLIGHT ====="
   Rscript -e '
     suppressPackageStartupMessages(library(tidyverse))
