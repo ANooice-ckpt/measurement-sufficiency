@@ -51,7 +51,7 @@ rq1_expand_outcome_support <- function(pairs, outcomes) {
       by = c("site", "Id", "Date", "outcome"), relationship = "many-to-one"
     ) |>
     mutate(
-      outcome_reason = coalesce(outcome_reason, "outcome_not_observed"),
+      outcome_reason = if_else(is.na(outcome_source), "outcome_not_observed", outcome_reason),
       outcome_domain = unname(contract$outcome_domain[outcome]),
       outcome_label = unname(contract$outcome_label[outcome]),
       outcome_n_observations = coalesce(outcome_n_observations, 0L)
