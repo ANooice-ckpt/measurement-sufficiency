@@ -25,8 +25,10 @@ source("scripts/utils/figure_style.R")
 source("scripts/utils/figure_atlas.R")
 source("scripts/utils/plot_contracts.R")
 source("scripts/utils/artifact_validation.R")
+source("scripts/utils/rq1_inference_contract.R")
 
-INFERENCE_RDS <- file.path("results", "rq1", "inference", "rq1_inferential_preservation_anchor8.rds")
+contract <- rq1_inference_contract()
+INFERENCE_RDS <- file.path("results", "rq1", "inference", contract$artifact_filename)
 RQ1_SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
 OUT_DIR <- file.path("results", "rq1", "figures")
 FIG2_WIDTH_IN <- 7.6
@@ -65,11 +67,15 @@ ms_plot_require_columns(
     "outcome", "inference_deviation", "rq1_distortion_A", "status"),
   "inferential preservation summary"
 )
-if (nrow(anchor_map) != 8L || n_distinct(anchor_map$candidate_config) != 8L) {
-  stop("Fig. 2 requires exactly eight frozen RQ1 anchor contrasts", call. = FALSE)
+if (nrow(anchor_map) != contract$anchor_count || n_distinct(anchor_map$candidate_config) != contract$anchor_count) {
+  stop("Fig. 2 anchor map does not match the frozen inferential-preservation contract", call. = FALSE)
+}
+if (n_distinct(reference$metric) != contract$daily_metric_count ||
+    !setequal(unique(reference$outcome), contract$outcomes)) {
+  stop("Fig. 2 reference association landscape does not match the frozen daily metric/outcome contract", call. = FALSE)
 }
 
-OUTCOME_LEVELS <- c("sleep_quality", "awakenings", "awake_duration")
+OUTCOME_LEVELS <- contract$outcomes
 OUTCOME_LABELS <- c(
   sleep_quality = "Sleep quality",
   awakenings = "Awakenings",
