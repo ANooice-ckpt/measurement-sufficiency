@@ -155,6 +155,6 @@ RQ1_INFERENCE_BOOT=1000
 RQ1_PART_COMPRESSION=gzip
 ```
 
-`RQ1_STARTUP_WORKERS` parallelizes duration-anchor startup scans, `RQ1_PART_WORKERS` parallelizes immutable canonical-part generation, `RQ1_FRAGMENT_WORKERS` parallelizes both summary-fragment checkpoints and the canonical-part relational-preservation scan, and `RQ1_BOOT_WORKERS` controls the participant-cluster/site-stratified bootstrap workers. The inferential-preservation layer currently parallelizes algebra inside its grouped sufficient-statistics calculations rather than introducing a second worker pool. BLAS/OpenMP inner threading remains limited to one thread by the server runner.
+`RQ1_STARTUP_WORKERS` parallelizes duration-anchor startup scans, `RQ1_PART_WORKERS` parallelizes immutable canonical-part generation, `RQ1_FRAGMENT_WORKERS` parallelizes both summary-fragment checkpoints and the canonical-part relational-preservation scan, and `RQ1_BOOT_WORKERS` controls the participant-cluster/site-stratified bootstrap workers. The inferential-preservation layer uses grouped sufficient statistics and vectorized bootstrap algebra but deliberately has no second worker pool. BLAS/OpenMP inner threading remains limited to one thread by the server runner.
 
 These values are production defaults, not per-run tuning suggestions. Environment overrides remain supported for a different machine or explicit troubleshooting. `RQ1_PART_COMPRESSION=gzip` is the speed-oriented default; `xz` remains available when storage is more constrained.
