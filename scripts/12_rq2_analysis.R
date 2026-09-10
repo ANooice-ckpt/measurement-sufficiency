@@ -5,12 +5,12 @@
 # objects without reconstructing RQ1/core data.
 
 .requested_rq2_models <- tolower(Sys.getenv("RQ2_RUN_MODELS", unset = "1")) %in% c("1", "true", "yes")
-.rq2_models_env_original <- Sys.getenv("RQ2_RUN_MODELS", unset = NA_character_)
-Sys.setenv(RQ2_RUN_MODELS = "0")
 suppressPackageStartupMessages({library(tidyverse); library(nlme)})
 source("scripts/utils/analysis_design.R")
 source("scripts/utils/paths.R")
+source("scripts/utils/artifact_validation.R")
 source("scripts/utils/parallel_runtime.R")
+source("scripts/utils/rq2_model_helpers.R")
 source("scripts/utils/duration_artifacts.R")
 source("scripts/utils/rq1_pairwise_artifacts.R")
 
@@ -32,11 +32,11 @@ OUT <- file.path("results", "rq2")
 DIAG <- file.path("results", "diagnostics")
 CHECKPOINTS <- file.path(OUT, "checkpoints_v5")
 SHARD_ROOT <- file.path(OUT, "model_input_shards")
-RUN_MODELS <- !identical(Sys.getenv("RQ2_RUN_MODELS", unset = "1"), "0")
+RUN_MODELS <- FALSE # Legacy fits are superseded by the layered context stage.
 KEEP_MODEL_INPUTS <- identical(Sys.getenv("RQ2_KEEP_MODEL_INPUTS", unset = "0"), "1")
 RQ2_CV_FOLDS <- suppressWarnings(as.integer(Sys.getenv("RQ2_CV_FOLDS", unset = "5")))
 if (!is.finite(RQ2_CV_FOLDS) || RQ2_CV_FOLDS < 2L) RQ2_CV_FOLDS <- 5L
-RQ2_WORKERS <- ms_resolve_workers("RQ2_WORKERS", default = 1L, cap = 48L)
+RQ2_WORKERS <- ms_resolve_workers("RQ2_WORKERS", default = 12L, cap = 48L)
 RQ2_STREAM_WORKERS <- ms_resolve_workers("RQ2_STREAM_WORKERS", default = min(RQ2_WORKERS, 12L), cap = 24L)
 MODEL_SEED <- 20260821L
 PRIMARY_TEMPORAL_S <- ms_primary_temporal_s()
@@ -87,6 +87,8 @@ cube <- readr::read_csv(CORE_METRICS, show_col_types = FALSE, progress = FALSE) 
   mutate(Date = as.Date(Date))
 context <- readr::read_csv(CORE_CONTEXT, show_col_types = FALSE, progress = FALSE) |>
   mutate(Date = as.Date(Date))
+ms_assert_version(cube, "core_artifact_version", CORE_VERSION)
+ms_assert_version(context, "core_artifact_version", CORE_VERSION)
 if (!all(PRIMARY_TEMPORAL_S %in% unique(cube$resolution_s))) stop("Primary temporal state missing from core cube")
 
 # Daily transition-local state and measurement-independent external context.
@@ -401,46 +403,10 @@ family_predictors <- function(dimension, family) {
 fit_task <- function(task) {
   dat <- bind_rows(lapply(task$shard_paths, readRDS))
   meta <- task$meta
-  scale_train_test <- function(tr, te, predictors) {
-    keep <- character()
-    for (p in predictors) {
-      finite <- is.finite(tr[[p]])
-      if (sum(finite) < 3L) next
-      mu <- mean(tr[[p]][finite]); s <- sd(tr[[p]][finite])
-      if (!is.finite(mu) || !is.finite(s) || s <= sqrt(.Machine$double.eps)) next
-      tr[[p]] <- (tr[[p]] - mu) / s
-      te[[p]] <- (te[[p]] - mu) / s
-      keep <- c(keep, p)
-    }
-    list(tr = tr, te = te, keep = keep)
-  }
-  fit_one <- function(d, outcome, predictors) {
-    if (!length(predictors) || nrow(d) < 20L || n_distinct(d$participant_key) < 3L) {
-      return(list(fit = NULL, random_structure = NA_character_))
-    }
-    d$site <- factor(d$site); d$participant_key <- factor(d$participant_key)
-    f <- reformulate(predictors, response = outcome)
-    ctrl <- nlme::lmeControl(opt = "optim", maxIter = 100L, msMaxIter = 100L, returnObject = TRUE)
-    fit <- tryCatch(
-      suppressWarnings(nlme::lme(fixed = f, random = ~1 | site/participant_key, data = d,
-                                 method = "ML", na.action = na.omit, control = ctrl)),
-      error = function(e) NULL
-    )
-    if (!is.null(fit)) return(list(fit = fit, random_structure = "site/participant"))
-    fit <- tryCatch(
-      suppressWarnings(nlme::lme(fixed = f, random = ~1 | participant_key, data = d,
-                                 method = "ML", na.action = na.omit, control = ctrl)),
-      error = function(e) NULL
-    )
-    list(fit = fit, random_structure = if (is.null(fit)) NA_character_ else "participant")
-  }
-  performance <- function(obs, pred) {
-    ok <- is.finite(obs) & is.finite(pred); obs <- obs[ok]; pred <- pred[ok]
-    if (length(obs) < 2L) return(tibble(n_test = length(obs), rmse = NA_real_, mae = NA_real_, r2 = NA_real_))
-    sst <- sum((obs - mean(obs))^2)
-    tibble(n_test = length(obs), rmse = sqrt(mean((obs - pred)^2)), mae = mean(abs(obs - pred)),
-           r2 = if (sst > 0) 1 - sum((obs - pred)^2) / sst else NA_real_)
-  }
+  helpers <- rq2_model_helpers()
+  scale_train_test <- helpers$scale_train_test
+  fit_one <- helpers$fit_one
+  performance <- helpers$performance
 
   set.seed(task$seed)
   pm_base <- dat |>
@@ -550,11 +516,11 @@ if (RUN_MODELS && length(model_tasks)) {
   refs <- ms_parallel_map(
     scheduled, fit_task_checkpoint, workers = RQ2_WORKERS, seed = MODEL_SEED,
     packages = c("tidyverse", "nlme"),
-    exports = c("fit_task_checkpoint", "fit_task", "family_predictors", "EXTERNAL", "OUTCOMES", "safe_q")
+    exports = c("rq2_model_helpers", "fit_task_checkpoint", "fit_task", "family_predictors", "EXTERNAL", "OUTCOMES", "safe_q")
   )
   for (r in refs) model_results[[r$index]] <- readRDS(r$path)
 } else if (!RUN_MODELS) {
-  message("RQ2 v5 models disabled by RQ2_RUN_MODELS=0")
+  message("RQ2 legacy fits skipped; layered context models run in the following stage when requested")
 }
 # Load valid cached checkpoints for tasks not populated above.
 for (task in model_tasks) {
@@ -729,7 +695,6 @@ writeLines(c(
 message("RQ2 complete: ", RQ2_VERSION)
 
 RUN_MODELS <- .requested_rq2_models
-Sys.setenv(RQ2_RUN_MODELS = if (.requested_rq2_models) "1" else "0")
 
 # The layered contextual extension deliberately runs in the same R process: it
 # reuses the validated canonical transition objects created above and never
@@ -792,9 +757,4 @@ if (isTRUE(RUN_MODELS)) {
   }
 }
 
-if (is.na(.rq2_models_env_original)) {
-  Sys.unsetenv("RQ2_RUN_MODELS")
-} else {
-  Sys.setenv(RQ2_RUN_MODELS = .rq2_models_env_original)
-}
-rm(.requested_rq2_models, .rq2_models_env_original)
+rm(.requested_rq2_models)

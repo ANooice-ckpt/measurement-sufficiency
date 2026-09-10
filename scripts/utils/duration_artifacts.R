@@ -196,9 +196,8 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
       support_value <- as.character(block_keys$support_id[[i]])
       site_value <- as.character(block_keys$site[[i]])
       if (reuse_parts && file.exists(part_path)) {
-        size_ok <- isTRUE(file.info(part_path)$size >= 5e6)
         marker_ok <- file.exists(part_marker)
-        if (marker_ok || size_ok) {
+        if (marker_ok) {
           return(list(i = i, path = part_path, rows = NA_integer_, support = support_value, site = site_value))
         }
       }
@@ -207,6 +206,8 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
       tmp_path <- paste0(part_path, ".tmp")
       if (file.exists(tmp_path)) unlink(tmp_path)
       saveRDS(part, tmp_path, compress = FALSE)
+      if (file.exists(part_marker)) unlink(part_marker)
+      if (file.exists(part_path)) unlink(part_path)
       if (!file.rename(tmp_path, part_path)) stop("Could not atomically install duration checkpoint: ", part_path)
       writeLines("duration_complete_analysis_days_v1", part_marker, useBytes = TRUE)
       rows <- nrow(part)

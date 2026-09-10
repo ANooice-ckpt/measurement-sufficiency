@@ -19,7 +19,7 @@ suppressPackageStartupMessages({library(tidyverse); library(cowplot)})
 # =============================================================================
 # RQ1 supplementary figures
 # =============================================================================
-local({
+if (!identical(Sys.getenv("MS_SUPPLEMENTARY_ONLY"), "inference")) local({
   source("scripts/11_plot_fig1.R", local = TRUE)
 # -----------------------------------------------------------------------------
 # Supplementary complete metric-level atlas
@@ -126,7 +126,7 @@ ms_plot_write_manifest(
 # =============================================================================
 # RQ2 supplementary figures
 # =============================================================================
-local({
+if (!identical(Sys.getenv("MS_SUPPLEMENTARY_ONLY"), "inference")) local({
   source("scripts/13a_plot_fig2.R", local = TRUE)
 # Complete conditional atlas retained as supplementary audit view.
 p2_atlas <- ggplot(conditional, aes(interaction(pair_label, state_bin_label, sep = "\n"), metric)) +
@@ -273,7 +273,7 @@ ms_plot_write_manifest(
 # =============================================================================
 # RQ3 supplementary figures
 # =============================================================================
-local({
+if (!identical(Sys.getenv("MS_SUPPLEMENTARY_ONLY"), "inference")) local({
   source("scripts/15a_plot_fig4.R", local = TRUE)
 # Supplement: retain the original detailed ordered-axis trajectories as audit views.
 convergence_display <- convergence |>
@@ -339,6 +339,78 @@ ms_plot_write_manifest(
   )
 )
 
+})
+
+# Independent frozen RQ1 inference figure. For a standalone render use
+# MS_SUPPLEMENTARY_ONLY=inference Rscript scripts/16_plot_supplementary.R.
+local({
+  source("scripts/utils/figure_style.R")
+  source("scripts/utils/plot_contracts.R")
+  source("scripts/utils/analysis_design.R")
+  source("scripts/utils/artifact_validation.R")
+  path <- file.path("results", "rq1", "inference", "rq1_inferential_preservation.rds")
+  if (!file.exists(path)) {
+    if (identical(Sys.getenv("MS_SUPPLEMENTARY_ONLY"), "inference")) stop("Missing frozen inference artifact: ", path)
+    message("RQ1 inference figure skipped: independent analysis has not been frozen")
+  } else {
+    a <- readRDS(path)
+    if (!identical(a$artifact_type, "rq1_inferential_preservation")) stop("Unexpected inference artifact type")
+    ms_assert_version(a, "analysis_design_id", ms_analysis_design_id())
+    ms_plot_assert_core(a$core_artifact_version)
+    upstream <- readRDS(file.path("results", "rq1", "rq1_pairwise_change_long.rds"))
+    ms_assert_version(upstream, "rq1_analysis_version", a$rq1_analysis_version)
+    ms_assert_version(upstream, "core_artifact_version", a$core_artifact_version)
+    s <- a$summary
+    ms_assert_version(s, "rq1_inference_version", a$rq1_inference_version)
+    ms_assert_version(s, "rq1_analysis_version", a$rq1_analysis_version)
+    ms_assert_version(s, "core_artifact_version", a$core_artifact_version)
+    s <- s |> mutate(
+      outcome = factor(outcome, levels = c("sleep_quality", "awakenings", "awake_duration"),
+                       labels = c("Sleep quality (1-5)", "Awakenings (count)", "Awake duration (min)")),
+      basis = if_else(term == "reference_SD", "Linear: per reference SD", "Circular: sin/cos coefficients")
+    )
+    estimable <- s |> filter(is.finite(reference_beta), is.finite(candidate_beta))
+    p_beta <- ggplot(estimable, aes(reference_beta, candidate_beta, color = metric_class)) +
+      geom_abline(slope = 1, intercept = 0, color = "#999999", linewidth = .3) +
+      geom_point(size = .6, alpha = .45) +
+      facet_wrap(vars(basis, outcome), scales = "free", ncol = 3) +
+      scale_color_ms_metric() +
+      labs(title = "a  Within-participant association preservation", x = "Reference coefficient", y = "Candidate coefficient",
+           color = "Metric class") +
+      theme_ms(base_size = 7, legend_position = "bottom") +
+      theme(plot.margin = margin(6, 16, 6, 8))
+    p_shift <- ggplot(estimable, aes(distortion_A, beta_difference, color = metric_class)) +
+      geom_hline(yintercept = 0, color = "#999999", linewidth = .3) +
+      geom_linerange(aes(ymin = difference_lower, ymax = difference_upper), alpha = .10, linewidth = .2, na.rm = TRUE) +
+      geom_point(size = .6, alpha = .45) +
+      facet_wrap(vars(basis, outcome), scales = "free", ncol = 3) +
+      scale_color_ms_metric() +
+      scale_x_continuous(trans = scales::transform_asinh()) +
+      labs(title = "b  Exposure distortion and paired association change",
+           subtitle = "Bars: pointwise 95% paired participant-bootstrap intervals",
+           x = "Matched-support mean absolute standardized distortion", y = "Candidate minus reference coefficient") +
+      theme_ms(base_size = 7, legend_position = "none") +
+      theme(plot.margin = margin(6, 16, 6, 8))
+    # Explicit status counts retain unavailable/singular tasks in the figure.
+    status <- s |> distinct(candidate_config, metric, outcome, status) |> count(outcome, status) |>
+      mutate(status = gsub("_", " ", status, fixed = TRUE))
+    p_status <- ggplot(status, aes(n, status)) + geom_col(fill = MS_NEUTRAL, width = .65) +
+      facet_wrap(vars(outcome), scales = "free_x", ncol = 3) +
+      labs(title = "c  Analysis availability", x = "Configuration x metric tasks", y = NULL) +
+      theme_ms(base_size = 7, legend_position = "none")
+    if (!nrow(estimable)) {
+      p_beta <- ggplot() + annotate("text", x = 0, y = 0, label = "No estimable paired associations") + theme_void()
+      p_shift <- p_beta
+    }
+    fig <- cowplot::plot_grid(p_beta, p_shift, p_status, ncol = 1, rel_heights = c(2, 2, 1))
+    ms_plot_save(fig, file.path("results", "figures", "FigS_RQ1_inferential_preservation.png"), 12, 13)
+    readr::write_csv(tibble(
+      figure = "FigS_RQ1_inferential_preservation", input_artifact = path,
+      core_artifact_version = a$core_artifact_version, rq1_analysis_version = a$rq1_analysis_version,
+      rq1_inference_version = a$rq1_inference_version,
+      uncertainty = "pointwise 95% paired site-stratified participant bootstrap; no multiplicity claims"
+    ), file.path(dirname(path), "figure_artifact_manifest.csv"))
+  }
 })
 
 message("Supplementary figures complete.")

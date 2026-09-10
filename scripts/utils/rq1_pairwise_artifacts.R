@@ -58,10 +58,12 @@ rq1_write_part_atomic <- function(x, path) {
   if (file.exists(tmp)) unlink(tmp, force = TRUE)
   compression <- tolower(Sys.getenv("RQ1_PART_COMPRESSION", unset = "gzip"))
   if (!compression %in% c("gzip", "bzip2", "xz", "none")) compression <- "gzip"
-  saveRDS(x, tmp, compress = compression)
+  # saveRDS accepts FALSE, not the string "none", for uncompressed output.
+  saveRDS(x, tmp, compress = if (compression == "none") FALSE else compression)
+  if (file.exists(ok)) unlink(ok)
   if (file.exists(path)) unlink(path, force = TRUE)
   if (!file.rename(tmp, path)) stop("Could not atomically install RQ1 part: ", path)
-  writeLines(c("complete", paste0("rows=", nrow(x))), ok, useBytes = TRUE)
+  writeLines(c("complete", if (is.data.frame(x)) paste0("rows=", nrow(x))), ok, useBytes = TRUE)
   invisible(path)
 }
 

@@ -12,6 +12,7 @@ export VECLIB_MAXIMUM_THREADS="${VECLIB_MAXIMUM_THREADS:-1}"
 export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"
 
 export RQ2_WORKERS="${RQ2_WORKERS:-40}"
+export RQ1_INFERENCE_BOOT="${RQ1_INFERENCE_BOOT:-1000}"
 export RQ2_CV_FOLDS="${RQ2_CV_FOLDS:-5}"
 export RQ2_RUN_MODELS="${RQ2_RUN_MODELS:-1}"
 # Temporary row-level model shards are resumable during RQ2 but removed after a
@@ -28,19 +29,8 @@ LOG="results/logs/downstream_v5.log"
 
   echo "===== PARSE CANONICAL DOWNSTREAM SOURCES ====="
   Rscript --vanilla -e '
-    fs <- c(
-      "scripts/utils/analysis_design.R",
-      "scripts/utils/rq_context.R",
-      "scripts/utils/rq2_context_features.R",
-      "scripts/12_rq2_analysis.R",
-      "scripts/12c_rq2_context_models.R",
-      "scripts/13a_plot_fig2.R",
-      "scripts/13b_plot_fig3.R",
-      "scripts/14_rq3_analysis.R",
-      "scripts/15a_plot_fig4.R",
-      "scripts/15b_plot_fig5.R",
-      "scripts/16_plot_supplementary.R"
-    )
+    fs <- sort(list.files("scripts", pattern = "\\.R$", recursive = TRUE, full.names = TRUE))
+    if (!length(fs)) stop("No R scripts found")
     invisible(lapply(fs, parse))
     cat("All canonical downstream analysis and plotting sources parse successfully\n")
   '
@@ -136,6 +126,9 @@ LOG="results/logs/downstream_v5.log"
 
   echo "===== FIGURE 1 (FROZEN RQ1) ====="
   Rscript scripts/11_plot_fig1.R
+
+  echo "===== RQ1 INFERENTIAL PRESERVATION (FROZEN DAILY METRICS) ====="
+  Rscript scripts/10b_rq1_inferential_preservation.R
 
   echo "===== RQ2 + LAYERED CONTEXT ====="
   # The canonical RQ2 entrypoint and layered extension share one R process and
