@@ -50,34 +50,52 @@ stopifnot(
   )
 )
 
-# Matched supports remain pair-specific and exclude the 300-s reserve state.
-cube <- crossing(
-  support_id = c("eye_medi", "eye_full", "eye_chest_medi", "eye_chest_full", "eye_wrist_medi", "eye_wrist_full"),
-  placement = c("eye", "chest", "wrist"), optical = c("MEDI", "LIGHT"),
-  resolution_s = c(ms_primary_temporal_s(), 300L), metric = c("mean_MEDI", "MDER"), day = 1:3
-) |>
+# Frozen RQ1 pair values, not the Core metric cube, are the inferential input.
+# state_a is the lower-information candidate and state_b is the reference.
+pairwise <- anchors |>
+  tidyr::crossing(metric = c("mean_MEDI", "MDER"), day = 1:3) |>
   mutate(
+    support_id = case_when(
+      dimension == "placement" & placement == "chest" & metric == "MDER" ~ "eye_chest_full",
+      dimension == "placement" & placement == "chest" ~ "eye_chest_medi",
+      dimension == "placement" & placement == "wrist" & metric == "MDER" ~ "eye_wrist_full",
+      dimension == "placement" & placement == "wrist" ~ "eye_wrist_medi",
+      dimension == "optical" ~ "eye_full",
+      metric == "MDER" ~ "eye_full",
+      TRUE ~ "eye_medi"
+    ),
     site = "A", Id = "001", Date = as.Date("2025-01-01") + day,
     analysis_unit_type = "participant_day",
-    config_id = paste(placement, optical, paste0(resolution_s, "s"), sep = "__"),
-    metric_class = "level", metric_geometry = "linear", available = TRUE, value = as.numeric(day)
+    metric_class = "level", metric_scope = "daily", metric_geometry = "linear",
+    value_a = as.numeric(day), value_b = as.numeric(day) + 0.25,
+    available_a = !(candidate_config == "eye__LIGHT__10s" & metric == "MDER"),
+    available_b = TRUE,
+    pair_available = available_a & available_b,
+    pair_unavailable_reason = if_else(pair_available, NA_character_, "candidate unavailable")
+  ) |>
+  select(
+    dimension, comparison_pair_id, support_id, site, Id, analysis_unit_type, Date,
+    metric, metric_class, metric_scope, metric_geometry, value_a, value_b,
+    available_a, available_b, pair_available, pair_unavailable_reason
   )
-pairs <- rq1_inference_pairs(cube)
+pairs <- rq1_inference_pairs(pairwise)
 stopifnot(
   n_distinct(pairs$candidate_config) == 8L,
   !any(pairs$resolution_s == 300L),
   all(pairs$support_id[pairs$candidate_config == "chest__MEDI__10s" & pairs$metric == "mean_MEDI"] == "eye_chest_medi"),
   all(pairs$support_id[pairs$candidate_config == "wrist__MEDI__10s" & pairs$metric == "MDER"] == "eye_wrist_full"),
   all(pairs$support_id[pairs$candidate_config == "eye__LIGHT__10s"] == "eye_full"),
-  all(!is.na(pairs$pair_reason[pairs$candidate_config == "eye__LIGHT__10s" & pairs$metric == "MDER"]))
+  all(!is.na(pairs$pair_reason[pairs$candidate_config == "eye__LIGHT__10s" & pairs$metric == "MDER"])),
+  all(pairs$reference_value == pairwise$value_b),
+  all(pairs$candidate_value == pairwise$value_a)
 )
-reference_pairs <- rq1_inference_reference_pairs(cube)
+reference_pairs <- rq1_inference_reference_pairs(pairs)
 stopifnot(
   all(reference_pairs$candidate_config == "eye__MEDI__10s"),
   all(reference_pairs$support_id[reference_pairs$metric == "mean_MEDI"] == "eye_medi"),
   all(reference_pairs$support_id[reference_pairs$metric == "MDER"] == "eye_full")
 )
-expect_error(rq1_inference_pairs(bind_rows(cube, cube[1, ])))
+expect_error(rq1_inference_pairs(bind_rows(pairwise, pairwise[1, ])))
 
 # FE slopes agree with an independently fitted participant-dummy linear model.
 set.seed(42)
@@ -167,4 +185,4 @@ stopifnot(identical(scaled_helper$te$x, c(8, 18)), helpers$performance(c(1, 2), 
 # than duplicated here with another set of hard-coded mapping assertions.
 source("scripts/tests/validate_figure_registry.R")
 
-cat("PASS: all R sources parse; anchor8 diary/support/FE/bootstrap/circular/version/compression checks\n")
+cat("PASS: all R sources parse; frozen-pairwise anchor8 diary/support/FE/bootstrap/circular/version/compression checks\n")
