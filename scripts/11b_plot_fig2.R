@@ -26,7 +26,7 @@ source("scripts/utils/figure_atlas.R")
 source("scripts/utils/plot_contracts.R")
 source("scripts/utils/artifact_validation.R")
 
-INFERENCE_RDS <- file.path("results", "rq1", "inference", "rq1_inferential_preservation.rds")
+INFERENCE_RDS <- file.path("results", "rq1", "inference", "rq1_inferential_preservation_anchor8.rds")
 RQ1_SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
 OUT_DIR <- file.path("results", "rq1", "figures")
 FIG2_WIDTH_IN <- 7.6
@@ -141,12 +141,12 @@ p2b <- ggplot(contrast_plot, aes(contrast_label, inference_deviation, color = me
   ) +
   geom_linerange(
     data = contrast_summary,
-    aes(ymin = deviation_q25, ymax = deviation_q75),
+    aes(x = contrast_label, ymin = deviation_q25, ymax = deviation_q75),
     inherit.aes = FALSE, linewidth = .72, color = "#3D4347", alpha = .72
   ) +
   geom_point(
     data = contrast_summary,
-    aes(y = deviation_median),
+    aes(x = contrast_label, y = deviation_median),
     inherit.aes = FALSE, shape = 18, size = 1.65, color = "#202426"
   ) +
   facet_wrap(~outcome, nrow = 1) +
@@ -189,7 +189,7 @@ link_assoc <- contrast_plot |>
                                method = "spearman", use = "complete.obs")),
     .groups = "drop"
   ) |>
-  mutate(label = if_else(is.finite(rho), sprintf("Spearman r[s] = %.2f", rho), "Spearman r[s] = NA"))
+  mutate(label = if_else(is.finite(rho), sprintf("Spearman rₛ = %.2f", rho), "Spearman rₛ = NA"))
 
 p2c <- ggplot(contrast_plot, aes(rq1_distortion_A, inference_deviation, color = metric_class)) +
   geom_point(size = .54, alpha = .18) +
@@ -206,7 +206,7 @@ p2c <- ggplot(contrast_plot, aes(rq1_distortion_A, inference_deviation, color = 
   geom_text(
     data = link_assoc,
     aes(x = -Inf, y = Inf, label = label),
-    inherit.aes = FALSE, parse = TRUE, hjust = -.04, vjust = 1.12,
+    inherit.aes = FALSE, hjust = -.04, vjust = 1.12,
     size = 2.05, color = "#303437"
   ) +
   facet_wrap(~outcome, nrow = 1) +
@@ -264,7 +264,7 @@ ms_plot_write_manifest(
     figure = c("Fig1_RQ1", "Fig2_RQ1_inferential_preservation"),
     input_artifact = c(
       "rq1_pairwise_change_long + rq1_pairwise_summary + rq1_local_transition_summary",
-      "rq1_inferential_preservation + rq1_pairwise_summary"
+      "rq1_inferential_preservation_anchor8 + rq1_pairwise_summary"
     ),
     core_artifact_version = CORE_VERSION,
     rq1_analysis_version = RQ1_VERSION,
