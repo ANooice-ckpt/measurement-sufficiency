@@ -91,9 +91,3 @@ ms_main_plot_scripts <- function(include_implementations = TRUE) {
   if (isTRUE(include_implementations)) scripts <- c(scripts, registry$implementation_script)
   unique(basename(scripts))
 }
-
-# Compatibility aliases retain the old API semantics: callers pass an identifier
-# emitted by a legacy implementation and receive its current manuscript identity.
-# The mapping itself still lives only in the registry above.
-ms_main_figure_name_map <- ms_main_figure_filename_from_legacy
-ms_main_figure_id_map <- ms_main_figure_from_legacy_id
