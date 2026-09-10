@@ -9,17 +9,19 @@
 #   configuration combinations enter this downstream consequence layer.
 # - Candidate/reference exposure values and pair-specific support are read directly
 #   from the frozen RQ1 pairwise artifact; Core is not reopened or recomputed.
-#   The exposure distortion used as the upstream explanatory quantity is likewise
-#   joined from the frozen RQ1 pairwise summary for the same metric/contrast.
-#   Matched-support distortion is retained only as an audit quantity.
+#   Frozen RQ1 representation distortion is joined for the same metric/contrast;
+#   matched-support distortion is retained only as an audit quantity.
+# - Downstream outcomes span three day-level human-state domains: Sleep
+#   (quality, awakenings, awake duration), Alertness (daily KSS), and Affect
+#   (daily positive and negative MoodZoom composites).
+# - Sleep pairs exposure day D with the following morning diary. EMA responses are
+#   reduced to the protocol's nominal 11/14/17/20 h slots, retaining the nearest
+#   response within the frozen tolerance and requiring >=2 valid slots/day.
 # - Each outcome gets identical candidate/reference complete cases, retaining
 #   participants with >=2 matched days. Site is absorbed by participant fixed
 #   effects; participants are keyed by site + Id, not treated as iid days.
-# - Calendar exposure D -> local wake date D+1. This is a descriptive association
-#   comparison, not a causal health effect or a reconstruction of sleep exposure.
-# - Quality labels map explicitly to 1=Very poor ... 5=Very good; awakenings are
-#   counts; awake duration is minutes. Linear mean projections for all outcomes
-#   deliberately avoid outcome-specific likelihoods in this preservation test.
+# - All models are descriptive association-preservation tests, not causal health
+#   effects or temporally resolved acute-response models.
 # - Linear exposures share the matched reference SD. Circular exposures enter
 #   jointly as sin/cos. Inferential deviation is expressed in reference-bootstrap
 #   uncertainty units: |delta beta|/SE_ref for linear metrics and the equivalent
@@ -37,16 +39,23 @@ source("scripts/utils/core_artifacts.R")
 source("scripts/utils/rq1_pairwise_artifacts.R")
 source("scripts/utils/rq1_inference.R")
 
-rq1_expand_sleep_support <- function(pairs, outcomes) {
-  outcome_names <- rq1_inference_contract()$outcomes
-  joined <- pairs |>
-    left_join(outcomes, by = c("site", "Id", "Date"), relationship = "many-to-many") |>
-    mutate(outcome_reason = if_else(is.na(outcome), "no_next_morning_diary", outcome_reason))
-  missing <- joined |> filter(is.na(outcome)) |> select(-outcome)
-  bind_rows(
-    joined |> filter(!is.na(outcome)),
-    tidyr::crossing(missing, outcome = outcome_names)
-  )
+rq1_expand_outcome_support <- function(pairs, outcomes) {
+  contract <- rq1_inference_contract()
+  ms_assert_unique(outcomes, c("site", "Id", "Date", "outcome"), "RQ1 downstream outcomes")
+  pairs |>
+    tidyr::crossing(outcome = contract$outcomes) |>
+    left_join(
+      outcomes |>
+        select(site, Id, Date, outcome, outcome_value, outcome_reason,
+               outcome_n_observations, outcome_source),
+      by = c("site", "Id", "Date", "outcome"), relationship = "many-to-one"
+    ) |>
+    mutate(
+      outcome_reason = coalesce(outcome_reason, "outcome_not_observed"),
+      outcome_domain = unname(contract$outcome_domain[outcome]),
+      outcome_label = unname(contract$outcome_label[outcome]),
+      outcome_n_observations = coalesce(outcome_n_observations, 0L)
+    )
 }
 
 rq1_fit_inference_groups <- function(pairs, keys, B, seed_base) {
@@ -114,32 +123,42 @@ rq1_run_inference <- function() {
   }
 
   sites <- sort(unique(base_pairs$site))
-  diary_paths <- vapply(sites, raw_data_path, character(1), modality = "sleepdiaries")
-  if (any(!file.exists(diary_paths))) stop("Missing harmonized sleep diaries")
-  outcomes <- map_dfr(
-    sites,
-    function(s) rq1_sleep_outcomes(
-      load_raw_file(raw_data_path(s, "sleepdiaries"), "sleepdiaries"), s
+  sleep_paths <- vapply(sites, raw_data_path, character(1), modality = "sleepdiaries")
+  ema_paths <- vapply(sites, raw_data_path, character(1), modality = "currentconditions")
+  missing_outcome_inputs <- c(sleep_paths[!file.exists(sleep_paths)], ema_paths[!file.exists(ema_paths)])
+  if (length(missing_outcome_inputs)) {
+    stop(
+      "Missing downstream outcome inputs: ", paste(missing_outcome_inputs, collapse = ", "),
+      ". Run scripts/01_download_melidos.R with MELIDOS_MODALITIES=sleepdiaries,currentconditions."
     )
-  )
-  if (!setequal(unique(outcomes$outcome), contract$outcomes)) {
-    stop("Harmonized sleep outcomes do not match the frozen inferential-preservation contract")
   }
 
-  pairs <- base_pairs |> rq1_expand_sleep_support(outcomes)
+  outcomes <- map_dfr(sites, function(s) {
+    bind_rows(
+      rq1_sleep_outcomes(load_raw_file(raw_data_path(s, "sleepdiaries"), "sleepdiaries"), s),
+      rq1_ema_daily_outcomes(load_raw_file(raw_data_path(s, "currentconditions"), "currentconditions"), s)
+    )
+  })
+  if (!setequal(unique(outcomes$outcome), contract$outcomes)) {
+    stop("Downstream outcomes do not match the frozen Sleep/Alertness/Affect contract")
+  }
+  ms_assert_unique(outcomes, c("site", "Id", "Date", "outcome"), "combined downstream outcomes")
+
+  pairs <- base_pairs |> rq1_expand_outcome_support(outcomes)
   contrast_keys <- c(
     "candidate_config", "support_id", "placement", "optical", "resolution_s",
     "dimension", "comparison_pair_id", "contrast_label", "contrast_order",
-    "metric", "metric_class", "metric_geometry", "outcome"
+    "metric", "metric_class", "metric_geometry", "outcome", "outcome_domain", "outcome_label"
   )
   contrast_results <- rq1_fit_inference_groups(pairs, contrast_keys, B, 20260911L)
 
-  reference_pairs <- rq1_inference_reference_pairs(base_pairs) |> rq1_expand_sleep_support(outcomes)
+  reference_pairs <- rq1_inference_reference_pairs(base_pairs) |> rq1_expand_outcome_support(outcomes)
   if (n_distinct(reference_pairs$metric) != contract$daily_metric_count) {
     stop("Reference association pairing does not span all participant-day metrics")
   }
   reference_keys <- c(
-    "candidate_config", "support_id", "metric", "metric_class", "metric_geometry", "outcome"
+    "candidate_config", "support_id", "metric", "metric_class", "metric_geometry",
+    "outcome", "outcome_domain", "outcome_label"
   )
   reference_results <- rq1_fit_inference_groups(reference_pairs, reference_keys, B, 20270911L)
 
@@ -204,7 +223,7 @@ rq1_run_inference <- function() {
 
   out <- file.path(rq_root("rq1"), "inference")
   ensure_result_dirs(out)
-  provenance_paths <- unique(c(rq1_path, pair_part_paths, rq1_summary_path, diary_paths))
+  provenance_paths <- unique(c(rq1_path, pair_part_paths, rq1_summary_path, sleep_paths, ema_paths))
   artifact <- list(
     artifact_type = "rq1_inferential_preservation",
     core_artifact_version = core_artifact_version(),
@@ -214,10 +233,18 @@ rq1_run_inference <- function() {
     bootstrap_replicates = B,
     bootstrap_seed_base = 20260911L,
     reference_bootstrap_seed_base = 20270911L,
-    date_alignment = "exposure Date D -> local wake date D+1",
+    outcome_domains = c("Sleep", "Alertness", "Affect"),
+    outcome_alignment = paste(
+      "Sleep: exposure Date D -> following-morning diary;",
+      "Alertness/Affect: exposure Date D <-> same-day slot-harmonized EMA phenotype"
+    ),
+    ema_rule = paste0(
+      "nearest response to ", paste(contract$ema_slots_h, collapse = "/"), " h; tolerance <= ",
+      contract$ema_slot_tolerance_min, " min; >=", contract$ema_min_slots, " valid slots/day"
+    ),
     model = "participant fixed effects; native outcome linear projection; paired site-stratified participant bootstrap",
     inference_deviation = "reference-bootstrap uncertainty norm: absolute/SE for linear; Mahalanobis norm for circular sin/cos",
-    analysis_scope = "eight single-axis frozen RQ1 anchor contrasts; duration and multi-axis combinations excluded",
+    analysis_scope = "three human-state domains across eight single-axis frozen RQ1 anchor contrasts; duration and multi-axis combinations excluded",
     exposure_input = "frozen RQ1 participant-day pair values (state_a candidate; state_b eye/MEDI/10-s reference)",
     scale = "reference SD on matched repeated-measures support, fixed across paired bootstrap draws; circular sin/cos unscaled",
     input_provenance = tibble(
@@ -237,11 +264,13 @@ rq1_run_inference <- function() {
     reference_bootstrap = reference_bootstrap,
     pair_audit = stamp(pairs),
     reference_pair_audit = stamp(reference_pairs),
-    diary_audit = outcomes
+    outcome_audit = outcomes
   )
 
-  legacy_path <- file.path(out, contract$legacy_artifact_filename)
-  unlink(c(legacy_path, paste0(legacy_path, ".ok")), force = TRUE)
+  for (old_name in contract$retired_artifact_filenames) {
+    old_path <- file.path(out, old_name)
+    unlink(c(old_path, paste0(old_path, ".ok")), force = TRUE)
+  }
   path <- file.path(out, contract$artifact_filename)
   rq1_write_part_atomic(artifact, path)
   readr::write_csv(artifact$contrast_summary,
@@ -250,6 +279,8 @@ rq1_run_inference <- function() {
                    file.path(out, "rq1_inferential_preservation_term_summary.csv"), na = "")
   readr::write_csv(artifact$reference_summary,
                    file.path(out, "rq1_reference_association_summary.csv"), na = "")
+  readr::write_csv(artifact$outcome_audit,
+                   file.path(out, "rq1_downstream_outcome_audit.csv"), na = "")
   message("RQ1 inferential preservation frozen: ", path)
   invisible(artifact)
 }
