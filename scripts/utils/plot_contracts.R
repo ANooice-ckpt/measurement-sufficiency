@@ -111,8 +111,11 @@ ms_plot_write_manifest <- function(path, figure_rows) {
   if (ms_plot_prep_only()) return(invisible(path))
 
   figure_rows <- tibble::as_tibble(figure_rows)
+  # Rows arriving from a plotting implementation use that implementation's
+  # legacy identity. Convert exactly once on entry; a stored manifest is already
+  # canonical/current and must never be renumbered a second time.
   if ("figure" %in% names(figure_rows)) {
-    figure_rows$figure <- ms_main_figure_resolve_id(figure_rows$figure)
+    figure_rows$figure <- ms_main_figure_from_legacy_id(figure_rows$figure)
   }
   figure_rows$generated_at_utc <- format(Sys.time(), tz = "UTC", usetz = TRUE)
 
@@ -133,7 +136,6 @@ ms_plot_write_manifest <- function(path, figure_rows) {
   if (file.exists(manifest_path) && "figure" %in% names(figure_rows)) {
     previous <- suppressMessages(readr::read_csv(manifest_path, show_col_types = FALSE, progress = FALSE))
     if ("figure" %in% names(previous)) {
-      previous$figure <- ms_main_figure_resolve_id(previous$figure)
       current_ids <- ms_current_main_figure_ids()
       existing_ids <- current_ids[
         file.exists(file.path("results", "figures", paste0(current_ids, ".png")))
@@ -186,7 +188,9 @@ ms_plot_save <- function(plot, path, width, height,
                          dpi = if (exists("MS_RASTER_DPI", inherits = TRUE)) MS_RASTER_DPI else 600) {
   if (ms_plot_prep_only()) return(invisible(path))
 
-  resolved_name <- ms_main_figure_resolve_filename(basename(path))
+  # Main plotting implementations may still request their historical filename.
+  # Convert that request once to the current public filename before any export.
+  resolved_name <- ms_main_figure_filename_from_legacy(basename(path))
   if (!identical(resolved_name, basename(path))) path <- file.path(dirname(path), resolved_name)
   ext <- tolower(tools::file_ext(path))
 
@@ -196,7 +200,7 @@ ms_plot_save <- function(plot, path, width, height,
   }
 
   current_id <- tools::file_path_sans_ext(basename(path))
-  legacy_id <- ms_main_figure_legacy_id(current_id)
+  legacy_id <- ms_main_figure_to_legacy_id(current_id)
   caller_env <- parent.frame()
 
   if (identical(current_id, "Fig1_RQ1") &&
@@ -253,8 +257,8 @@ ms_plot_save <- function(plot, path, width, height,
 
   if (exists("ms_polish_main_figure", mode = "function")) {
     # figure_polish.R intentionally retains legacy component identities. Passing
-    # the registry-resolved legacy filename preserves the exact mature layout
-    # without a second current-number dispatch table here.
+    # the registry-derived legacy filename preserves the exact mature layout
+    # without another current-number dispatch table here.
     polish_path <- file.path(dirname(path), paste0(legacy_id, ".png"))
     polished <- ms_polish_main_figure(plot, polish_path, caller_env, width, height)
     if (is.list(polished) && !is.null(polished$plot)) plot <- polished$plot
