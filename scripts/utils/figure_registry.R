@@ -92,3 +92,8 @@ ms_main_plot_scripts <- function(include_implementations = TRUE) {
   if (isTRUE(include_implementations)) scripts <- c(scripts, registry$implementation_script)
   unique(basename(scripts))
 }
+
+# Backward-compatible function names for older callers. They contain no mapping
+# data themselves; both delegate to the registry-backed resolvers above.
+ms_main_figure_name_map <- ms_main_figure_resolve_filename
+ms_main_figure_id_map <- ms_main_figure_resolve_id
