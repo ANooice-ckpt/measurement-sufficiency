@@ -2,6 +2,7 @@
 # Outcomes are linear within-person projections in their native diary units.
 source("scripts/utils/analysis_design.R")
 source("scripts/utils/artifact_validation.R")
+source("scripts/utils/rq1_inference_contract.R")
 
 rq1_inference_version <- function(rq1_version) {
   paste0("rq1_inference_v2_anchor8__", rq1_version)
@@ -22,6 +23,7 @@ rq1_inference_anchor_map <- function() {
 }
 
 rq1_sleep_outcomes <- function(x, site) {
+  contract <- rq1_inference_contract()
   required <- c("Id", "wake", "sleepprep", "sleepquality", "awakenings", "awake_duration")
   if (!all(required %in% names(x))) stop(site, " sleepdiary lacks required outcome fields")
   tz <- attr(x$wake, "tzone")
@@ -47,8 +49,9 @@ rq1_sleep_outcomes <- function(x, site) {
   )
   ms_assert_unique(out, c("site", "Id", "Date"), paste(site, "sleepdiary"))
   out |>
-    tidyr::pivot_longer(c(sleep_quality, awakenings, awake_duration),
-                        names_to = "outcome", values_to = "outcome_value") |>
+    tidyr::pivot_longer(
+      dplyr::all_of(contract$outcomes), names_to = "outcome", values_to = "outcome_value"
+    ) |>
     dplyr::mutate(
       outcome_reason = dplyr::case_when(
         !valid_interval ~ "invalid_sleep_interval",
@@ -62,13 +65,14 @@ rq1_sleep_outcomes <- function(x, site) {
 }
 
 rq1_inference_pairs <- function(cube) {
+  contract <- rq1_inference_contract()
   x <- cube |>
     dplyr::filter(analysis_unit_type == "participant_day", resolution_s %in% ms_primary_temporal_s()) |>
     dplyr::mutate(Id = as.character(Id), Date = as.Date(Date))
   keys <- c("support_id", "site", "Id", "Date", "metric")
   ms_assert_unique(x, c(keys, "config_id"), "daily metric cube")
   configs <- rq1_inference_anchor_map()
-  dual <- c("MDER", "nvRD")
+  dual <- contract$dual_channel_metrics
 
   dplyr::bind_rows(lapply(seq_len(nrow(configs)), function(i) {
     cfg <- configs[i, ]
@@ -94,7 +98,7 @@ rq1_inference_pairs <- function(cube) {
         placement = cfg$placement[[1]], optical = cfg$optical[[1]], resolution_s = cfg$resolution_s[[1]],
         dimension = cfg$dimension[[1]], comparison_pair_id = cfg$comparison_pair_id[[1]],
         contrast_label = cfg$contrast_label[[1]], contrast_order = cfg$contrast_order[[1]],
-        reference_config = "eye__MEDI__10s",
+        reference_config = contract$reference_config,
         pair_reason = dplyr::case_when(
           cfg$optical[[1]] == "LIGHT" & metric %in% dual ~ "LIGHT_only_metric_unavailable",
           !dplyr::coalesce(reference_available, FALSE) | !is.finite(reference_value) ~ "reference_unavailable",
@@ -106,7 +110,8 @@ rq1_inference_pairs <- function(cube) {
 }
 
 rq1_inference_reference_pairs <- function(cube) {
-  dual <- c("MDER", "nvRD")
+  contract <- rq1_inference_contract()
+  dual <- contract$dual_channel_metrics
   x <- cube |>
     dplyr::filter(
       analysis_unit_type == "participant_day", placement == "eye", optical == "MEDI", resolution_s == 10L,
@@ -121,7 +126,7 @@ rq1_inference_reference_pairs <- function(cube) {
       support_id, site, Id, Date, metric, metric_class, metric_geometry,
       reference_value = value, candidate_value = value,
       reference_available = available, candidate_available = available,
-      candidate_config = "eye__MEDI__10s", reference_config = "eye__MEDI__10s",
+      candidate_config = contract$reference_config, reference_config = contract$reference_config,
       placement = "eye", optical = "MEDI", resolution_s = 10L,
       dimension = "reference", comparison_pair_id = "reference", contrast_label = "Reference", contrast_order = 0L,
       pair_reason = dplyr::if_else(
@@ -230,16 +235,19 @@ rq1_inference_fit <- function(g, B = 1000L, seed = 20260911L) {
     origin <- atan2(mean(sin(theta)), mean(cos(theta))) * 86400 / (2 * pi)
     scale <- stats::sd(((r - origin + 43200) %% 86400) - 43200)
     delta <- ((candidate - r + 43200) %% 86400) - 43200
-    xr <- cbind(sin(theta), cos(theta))
-    xc <- cbind(sin(2 * pi * candidate / 86400), cos(2 * pi * candidate / 86400))
   } else {
     scale <- stats::sd(r)
     delta <- candidate - r
-    xr <- matrix((r - mean(r)) / scale, ncol = 1L)
-    xc <- matrix((candidate - mean(r)) / scale, ncol = 1L)
   }
   if (!is.finite(scale) || scale <= sqrt(.Machine$double.eps)) {
     base$status <- "reference_scale_unavailable"; return(finish(base))
+  }
+  if (circular) {
+    xr <- cbind(sin(theta), cos(theta))
+    xc <- cbind(sin(2 * pi * candidate / 86400), cos(2 * pi * candidate / 86400))
+  } else {
+    xr <- matrix((r - mean(r)) / scale, ncol = 1L)
+    xc <- matrix((candidate - mean(r)) / scale, ncol = 1L)
   }
   base$reference_scale <- scale
   base$distortion_A <- mean(abs(delta / scale))
