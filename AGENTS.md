@@ -20,7 +20,7 @@ The expensive source-to-core layer ends at `scripts/09_build_core_artifacts.R`. 
 14_rq3_analysis.R                    -> 15a_plot_fig5.R + 15b_plot_fig6.R
 ```
 
-The pre-insertion RQ2/RQ3 plotting implementations remain in `13a_plot_fig2.R`, `13b_plot_fig3.R`, `15a_plot_fig4.R` and `15b_plot_fig5.R`; the new numbered entrypoints are compatibility wrappers. `scripts/utils/plot_contracts.R` is the sole place that remaps their external main-figure filenames/manifests from Fig. 2–5 to Fig. 3–6. Do not duplicate this renumbering inside scientific plotting code.
+Main-figure identity has one source of truth: `scripts/utils/figure_registry.R`. It records the current manuscript ID, canonical numbered entrypoint and, where needed, the pre-insertion implementation ID/source. The numbered RQ2/RQ3 entrypoints ask the registry for their implementation; they do not encode old-to-new figure numbers themselves. `scripts/utils/plot_contracts.R` consumes the registry when mature implementations emit historical filenames/manifests. Legacy -> current and current -> legacy conversions are intentionally separate because some strings overlap across generations (for example current `Fig3_RQ2` was also a historical implementation ID). A stored manifest is already current and must never be renumbered again.
 
 Main plot scripts read frozen outputs only and must not silently refit/recompute their corresponding analysis. Active inferential-preservation plotting belongs exclusively to `11b_plot_fig2.R`. Supplementary drawing remains centralized in `scripts/16_plot_supplementary.R`; its historical inference block points only to the retired v1 artifact path and is not part of the active Fig. 2 graph.
 
