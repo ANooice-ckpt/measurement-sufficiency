@@ -2,17 +2,11 @@
 # Plot scripts may reshape frozen summaries for display, but must not refit,
 # recompute estimands, or silently fall back to legacy data/derived paths.
 
-# Some compact plotting entry points source plot_contracts.R directly but still
-# rely on shared atlas helpers such as ms_direction_ratio(). Load those helpers
-# here only when they have not already been sourced by the caller.
 if (!exists("ms_direction_ratio", mode = "function") &&
     file.exists("scripts/utils/figure_atlas.R")) {
   source("scripts/utils/figure_atlas.R")
 }
 
-# Figure-specific final display refinements may reuse already-built display
-# summaries immediately before export. They may recompose or filter descriptive
-# display rows, but must not refit models or alter canonical RQ estimands.
 if (!exists("ms_fig1_refine_main", mode = "function") &&
     file.exists("scripts/utils/fig1_refinement.R")) {
   source("scripts/utils/fig1_refinement.R")
@@ -30,9 +24,6 @@ if (!exists("ms_fig3_atlas_refine_main", mode = "function") &&
   source("scripts/utils/fig3_atlas_refinement.R")
 }
 
-# The final composition pass is visual only. Main scripts still construct every
-# panel and scientific layer; this helper only regularizes layout immediately
-# before the PNG is written.
 if (!exists("ms_polish_main_figure", mode = "function") &&
     file.exists("scripts/utils/figure_polish.R")) {
   source("scripts/utils/figure_polish.R")
@@ -69,12 +60,8 @@ ms_main_figure_id_map <- function(x) {
 }
 
 ms_plot_prep_only <- function() {
-  # Explicit override remains available for diagnostics.
   if (identical(Sys.getenv("MS_PLOT_PREP_ONLY", unset = "0"), "1")) return(TRUE)
 
-  # The centralized supplementary entrypoint sources main-figure scripts only to
-  # reconstruct their frozen display objects. Suppress save/manifest side effects
-  # while those implementation scripts are present on the call stack.
   file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
   if (!length(file_arg)) return(FALSE)
   top_script <- basename(sub("^--file=", "", file_arg[[1]]))
@@ -155,10 +142,6 @@ ms_plot_pair_label <- function(data) {
 }
 
 ms_plot_write_manifest <- function(path, figure_rows) {
-  # Supplementary plotting may source a main-figure script only to reconstruct
-  # its frozen display objects. In prep-only mode, do not overwrite the main
-  # figure manifest; the supplementary entrypoint writes the complete per-RQ
-  # manifest after its FigS blocks finish.
   if (ms_plot_prep_only()) return(invisible(path))
 
   figure_rows <- tibble::as_tibble(figure_rows)
@@ -167,8 +150,6 @@ ms_plot_write_manifest <- function(path, figure_rows) {
   }
   figure_rows$generated_at_utc <- format(Sys.time(), tz = "UTC", usetz = TRUE)
 
-  # Plot scripts historically place the manifest inside results/rq*/figures.
-  # Figures now live centrally, while each RQ keeps its manifest at the RQ root.
   legacy_dir <- dirname(path)
   rq_dir <- dirname(legacy_dir)
   manifest_path <- if (
@@ -182,8 +163,6 @@ ms_plot_write_manifest <- function(path, figure_rows) {
   dir.create(dirname(manifest_path), recursive = TRUE, showWarnings = FALSE)
   readr::write_csv(figure_rows, manifest_path, na = "")
 
-  # Once the manifest has been moved out, the legacy per-RQ figure directory is
-  # obsolete. Remove it together with any stale PNG/PDF files from older runs.
   if (!identical(legacy_dir, dirname(manifest_path)) && dir.exists(legacy_dir)) {
     unlink(legacy_dir, recursive = TRUE, force = TRUE)
   }
@@ -192,9 +171,6 @@ ms_plot_write_manifest <- function(path, figure_rows) {
 
 ms_plot_save <- function(plot, path, width, height,
                          dpi = if (exists("MS_RASTER_DPI", inherits = TRUE)) MS_RASTER_DPI else 600) {
-  # When a main script is sourced by the supplementary entrypoint for data/object
-  # preparation, reconstruct its plot objects without writing the main figure a
-  # second time. Standalone main-figure execution is unchanged.
   if (ms_plot_prep_only()) return(invisible(path))
 
   mapped_name <- ms_main_figure_name_map(basename(path))
@@ -203,16 +179,11 @@ ms_plot_save <- function(plot, path, width, height,
   }
   ext <- tolower(tools::file_ext(path))
 
-  # PDF export is intentionally disabled. Existing plot scripts may retain paired
-  # PDF/PNG calls; only the PNG call produces an artifact.
   if (identical(ext, "pdf")) return(invisible(NULL))
   if (!identical(ext, "png")) {
     stop("Figure outputs must be PNG; unsupported path: ", path, call. = FALSE)
   }
 
-  # Capture the script evaluation environment before entering any further helper
-  # calls. Figure-specific final display refinements can reuse already-computed
-  # display objects without moving canonical estimands out of the RQ script.
   caller_env <- parent.frame()
   if (identical(basename(path), "Fig1_RQ1.png") &&
       exists("ms_fig1_refine_main", mode = "function")) {
@@ -272,7 +243,17 @@ ms_plot_save <- function(plot, path, width, height,
   }
 
   if (exists("ms_polish_main_figure", mode = "function")) {
-    polished <- ms_polish_main_figure(plot, path, caller_env, width, height)
+    polished <- if (identical(basename(path), "Fig3_RQ2.png") && exists("ms_polish_fig2", mode = "function")) {
+      ms_polish_fig2(plot, caller_env, width, height)
+    } else if (identical(basename(path), "Fig4_RQ2.png") && exists("ms_polish_fig3", mode = "function")) {
+      ms_polish_fig3(plot, caller_env, width, height)
+    } else if (identical(basename(path), "Fig5_RQ3.png") && exists("ms_polish_fig4", mode = "function")) {
+      ms_polish_fig4(plot, caller_env, width, height)
+    } else if (identical(basename(path), "Fig6_RQ3.png") && exists("ms_polish_fig5", mode = "function")) {
+      ms_polish_fig5(plot, caller_env, width, height)
+    } else {
+      ms_polish_main_figure(plot, path, caller_env, width, height)
+    }
     if (is.list(polished) && !is.null(polished$plot)) plot <- polished$plot
     if (is.list(polished) && length(polished$width) && is.finite(polished$width[[1]])) {
       width <- as.numeric(polished$width[[1]])
