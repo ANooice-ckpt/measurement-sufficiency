@@ -59,26 +59,76 @@ rq1_sleep_outcomes <- function(x, site) {
     sleep_quality = as.numeric(match(quality, quality_levels)),
     awakenings = as.numeric(x$awakenings), awake_duration = awake
   )
-  ms_assert_unique(out, c("site", "Id", "Date"), paste(site, "sleepdiary"))
-  out |>
+
+  # A diary without participant id or wake date cannot be paired to exposure day D.
+  # Drop only those structurally unalignable rows and report the count explicitly.
+  missing_key <- is.na(out$Id) | !nzchar(out$Id) | is.na(out$Date)
+  if (any(missing_key)) {
+    message("RQ1 inference: ", site, " sleepdiary drops ", sum(missing_key),
+            " row(s) without participant/wake-date alignment")
+    out <- out[!missing_key, , drop = FALSE]
+  }
+  if (!nrow(out)) return(tibble::tibble())
+
+  duplicate_days <- out |>
+    dplyr::count(site, Id, Date, name = "n_records") |>
+    dplyr::filter(n_records > 1L)
+  if (nrow(duplicate_days)) {
+    message("RQ1 inference: ", site, " sleepdiary resolves ", nrow(duplicate_days),
+            " duplicate participant-day(s) conservatively")
+  }
+
+  long <- out |>
     tidyr::pivot_longer(
       dplyr::all_of(sleep_outcomes), names_to = "outcome", values_to = "outcome_value"
     ) |>
     dplyr::mutate(
-      outcome_reason = dplyr::case_when(
+      row_reason = dplyr::case_when(
         !valid_interval ~ "invalid_sleep_interval",
         !is.finite(outcome_value) ~ "missing_outcome",
         outcome != "sleep_quality" & outcome_value < 0 ~ "negative_outcome",
         outcome == "awakenings" & outcome_value != floor(outcome_value) ~ "noninteger_count",
         TRUE ~ NA_character_
-      ),
-      outcome_value = dplyr::if_else(is.na(outcome_reason), outcome_value, NA_real_),
-      outcome_n_observations = dplyr::if_else(is.na(outcome_reason), 1L, 0L),
+      )
+    )
+
+  collapse_one <- function(g, key) {
+    valid <- is.na(g$row_reason) & is.finite(g$outcome_value)
+    values <- unique(as.numeric(g$outcome_value[valid]))
+    n_records <- nrow(g)
+    if (length(values) == 1L) {
+      value <- values[[1]]
+      reason <- NA_character_
+      duplicate_status <- if (n_records > 1L) "consistent_duplicate_collapsed" else "single"
+    } else if (length(values) > 1L) {
+      value <- NA_real_
+      reason <- "conflicting_duplicate_sleepdiary"
+      duplicate_status <- "conflicting_duplicate_excluded"
+    } else {
+      value <- NA_real_
+      reasons <- unique(g$row_reason[!is.na(g$row_reason)])
+      priority <- c("noninteger_count", "negative_outcome", "missing_outcome", "invalid_sleep_interval")
+      hit <- priority[priority %in% reasons]
+      reason <- if (length(hit)) hit[[1]] else "missing_outcome"
+      duplicate_status <- if (n_records > 1L) "duplicate_no_valid_value" else "single_invalid"
+    }
+    tibble::tibble(
+      outcome_value = value,
+      outcome_reason = reason,
+      outcome_n_observations = if (is.na(reason)) 1L else 0L,
+      outcome_n_records = n_records,
+      outcome_duplicate_status = duplicate_status,
       outcome_source = "sleepdiary"
-    ) |>
-    dplyr::select(site, Id, Date, outcome, outcome_value, outcome_reason,
-                  outcome_n_observations, outcome_source) |>
+    )
+  }
+
+  collapsed <- long |>
+    dplyr::group_by(site, Id, Date, outcome) |>
+    dplyr::group_modify(collapse_one) |>
+    dplyr::ungroup() |>
     dplyr::left_join(rq1_outcome_metadata(sleep_outcomes), by = "outcome", relationship = "many-to-one")
+  ms_assert_unique(collapsed, c("site", "Id", "Date", "outcome"), paste(site, "sleep outcomes"))
+  collapsed
 }
 
 rq1_ema_scale_numeric <- function(x, labels, first_code) {
