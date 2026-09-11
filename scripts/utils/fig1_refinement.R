@@ -123,6 +123,9 @@ ms_fig1_refine_main <- function(env) {
   cls_raw <- objects$class_summary_a
   overall_raw <- objects$dimension_overall_a
   target_geometry <- objects$target_geometry
+  # Use one mapping in both subset panels and their shared legend.
+  transition_shapes <- setNames(c(16, 17, 15)[seq_along(unique(target_geometry$transition))],
+                                sort(unique(as.character(target_geometry$transition))))
   theme_fig1_fn <- objects$theme_fig1
   if (!nrow(metric_raw) || !nrow(cls_raw) || !nrow(overall_raw) || !nrow(target_geometry)) {
     return(NULL)
@@ -186,7 +189,7 @@ ms_fig1_refine_main <- function(env) {
     ggplot2::geom_point(
       data = metric,
       ggplot2::aes(A_plot, rank_loss_plot, colour = metric_class),
-      size = .34, alpha = .080, shape = 16
+      size = .70, alpha = .48, shape = 16
     ) +
 
     # Metric-class summaries stay visible on close inspection but no longer
@@ -198,7 +201,7 @@ ms_fig1_refine_main <- function(env) {
         y = rank_loss_median_plot, yend = rank_loss_median_plot,
         colour = metric_class
       ),
-      linewidth = .34, alpha = .50, lineend = "round"
+      linewidth = .28, alpha = .38, lineend = "round"
     ) +
     ggplot2::geom_segment(
       data = cls,
@@ -207,7 +210,7 @@ ms_fig1_refine_main <- function(env) {
         y = rank_loss_q25_plot, yend = rank_loss_q75_plot,
         colour = metric_class
       ),
-      linewidth = .34, alpha = .50, lineend = "round"
+      linewidth = .28, alpha = .38, lineend = "round"
     ) +
     ggplot2::geom_point(
       data = cls,
@@ -240,7 +243,7 @@ ms_fig1_refine_main <- function(env) {
         x = A_q25_plot, xend = A_q75_plot,
         y = rank_loss_median_plot, yend = rank_loss_median_plot
       ),
-      inherit.aes = FALSE, colour = "#252B2E", linewidth = .90,
+      inherit.aes = FALSE, colour = "#252B2E", linewidth = .48,
       alpha = .96, lineend = "round"
     ) +
     ggplot2::geom_segment(
@@ -249,7 +252,7 @@ ms_fig1_refine_main <- function(env) {
         x = A_median_plot, xend = A_median_plot,
         y = rank_loss_q25_plot, yend = rank_loss_q75_plot
       ),
-      inherit.aes = FALSE, colour = "#252B2E", linewidth = .90,
+      inherit.aes = FALSE, colour = "#252B2E", linewidth = .48,
       alpha = .96, lineend = "round"
     ) +
     ggplot2::geom_point(
@@ -258,12 +261,10 @@ ms_fig1_refine_main <- function(env) {
       inherit.aes = FALSE, shape = 23, size = 2.08,
       fill = "#252B2E", colour = "white", stroke = .30
     ) +
-    ggplot2::geom_text(
-      data = overall,
-      ggplot2::aes(x_label, y_label, label = short_label),
-      inherit.aes = FALSE, family = MS_FONT, fontface = "bold",
-      size = 1.68, colour = "#252B2E", hjust = 0, vjust = 0
-    ) +
+    ggplot2::facet_wrap(~dimension, nrow = 1, labeller = ggplot2::as_labeller(c(
+      "Placement" = "Placement", "Optical representation" = "Optical",
+      "Temporal resolution" = "Temporal", "Monitoring duration" = "Duration"
+    ))) +
 
     scale_color_ms_metric(guide = "none") +
     ggplot2::scale_x_continuous(
@@ -284,12 +285,15 @@ ms_fig1_refine_main <- function(env) {
     ggplot2::theme(
       panel.grid.major = ggplot2::element_line(colour = "#F0F2F3", linewidth = .18),
       panel.grid.minor = ggplot2::element_blank(),
+      strip.background = ggplot2::element_blank(),
+      strip.text = ggplot2::element_text(size = 6, face = "bold"),
+      panel.spacing = grid::unit(2.5, "mm"),
       axis.title = ggplot2::element_text(size = 5.15),
       axis.text = ggplot2::element_text(size = 4.35),
       plot.margin = ggplot2::margin(.8, 2.0, 1.2, 2.0)
     )
 
-  assoc_text <- "Crosses show marginal ranges across representations; axes use zero-preserving pseudo-log scaling."
+  assoc_text <- "Shared pseudo-log axes · dots: representations; crosses: marginal IQRs; graphite: overall median and 10–90% range."
 
   # ---------------------------------------------------------------------------
   # b. Target-aligned magnitude and directional coherence
@@ -323,7 +327,7 @@ ms_fig1_refine_main <- function(env) {
         colour = "#303437"
       ) +
       scale_color_ms_metric(guide = "none") +
-      ggplot2::scale_shape_discrete(name = NULL) +
+      ggplot2::scale_shape_manual(values = transition_shapes, name = NULL) +
       ggplot2::scale_x_continuous(
         limits = c(-1, 1),
         breaks = c(-1, -.5, 0, .5, 1),
@@ -365,7 +369,7 @@ ms_fig1_refine_main <- function(env) {
       ggplot2::aes(coherence, A_display, shape = transition)
     ) +
       ggplot2::geom_point(size = 1.45, colour = "#3B3B3B") +
-      ggplot2::scale_shape_discrete(name = NULL) +
+      ggplot2::scale_shape_manual(values = transition_shapes, name = NULL) +
       ggplot2::theme_void(base_family = MS_FONT) +
       ggplot2::theme(
         legend.position = "bottom",

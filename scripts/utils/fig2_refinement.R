@@ -58,7 +58,7 @@ ms_fig2_short_metric <- function(x) {
   x <- stringr::str_replace(x, stringr::regex("^frequency crossing\\s*", ignore_case = TRUE),
                             "Crossing freq. ")
   x <- stringr::str_replace(x, stringr::regex("^total duration pulses above\\s*", ignore_case = TRUE),
-                            "Pulse duration > ")
+                            "Pulse dur. > ")
   x <- stringr::str_replace(x, stringr::regex("^total duration pulses\\s*", ignore_case = TRUE),
                             "Pulse duration ")
   x <- stringr::str_replace(x, stringr::regex("^bright mean level$", ignore_case = TRUE),
@@ -114,8 +114,8 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
   # and the secondary dimension fingerprint. Full coefficient detail remains in
   # the exported audit tables.
   refined_offsets <- c(
-    placement = -.20, optical = -.067,
-    temporal = .067, duration = .20
+    placement = -.32, optical = -.16,
+    temporal = .16, duration = .32
   )
   dim <- coef_summary_dim_plot |>
     dplyr::mutate(y_refined = y + unname(refined_offsets[dimension]))
@@ -140,7 +140,7 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
       ggplot2::geom_segment(
         data = overall,
         ggplot2::aes(x = estimate_q25_plot, xend = estimate_q75_plot, y = y, yend = y),
-        linewidth = .60, alpha = .76, colour = "#4A5256", lineend = "round"
+        linewidth = .48, alpha = .65, colour = "#4A5256", lineend = "round"
       ) +
       ggplot2::geom_point(
         data = overall,
@@ -156,7 +156,7 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
       ggplot2::geom_point(
         data = dim_i,
         ggplot2::aes(estimate_q50_plot, y_refined, shape = dimension_label),
-        size = .66, stroke = .32, colour = "#596267", fill = "white", alpha = .98
+        size = .82, stroke = .32, colour = "#39464D", fill = "white", alpha = .98
       ) +
       ggplot2::geom_text(
         data = miss_i,
@@ -171,7 +171,9 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
       ) +
       ggplot2::scale_x_continuous(
         limits = coef_window_global,
-        breaks = scales::breaks_extended(n = 3)
+        trans = scales::pseudo_log_trans(sigma = .002),
+        breaks = c(-.1, -.01, 0, .01, .1),
+        labels = c("−.1", "−.01", "0", ".01", ".1")
       ) +
       ggplot2::scale_y_continuous(
         limits = predictor_y_limits, expand = ggplot2::expansion(mult = c(0, 0))
@@ -209,7 +211,7 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
       fontface = "bold", size = 7.0
     ) +
     cowplot::draw_label(
-      "overall coefficient distributions are foreground; dimension-specific estimates form the secondary fingerprint",
+      "Overall median / IQR with dimension fingerprints · shared pseudo-log axes expand near-zero effects",
       x = .002, y = .968, hjust = 0, vjust = 1,
       colour = "#666A6D", size = 4.25
     )
@@ -316,13 +318,17 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
         values = c("Low" = 1, "Middle" = 16, "High" = 18), guide = "none"
       ) +
       ggplot2::scale_x_continuous(
-        limits = c(-x_lim, x_lim), breaks = x_breaks,
+        breaks = x_breaks,
         expand = ggplot2::expansion(mult = c(0, 0))
       ) +
       ggplot2::scale_y_continuous(
-        limits = c(-y_lim, y_lim), breaks = y_breaks,
+        breaks = y_breaks,
         expand = ggplot2::expansion(mult = c(0, 0))
       ) +
+      # Clip the viewing window after constructing paths, so outlying vertices
+      # do not delete trajectory segments crossing the visible region.
+      ggplot2::coord_cartesian(xlim = c(-x_lim, x_lim), ylim = c(-y_lim, y_lim),
+                              expand = FALSE) +
       ggplot2::labs(title = unname(DIM_TITLES[[dim_name]]), x = NULL, y = NULL) +
       theme_rq2(base_size = 5.05) +
       ggplot2::theme(
@@ -501,9 +507,9 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
   )
 
   legend_band <- cowplot::plot_grid(
-    predictor_legend, dimension_legend, metric_legend_single,
-    ncol = 3, rel_widths = c(.24, .30, .46),
-    align = "h", axis = "b", greedy = TRUE
+    cowplot::plot_grid(predictor_legend, dimension_legend,
+                      ncol = 2, rel_widths = c(.40, .60)),
+    metric_legend_single, ncol = 1, rel_heights = c(1, 1)
   )
   right_column <- cowplot::plot_grid(
     p2b, p2c,
@@ -517,7 +523,7 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
   )
   final <- cowplot::plot_grid(
     main_body, legend_band,
-    ncol = 1, rel_heights = c(.935, .065),
+    ncol = 1, rel_heights = c(.91, .09),
     align = "v", axis = "lr", greedy = TRUE
   )
 

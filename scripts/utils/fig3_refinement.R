@@ -5,7 +5,7 @@
 # change the frozen interaction scope. The refinement is intentionally visual:
 #   - top block: distribution-first summaries, with raw metric scatter removed;
 #   - bottom block: three profile small multiples with independent raw-Q y scales;
-#   - panel c adopts the same density + interval grammar as panel a;
+#   - panel c shows empirical metrics and intervals on a near-zero expanded axis;
 #   - all transition panels use one common profile grammar.
 
 ms_fig3_env_get <- function(env, name, default = NULL) {
@@ -100,15 +100,19 @@ ms_fig3_refine_main <- function(env) {
       expand = ggplot2::expansion(mult = c(0, .010))
     ) +
     ggplot2::scale_y_continuous(
-      limits = c(-.045, .52), breaks = NULL,
+      limits = c(-.16, .52), breaks = NULL,
       expand = ggplot2::expansion(mult = c(0, 0))
     ) +
     ggplot2::facet_grid(
-      atlas_row ~ dimension_pair, scales = "fixed", drop = FALSE, switch = "y"
+      atlas_row ~ dimension_pair, scales = "fixed", drop = FALSE, switch = "y",
+      labeller = ggplot2::labeller(atlas_row = function(x) {
+        x <- sub("Temporal dynamics", "Temporal\ndynamics", x, fixed = TRUE)
+        sub(" (n=", "\n(n=", x, fixed = TRUE)
+      })
     ) +
     ggplot2::labs(
       title = "a  Non-additivity across representation classes",
-      subtitle = "Class distributions of metric-level median Q",
+      subtitle = "Metric-level median Q · points: representations; thick / thin ranges: IQR / 10–90%",
       x = "Median Q per metric", y = NULL
     ) +
     theme_rq2_fn(base_size = 5.65) +
@@ -117,6 +121,7 @@ ms_fig3_refine_main <- function(env) {
       panel.spacing = grid::unit(.72, "mm"),
       strip.background = ggplot2::element_blank(),
       strip.placement = "outside",
+      strip.clip = "off",
       strip.text.x = ggplot2::element_text(
         size = 4.72, face = "bold", lineheight = .86
       ),
@@ -133,7 +138,7 @@ ms_fig3_refine_main <- function(env) {
         size = 3.92, colour = "#666A6D", hjust = 0,
         margin = ggplot2::margin(t = -1, b = 2)
       ),
-      plot.margin = ggplot2::margin(1, 2.2, 1, 3)
+      plot.margin = ggplot2::margin(1, 4, 1, 9)
     )
 
   # ---------------------------------------------------------------------------
@@ -141,10 +146,10 @@ ms_fig3_refine_main <- function(env) {
   # ---------------------------------------------------------------------------
   p3c <- ggplot2::ggplot() +
     ggplot2::geom_vline(xintercept = 0, linewidth = .34, colour = "#788186") +
-    ggplot2::geom_polygon(
-      data = coherence_polygons,
-      ggplot2::aes(x, y, group = pair_code),
-      fill = "#E9ECEE", colour = "#AAB1B5", linewidth = .25, alpha = .96
+    ggplot2::geom_point(
+      data = ms_fig3_env_get(env, "coherence_points"),
+      ggplot2::aes(C_metric, raw_y),
+      size = .62, alpha = .38, colour = "#626E75"
     ) +
     ggplot2::geom_segment(
       data = coherence_class,
@@ -171,8 +176,9 @@ ms_fig3_refine_main <- function(env) {
     ) +
     ggplot2::scale_colour_manual(values = MS_METRIC_COLORS, guide = "none") +
     ggplot2::scale_x_continuous(
-      limits = c(-1, 1), breaks = c(-1, -.5, 0, .5, 1),
-      labels = c("−1", "−.5", "0", ".5", "+1"),
+      limits = c(-1, 1), trans = scales::pseudo_log_trans(sigma = .02),
+      breaks = c(-1, -.1, 0, .1, 1),
+      labels = c("−1", "−.1", "0", ".1", "+1"),
       expand = ggplot2::expansion(mult = c(.010, .010))
     ) +
     ggplot2::scale_y_continuous(
@@ -182,7 +188,7 @@ ms_fig3_refine_main <- function(env) {
     ) +
     ggplot2::labs(
       title = "c  Directional coherence",
-      subtitle = "Overall density with class-level IQRs",
+      subtitle = "Metric points; overall / class IQRs\nPseudo-log axis expands near zero",
       x = "Directional coherence, C", y = NULL
     ) +
     theme_rq2_fn(base_size = 5.20) +
