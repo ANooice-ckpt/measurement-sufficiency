@@ -32,10 +32,26 @@ rq1_assert_summary_version <- function(x, summary) {
   invisible(expected)
 }
 
+# Historical frozen RQ1 parts may predate the purely diagnostic
+# pair_unavailable_reason text field.  That field never defines support or
+# availability: available_a, available_b, pair_available and the paired values do.
+# Permit only this one schema difference and fail immediately for every other
+# missing requested column.
+rq1_pairwise_select_columns <- function(z, columns) {
+  if (is.null(columns)) return(z)
+  missing <- setdiff(columns, names(z))
+  allowed_missing <- "pair_unavailable_reason"
+  unexpected <- setdiff(missing, allowed_missing)
+  if (length(unexpected)) {
+    stop("RQ1 pairwise part is missing required columns: ", paste(unexpected, collapse = ", "))
+  }
+  if ("pair_unavailable_reason" %in% missing) z$pair_unavailable_reason <- NA_character_
+  dplyr::select(z, dplyr::all_of(columns))
+}
+
 rq1_pairwise_load <- function(x, columns = NULL, filter_fn = NULL, parts = NULL) {
   if (!rq1_pairwise_is_partitioned(x)) {
-    out <- x
-    if (!is.null(columns)) out <- dplyr::select(out, dplyr::all_of(columns))
+    out <- rq1_pairwise_select_columns(x, columns)
     if (!is.null(filter_fn)) out <- filter_fn(out)
     return(out)
   }
@@ -44,7 +60,7 @@ rq1_pairwise_load <- function(x, columns = NULL, filter_fn = NULL, parts = NULL)
   if (!length(paths)) return(tibble::tibble())
   pieces <- lapply(paths, function(path) {
     z <- readRDS(path)
-    if (!is.null(columns)) z <- dplyr::select(z, dplyr::all_of(columns))
+    z <- rq1_pairwise_select_columns(z, columns)
     if (!is.null(filter_fn)) z <- filter_fn(z)
     z
   })
