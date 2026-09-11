@@ -175,13 +175,22 @@ Fig. 2 presents:
   in reference-bootstrap uncertainty units; it is descriptive and is not a
   significance-screening heatmap;
 - Fig. 2b: inferential degradation for each of the eight measurement contrasts,
-  retaining faint metric–outcome observations while overlaying median and
-  interquartile range at the domain level;
+  shown as horizontal metric–outcome point distributions with domain-level
+  median and interquartile range. Placement, optical and temporal groups are
+  separated visually; all eight contrasts retain the eye/MEDI/10-s reference;
 - Fig. 2c: propagation from the already-frozen RQ1 representation distortion
   `A_mean_absolute` to downstream inferential deviation. Metric–outcome points
   remain visible, domain-specific binned median trajectories expose the overall
   tendency, and a Spearman association summarizes monotone propagation within
   each domain.
+
+Fig. 2b's horizontal deviation axis and Fig. 2c's vertical deviation axis share
+the same zero-preserving pseudo-log transform and limits. Fig. 2c also expands
+small frozen A values using a pseudo-log x-axis. Ticks retain original units;
+these are display transforms, not new inferential cutoffs. Reference-heatmap
+labels are shortened only for display; full metric IDs, ordering, and all three
+audit CSV contracts remain unchanged. The distortion–inference relationship is
+descriptive and does not establish causal propagation.
 
 The main x-axis in Fig. 2c must come from the frozen RQ1 summary. The distortion
 recomputed on outcome-matched support is an audit quantity only and must never

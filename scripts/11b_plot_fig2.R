@@ -32,7 +32,7 @@ INFERENCE_RDS <- file.path("results", "rq1", "inference", contract$artifact_file
 RQ1_SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
 OUT_DIR <- file.path("results", "rq1", "figures")
 FIG2_WIDTH_IN <- 8.2
-FIG2_HEIGHT_IN <- 7.6
+FIG2_HEIGHT_IN <- 6.8
 ms_plot_require_files(c(INFERENCE_RDS, RQ1_SUMMARY_CSV), "Fig. 2 plotting inputs")
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
@@ -103,28 +103,51 @@ if (!nrow(contrast_plot)) stop("No finite inferential-preservation results for F
 # -----------------------------------------------------------------------------
 # a. Canonical high-information reference association landscape across domains
 # -----------------------------------------------------------------------------
+# Display labels only; retain full metric IDs and frozen row order in audit CSVs.
+metric_labels <- function(x) {
+  x <- gsub("_", " ", as.character(x), fixed = TRUE)
+  x <- gsub("total duration pulses above ", "Total pulse dur. > ", x, fixed = TRUE)
+  x <- gsub("mean duration pulses above ", "Mean pulse dur. > ", x, fixed = TRUE)
+  x <- gsub("mean level pulses above ", "Pulse level > ", x, fixed = TRUE)
+  x <- gsub("mean midpoint pulses above ", "Pulse midpoint > ", x, fixed = TRUE)
+  x <- gsub("mean onset pulses above ", "Pulse onset > ", x, fixed = TRUE)
+  x <- gsub("mean offset pulses above ", "Pulse offset > ", x, fixed = TRUE)
+  x <- gsub("frequency crossing ", "Crossing freq. ", x, fixed = TRUE)
+  x <- gsub("above ", "> ", x, fixed = TRUE)
+  x
+}
+stopifnot(!anyDuplicated(metric_labels(unique(reference_plot$metric))))
 p2a <- ggplot(reference_plot, aes(outcome, metric, fill = reference_association_strength)) +
   geom_tile(color = "white", linewidth = .12) +
-  facet_grid(metric_class ~ outcome_domain, scales = "free", space = "free", switch = "y") +
+  facet_grid(metric_class ~ outcome_domain, scales = "free", space = "free", switch = "y",
+    labeller = labeller(metric_class = c(duration = "Duration", `exposure history` = "History",
+      level = "Level", spectrum = "Spec.", `temporal dynamics` = "Dynamics", timing = "Timing"))) +
   scale_fill_ms_sequential(
     trans = scales::transform_asinh(), na.value = "#ECEFF0",
-    name = "Reference association\nstrength"
+    name = "Reference association strength", breaks = 0:5,
+    limits = c(0, max(reference_plot$reference_association_strength, na.rm = TRUE))
   ) +
+  scale_y_discrete(labels = metric_labels) +
   labs(
     title = "a  Reference association landscape",
-    subtitle = "Eye · MEDI · 10 s; day-level Sleep, Alertness and Affect outcomes",
+    subtitle = "Eye / MEDI / 10 s · bootstrap-uncertainty units",
     x = NULL, y = NULL
   ) +
   ms_atlas_theme(base_size = 5.9, x_angle = 28) +
   theme(
-    axis.text.y = element_text(size = 4.15),
-    axis.text.x = element_text(size = 4.7, angle = 28, hjust = 1),
-    strip.text.y.left = element_text(size = 4.55),
+    axis.text.y = element_text(size = 4.5),
+    axis.text.x = element_text(size = 4.7, angle = 50, hjust = 1),
+    strip.text.y.left = element_text(size = 4.55, angle = 90),
+    strip.clip = "off",
     strip.text.x = element_text(size = 4.9, face = "bold"),
     legend.position = "bottom",
     legend.title = element_text(size = 4.6), legend.text = element_text(size = 4.3),
     plot.title = element_text(size = 6.8),
-    plot.subtitle = element_text(size = 4.4, color = "#666A6D")
+    plot.subtitle = element_text(size = 4.4, color = "#666A6D"),
+    legend.key.width = grid::unit(6, "mm"),
+    legend.key.height = grid::unit(2, "mm"),
+    legend.direction = "horizontal",
+    legend.title.position = "top"
   )
 
 # -----------------------------------------------------------------------------
@@ -141,35 +164,45 @@ contrast_summary <- contrast_plot |>
     .groups = "drop"
   )
 
-p2b <- ggplot(contrast_plot, aes(contrast_label, inference_deviation, color = metric_class)) +
+# Both consequence panels use the same continuous deviation scale. This is a
+# display transform, not an inferential threshold or a change to the estimates.
+deviation_limits <- c(0, max(contrast_plot$inference_deviation) * 1.04)
+deviation_breaks <- c(0, .1, .3, 1, 3, 5)
+contrast_short <- setNames(c("Chest", "Wrist", "LIGHT", "20 s", "30 s", "40 s", "60 s", "120 s"),
+                          anchor_map$contrast_label[order(anchor_map$contrast_order)])
+p2b <- ggplot(contrast_plot, aes(inference_deviation, contrast_label, color = metric_class)) +
+  geom_hline(yintercept = c(5.5, 6.5), linewidth = .23, colour = "#DEE3E5") +
   geom_point(
-    position = position_jitter(width = .16, height = 0, seed = 211),
-    size = .48, alpha = .15
+    position = position_jitter(width = 0, height = .15, seed = 211),
+    size = .65, alpha = .32
   ) +
   geom_linerange(
     data = contrast_summary,
-    aes(x = contrast_label, ymin = deviation_q25, ymax = deviation_q75),
-    inherit.aes = FALSE, linewidth = .72, color = "#3D4347", alpha = .72
+    aes(y = contrast_label, xmin = deviation_q25, xmax = deviation_q75),
+    orientation = "y", inherit.aes = FALSE, linewidth = .65, color = "#3D4347", alpha = .85
   ) +
   geom_point(
     data = contrast_summary,
-    aes(x = contrast_label, y = deviation_median),
+    aes(y = contrast_label, x = deviation_median),
     inherit.aes = FALSE, shape = 18, size = 1.65, color = "#202426"
   ) +
   facet_wrap(~outcome_domain, nrow = 1) +
   scale_color_ms_metric(guide = "none") +
-  scale_y_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
+  scale_y_discrete(limits = rev(levels(contrast_plot$contrast_label)), labels = contrast_short) +
+  scale_x_continuous(trans = scales::pseudo_log_trans(sigma = .08),
+                     limits = deviation_limits, breaks = deviation_breaks) +
   labs(
-    title = "b  Inferential degradation across human-state domains",
-    subtitle = "Faint points = metric–outcome pairs; diamonds/IQRs summarize each domain",
-    x = NULL,
-    y = "Inferential deviation\n(reference-bootstrap uncertainty units)"
+    title = "b  Which configurations shift inference?",
+    subtitle = paste0("Points: metric–outcome pairs · diamonds / bars: domain median / IQR\n",
+                      "All vs eye / MEDI / 10 s · pseudo-log x · LIGHT excludes MDER/nvRD"),
+    x = "Inferential deviation (reference-bootstrap uncertainty units)", y = NULL
   ) +
   theme_ms_axes(base_size = 5.9, legend_position = "none", plot_title_size = 6.8) +
   theme(
-    panel.grid.major.x = element_blank(),
-    axis.text.x = element_text(size = 4.0, angle = 47, hjust = 1),
-    axis.text.y = element_text(size = 4.5),
+    panel.grid.major.y = element_blank(),
+    axis.text.x = element_text(size = 4.3),
+    axis.text.y = element_text(size = 4.8),
+    axis.title.x = element_text(size = 4.7),
     strip.text = element_text(size = 5.0),
     plot.subtitle = element_text(size = 4.35, color = "#666A6D"),
     plot.margin = margin(2, 3, 2, 3)
@@ -199,7 +232,7 @@ link_assoc <- contrast_plot |>
   mutate(label = if_else(is.finite(rho), sprintf("Spearman rₛ = %.2f", rho), "Spearman rₛ = NA"))
 
 p2c <- ggplot(contrast_plot, aes(rq1_distortion_A, inference_deviation, color = metric_class)) +
-  geom_point(size = .50, alpha = .15) +
+  geom_point(size = .70, alpha = .32) +
   geom_line(
     data = link_bins,
     aes(rq1_distortion_A, inference_deviation, group = outcome_domain),
@@ -214,34 +247,35 @@ p2c <- ggplot(contrast_plot, aes(rq1_distortion_A, inference_deviation, color = 
     data = link_assoc,
     aes(x = -Inf, y = Inf, label = label),
     inherit.aes = FALSE, hjust = -.04, vjust = 1.12,
-    size = 2.05, color = "#303437"
+    size = 1.65, color = "#303437"
   ) +
   facet_wrap(~outcome_domain, nrow = 1) +
   scale_color_ms_metric(guide = "none") +
-  scale_x_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
-  scale_y_continuous(trans = scales::transform_asinh(), breaks = scales::breaks_extended(n = 4)) +
+  scale_x_continuous(trans = scales::pseudo_log_trans(sigma = .03), breaks = c(0, .1, .5, 2)) +
+  scale_y_continuous(trans = scales::pseudo_log_trans(sigma = .08),
+                     limits = deviation_limits, breaks = deviation_breaks) +
   labs(
-    title = "c  Representation distortion propagates to downstream inference",
-    subtitle = "Frozen RQ1 distortion on x; black trajectory connects domain-specific distortion quintiles",
+    title = "c  Distortion and inferential displacement",
+    subtitle = "Frozen RQ1 A · black: quintile medians · axes expand near zero",
     x = "Frozen RQ1 representation distortion, A",
-    y = "Inferential deviation\n(reference-bootstrap uncertainty units)"
+    y = "Inferential deviation"
   ) +
   theme_ms_axes(base_size = 5.9, legend_position = "none", plot_title_size = 6.8) +
   theme(
     axis.text = element_text(size = 4.5),
     strip.text = element_text(size = 5.0),
+    axis.title = element_text(size = 4.7),
     plot.subtitle = element_text(size = 4.35, color = "#666A6D"),
     plot.margin = margin(2, 3, 2, 3)
   )
 
 metric_legend <- ms_metric_legend(text_size = 5.35, point_size = 1.55, key_width_mm = 3.5)
 right <- cowplot::plot_grid(
-  p2b, p2c, ncol = 1, rel_heights = c(.93, 1.07),
-  align = "v", axis = "lr", greedy = TRUE
+  p2b, p2c, ncol = 1, rel_heights = c(.50, .50),
+  align = "v", axis = "lr", greedy = FALSE
 )
 body <- cowplot::plot_grid(
-  p2a, right, ncol = 2, rel_widths = c(.42, .58),
-  align = "hv", axis = "tblr", greedy = TRUE
+  p2a, right, ncol = 2, rel_widths = c(.44, .56)
 )
 fig2 <- cowplot::plot_grid(
   metric_legend, body, ncol = 1, rel_heights = c(.035, 1),
