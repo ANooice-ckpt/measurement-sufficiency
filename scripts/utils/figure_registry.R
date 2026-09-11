@@ -1,11 +1,10 @@
 # Single source of truth for manuscript main-figure identity.
 #
-# `current_id` is the public manuscript/output identity. `legacy_id` is the
-# identifier still emitted internally by mature plotting implementations that
-# predate insertion of the RQ1 inferential-preservation Fig. 2. Some current IDs
-# are also legacy IDs of a different figure (for example Fig3_RQ2), so conversion
-# direction must always be explicit; there is deliberately no ambiguous generic
-# "resolve" operation.
+# `current_id` is the public manuscript/output identity. `legacy_id` is retained
+# only for output/refinement compatibility inside mature plotting code that
+# predates insertion of the RQ1 inferential-preservation Fig. 2. Every main
+# figure now has exactly one canonical script; there is no separate wrapper /
+# implementation layer.
 
 ms_main_figure_registry <- function() {
   data.frame(
@@ -32,14 +31,6 @@ ms_main_figure_registry <- function() {
       "scripts/13b_plot_fig4.R",
       "scripts/15a_plot_fig5.R",
       "scripts/15b_plot_fig6.R"
-    ),
-    implementation_script = c(
-      "scripts/11_plot_fig1.R",
-      "scripts/11b_plot_fig2.R",
-      "scripts/13a_plot_fig2.R",
-      "scripts/13b_plot_fig3.R",
-      "scripts/15a_plot_fig4.R",
-      "scripts/15b_plot_fig5.R"
     ),
     stringsAsFactors = FALSE
   )
@@ -75,19 +66,6 @@ ms_main_figure_filename_from_legacy <- function(filename) {
   ifelse(nzchar(ext), paste0(current, ".", ext), current)
 }
 
-ms_main_figure_implementation <- function(current_id) {
-  current_id <- as.character(current_id)
-  registry <- ms_main_figure_registry()
-  idx <- match(current_id, registry$current_id)
-  if (length(current_id) != 1L || is.na(idx)) {
-    stop("Unknown current main figure: ", paste(current_id, collapse = ", "), call. = FALSE)
-  }
-  registry$implementation_script[[idx]]
-}
-
-ms_main_plot_scripts <- function(include_implementations = TRUE) {
-  registry <- ms_main_figure_registry()
-  scripts <- registry$canonical_script
-  if (isTRUE(include_implementations)) scripts <- c(scripts, registry$implementation_script)
-  unique(basename(scripts))
+ms_main_plot_scripts <- function() {
+  unique(basename(ms_main_figure_registry()$canonical_script))
 }
