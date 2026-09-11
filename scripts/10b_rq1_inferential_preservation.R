@@ -1,5 +1,5 @@
 # Independent downstream extension; never sources/reruns 10_rq1_analysis.R.
-# Run: RQ1_INFERENCE_BOOT=1000 Rscript scripts/10b_rq1_inferential_preservation.R
+# Run: RQ1_INFERENCE_WORKERS=40 RQ1_INFERENCE_BOOT=1000 Rscript scripts/10b_rq1_inferential_preservation.R
 # Plot: Rscript scripts/11b_plot_fig2.R
 #
 # Analysis contract (additive to STUDY_SPEC; existing RQ1-RQ3 estimands remain unchanged):
@@ -36,6 +36,7 @@ suppressPackageStartupMessages(library(tidyverse))
 source("scripts/utils/paths.R")
 source("scripts/utils/melidos_io.R")
 source("scripts/utils/core_artifacts.R")
+source("scripts/utils/parallel_runtime.R")
 source("scripts/utils/rq1_pairwise_artifacts.R")
 source("scripts/utils/rq1_inference.R")
 
@@ -58,22 +59,55 @@ rq1_expand_outcome_support <- function(pairs, outcomes) {
     )
 }
 
-rq1_fit_inference_groups <- function(pairs, keys, B, seed_base) {
+# One group is one independent metric x outcome x contrast/reference task. Keep
+# the worker payload self-contained so PSOCK workers do not receive the complete
+# grouped object or depend on scheduling order. Each task keeps its deterministic
+# seed, so serial and parallel execution have identical bootstrap RNG semantics.
+rq1_fit_inference_group_task <- function(task) {
+  g <- task$group
+  meta <- dplyr::distinct(dplyr::select(g, dplyr::all_of(task$keys)))
+  if (nrow(meta) != 1L) stop("Inference grouping metadata is not unique")
+  fit <- rq1_inference_fit(g, B = task$B, seed = task$seed)
+  lapply(
+    fit,
+    function(x) {
+      if (!nrow(x)) return(x)
+      dplyr::bind_cols(meta[rep(1L, nrow(x)), , drop = FALSE], x)
+    }
+  )
+}
+
+rq1_fit_inference_groups <- function(pairs, keys, B, seed_base, workers) {
   groups <- pairs |> group_by(across(all_of(keys))) |> group_split(.keep = TRUE)
   if (!length(groups)) stop("No daily exposure/reference comparisons")
-  results <- vector("list", length(groups))
-  for (i in seq_along(groups)) {
-    g <- groups[[i]]
-    meta <- g |> select(all_of(keys)) |> distinct()
-    if (nrow(meta) != 1L) stop("Inference grouping metadata is not unique")
-    fit <- rq1_inference_fit(g, B = B, seed = seed_base + i)
-    results[[i]] <- lapply(
-      fit,
-      function(x) if (nrow(x)) bind_cols(meta[rep(1L, nrow(x)), , drop = FALSE], x) else x
+  tasks <- Map(
+    function(g, i) list(group = g, keys = keys, B = B, seed = seed_base + i),
+    groups, seq_along(groups)
+  )
+  rm(groups)
+  invisible(gc(FALSE))
+  active_workers <- min(as.integer(workers), length(tasks))
+  message("RQ1 inference: ", length(tasks), " tasks across ", active_workers, " PSOCK workers")
+  results <- ms_parallel_map(
+    tasks,
+    rq1_fit_inference_group_task,
+    workers = active_workers,
+    packages = c("dplyr", "tibble"),
+    exports = c(
+      "rq1_fit_inference_group_task", "rq1_inference_fit", "rq1_inference_stats",
+      "rq1_inference_solve", "rq1_inference_solve_draws", "rq1_inference_quadnorm"
     )
-    if (i %% 100L == 0L) message("RQ1 inference tasks: ", i, "/", length(groups))
-  }
+  )
+  message("RQ1 inference: completed ", length(results), " tasks")
   results
+}
+
+rq1_resolve_inference_workers <- function() {
+  requested <- suppressWarnings(as.integer(Sys.getenv("RQ1_INFERENCE_WORKERS", unset = "40")))
+  if (length(requested) != 1L || !is.finite(requested) || requested < 1L) requested <- 40L
+  logical_cores <- suppressWarnings(parallel::detectCores(logical = TRUE))
+  if (!is.finite(logical_cores) || logical_cores < 1L) logical_cores <- requested
+  max(1L, min(requested, as.integer(logical_cores), 48L))
 }
 
 rq1_run_inference <- function() {
@@ -88,10 +122,27 @@ rq1_run_inference <- function() {
   rq1_version <- rq1_pairwise_version(upstream)
   ms_assert_version(upstream, "core_artifact_version", core_artifact_version())
   ms_assert_version(upstream, "analysis_design_id", ms_analysis_design_id())
-  pair_part_paths <- rq1_pairwise_part_paths(upstream)
-  if (rq1_pairwise_is_partitioned(upstream) &&
+
+  # The downstream layer uses placement/optical/temporal participant-day pairs
+  # only. When the canonical RQ1 artifact is partitioned, load and hash exactly
+  # that immutable non-duration part instead of decompressing unrelated duration
+  # parts. Older manifests without dimension metadata retain the safe all-part
+  # fallback.
+  anchor_upstream <- upstream
+  if (rq1_pairwise_is_partitioned(upstream) && is.data.frame(upstream$part_manifest) &&
+      all(c("part", "dimension") %in% names(upstream$part_manifest))) {
+    anchor_records <- upstream$part_manifest |>
+      filter(dimension == "placement_optical_temporal")
+    if (nrow(anchor_records) != 1L) {
+      stop("Expected exactly one frozen placement/optical/temporal RQ1 part; found ", nrow(anchor_records))
+    }
+    anchor_upstream$parts <- as.character(anchor_records$part)
+    anchor_upstream$part_manifest <- anchor_records
+  }
+  pair_part_paths <- rq1_pairwise_part_paths(anchor_upstream)
+  if (rq1_pairwise_is_partitioned(anchor_upstream) &&
       (!length(pair_part_paths) || any(!file.exists(pair_part_paths)))) {
-    stop("Frozen RQ1 pairwise parts are missing; cannot recover participant-day anchor values")
+    stop("Frozen RQ1 anchor pairwise part is missing; cannot recover participant-day anchor values")
   }
 
   version <- rq1_inference_version(rq1_version)
@@ -99,6 +150,8 @@ rq1_run_inference <- function() {
   if (length(B) != 1L || !is.finite(B) || B < 0L) {
     stop("RQ1_INFERENCE_BOOT must be a nonnegative integer")
   }
+  workers <- rq1_resolve_inference_workers()
+  message("RQ1 inference runtime: bootstrap=", B, "; workers=", workers)
 
   rq1_summary <- readr::read_csv(rq1_summary_path, show_col_types = FALSE, progress = FALSE)
   ms_assert_version(rq1_summary, "core_artifact_version", core_artifact_version())
@@ -114,7 +167,8 @@ rq1_run_inference <- function() {
     stop("RQ1 inferential preservation must contain exactly ", contract$anchor_count, " anchor contrasts")
   }
 
-  base_pairs <- rq1_inference_pairs(upstream)
+  message("RQ1 inference: load frozen participant-day anchor pairs")
+  base_pairs <- rq1_inference_pairs(anchor_upstream)
   if (n_distinct(base_pairs$metric) != contract$daily_metric_count) {
     stop("Frozen RQ1 anchor pairs do not span all ", contract$daily_metric_count, " participant-day metrics")
   }
@@ -133,6 +187,7 @@ rq1_run_inference <- function() {
     )
   }
 
+  message("RQ1 inference: harmonize Sleep/Alertness/Affect outcomes")
   outcomes <- map_dfr(sites, function(s) {
     bind_rows(
       rq1_sleep_outcomes(load_raw_file(raw_data_path(s, "sleepdiaries"), "sleepdiaries"), s),
@@ -150,7 +205,7 @@ rq1_run_inference <- function() {
     "dimension", "comparison_pair_id", "contrast_label", "contrast_order",
     "metric", "metric_class", "metric_geometry", "outcome", "outcome_domain", "outcome_label"
   )
-  contrast_results <- rq1_fit_inference_groups(pairs, contrast_keys, B, 20260911L)
+  contrast_results <- rq1_fit_inference_groups(pairs, contrast_keys, B, 20260911L, workers)
 
   reference_pairs <- rq1_inference_reference_pairs(base_pairs) |> rq1_expand_outcome_support(outcomes)
   if (n_distinct(reference_pairs$metric) != contract$daily_metric_count) {
@@ -160,7 +215,7 @@ rq1_run_inference <- function() {
     "candidate_config", "support_id", "metric", "metric_class", "metric_geometry",
     "outcome", "outcome_domain", "outcome_label"
   )
-  reference_results <- rq1_fit_inference_groups(reference_pairs, reference_keys, B, 20270911L)
+  reference_results <- rq1_fit_inference_groups(reference_pairs, reference_keys, B, 20270911L, workers)
 
   stamp <- function(x) {
     if (!nrow(x)) return(x)
@@ -231,6 +286,7 @@ rq1_run_inference <- function() {
     rq1_inference_version = version,
     analysis_design_id = ms_analysis_design_id(),
     bootstrap_replicates = B,
+    parallel_workers = workers,
     bootstrap_seed_base = 20260911L,
     reference_bootstrap_seed_base = 20270911L,
     outcome_domains = c("Sleep", "Alertness", "Affect"),
