@@ -49,10 +49,10 @@ ms_fig6_redesign <- function(entry, pareto, classes, resolution_labels, days) {
   # b: occupancy is an absolute fraction of the SAME available metric-facets.
   # Area, not radius, is proportional to the fraction. Zero and U are distinct.
   b <- ggplot(pareto, aes(resolution_rank, n_days)) +
-    geom_tile(fill = "#F6F8F9", colour = "white", width = .98, height = .98, linewidth = .25) +
+    geom_tile(fill = "#FCFDFD", colour = "white", width = .98, height = .98, linewidth = .25) +
     geom_tile(data = pareto[pareto$cell_unresolved, ], fill = unresolved, width = .98, height = .98) +
     geom_point(data = pareto[is.finite(pareto$pareto_fraction) & pareto$pareto_fraction == 0, ],
-               size = .35, colour = "#CFD7DB") +
+               size = .25, colour = "#DFE5E8") +
     geom_point(data = pareto[is.finite(pareto$pareto_fraction) & pareto$pareto_fraction > 0, ],
                aes(size = pareto_fraction), shape = 21, stroke = .25, colour = "#31586A", fill = "#5F8B9E", alpha = .92) +
     geom_text(data = pareto[pareto$cell_unresolved, ], label = "U", size = 2.1, colour = muted) +
@@ -72,10 +72,10 @@ ms_fig6_redesign <- function(entry, pareto, classes, resolution_labels, days) {
                             ifelse(classes$resolution_rank == length(resolution_labels), "10 s", "20-60 s"))
   classes$cadence <- factor(classes$cadence, levels = c("120 s", "10 s", "20-60 s"))
   c <- ggplot(classes, aes(n_days, suff_fraction, group = resolution_rank, colour = metric_class)) +
-    geom_hline(yintercept = c(0, .5, 1), colour = "#DDE2E5", linewidth = .3) +
+    geom_hline(yintercept = c(0, .5, 1), colour = "#E8ECEE", linewidth = .20) +
     geom_line(data = classes[classes$cadence == "20-60 s", ], linewidth = .35, alpha = .32, na.rm = TRUE) +
-    geom_line(data = classes[classes$cadence != "20-60 s", ], aes(linetype = cadence), linewidth = .7, na.rm = TRUE) +
-    geom_point(data = classes[classes$cadence != "20-60 s", ], aes(shape = cadence), size = 1.65, stroke = .6, fill = "white", na.rm = TRUE) +
+    geom_line(data = classes[classes$cadence != "20-60 s", ], aes(linetype = cadence), linewidth = .60, na.rm = TRUE) +
+    geom_point(data = classes[classes$cadence != "20-60 s", ], aes(shape = cadence), size = 1.45, stroke = .45, fill = "white", na.rm = TRUE) +
     facet_wrap(~class_label, nrow = 1) +
     scale_colour_manual(values = MS_METRIC_COLORS, guide = "none") +
     scale_linetype_manual(values = c(`120 s` = "solid", `10 s` = "22"), breaks = c("120 s", "10 s"), name = "Sampling interval") +

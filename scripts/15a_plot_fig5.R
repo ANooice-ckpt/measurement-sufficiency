@@ -423,7 +423,7 @@ p4a_ribbon_data <- p4a_metric_states |>
     )
   )
 
-p4a_burden_palette <- c("#E8F0F3", "#C8DCE4", "#A5C5D1", "#7FA8B9", "#568BA1", "#2F5D7E")
+p4a_burden_palette <- c("#DDE9EE", "#BDD3DE", "#96B8C9", "#719CAF", "#487D96", "#2D566F")
 p4a_fill_values <- c(
   setNames(p4a_burden_palette, paste0("Temporal: ", p4a_state_labels$temporal)),
   setNames(p4a_burden_palette, paste0("Duration: ", p4a_state_labels$duration)),
@@ -447,16 +447,17 @@ p4a <- ggplot() +
       xmin = epsilon, xmax = epsilon_end,
       ymin = ribbon_ymin, ymax = ribbon_ymax, fill = state_key
     ),
-    colour = NA
+    colour = NA, show.legend = TRUE
   ) +
   geom_vline(
     xintercept = c(.10, .25, .50, .75),
-    linewidth = .20, linetype = 3, colour = "#BFC5C8", alpha = .72
+    linewidth = .20, linetype = 3, colour = "#BFC5C8", alpha = .40
   ) +
   facet_grid(. ~ dimension, scales = "fixed", space = "fixed") +
   scale_fill_manual(
     values = p4a_fill_values, breaks = p4a_fill_breaks,
-    drop = FALSE, name = "requirement state\n(darker = higher burden)"
+    labels = sub("Temporal: ", "T: ", sub("Duration: ", "D: ", p4a_fill_breaks, fixed = TRUE), fixed = TRUE),
+    drop = FALSE, name = "Requirement state\nT: temporal · D: duration"
   ) +
   scale_x_continuous(
     trans = epsilon_log1p,
@@ -487,9 +488,9 @@ p4a <- ggplot() +
     legend.direction = "horizontal",
     legend.text = element_text(size = 4.15),
     legend.title = element_text(size = 4.25),
-    legend.key.width = grid::unit(6.3, "mm"),
+    legend.key.width = grid::unit(3.2, "mm"),
     legend.key.height = grid::unit(2.7, "mm"),
-    legend.spacing.x = grid::unit(2.3, "mm"),
+    legend.spacing.x = grid::unit(.7, "mm"),
     plot.margin = margin(2, 3, 0, 3)
   ) +
   guides(fill = guide_legend(nrow = 2, byrow = TRUE, override.aes = list(colour = NA)))
@@ -502,7 +503,7 @@ p4b <- ggplot() +
     data = observed_display,
     aes(x_pos, R_obs, color = metric_class),
     position = position_jitter(width = .018, height = 0, seed = 91),
-    size = .52, alpha = .16
+    size = .45, alpha = .12
   ) +
   geom_linerange(
     data = observed_summary,

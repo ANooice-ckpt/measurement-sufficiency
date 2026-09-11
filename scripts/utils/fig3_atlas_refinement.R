@@ -78,7 +78,7 @@ ms_fig3_atlas_refine_main <- function(env) {
   # independent inferential replicates; no regression or correlation is fitted.
   p3c <- ggplot2::ggplot(points, ggplot2::aes(Q_metric, C_metric)) +
     ggplot2::geom_hline(yintercept = 0, linewidth = .3, colour = "#919A9F") +
-    ggplot2::geom_point(ggplot2::aes(colour = display_class), size = 1.35, alpha = .78, stroke = .25) +
+    ggplot2::geom_point(ggplot2::aes(colour = display_class), shape = 21, fill = "white", size = 1.25, alpha = .78, stroke = .45) +
     ggplot2::scale_colour_manual(values = c(MS_METRIC_COLORS, Other = "#90999E"), guide = "none") +
     ggplot2::scale_x_continuous(limits = c(0, NA), breaks = scales::breaks_extended(5),
                                expand = ggplot2::expansion(mult = c(.015, .04))) +
@@ -90,7 +90,7 @@ ms_fig3_atlas_refine_main <- function(env) {
       x = "Metric-level median Q", y = "Directional coherence, C\n(pseudo-log scale)") +
     theme_fn(base_size = 6) +
     ggplot2::theme(panel.grid.minor = ggplot2::element_blank(),
-      panel.grid.major = ggplot2::element_line(colour = "#EDF0F1", linewidth = .18),
+      panel.grid.major = ggplot2::element_line(colour = "#F0F2F3", linewidth = .14),
       strip.background = ggplot2::element_blank(), strip.text = ggplot2::element_text(size = 5, face = "bold"),
       axis.text = ggplot2::element_text(size = 4.5), axis.title = ggplot2::element_text(size = 5),
       plot.title = ggplot2::element_text(size = 6.4, face = "bold"),

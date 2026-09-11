@@ -147,11 +147,12 @@ response estimates.
 
 Fig. 2 presents:
 
-- Fig. 2a: the eye/MEDI/10-s reference association landscape across the 52 daily
-  representations and all six outcomes, visibly grouped into the three human-state
-  domains. Cell intensity is the magnitude of the within-participant association
-  in reference-bootstrap uncertainty units; it is descriptive and is not a
-  significance-screening heatmap;
+- Fig. 2a: six outcome-level reference-association distributions at eye/MEDI/10 s.
+  Each density pools the 52 daily representations with equal metric weight;
+  coloured metric dots retain descriptive class information. A separate open
+  circle and bar show the median and IQR. Association strength remains in
+  reference-bootstrap uncertainty units, not a significance-screening score.
+  Full metric-by-outcome values remain in the existing reference audit CSV;
 - Fig. 2b: inferential degradation for each of the eight measurement contrasts,
   shown as horizontal metric–outcome point distributions with domain-level
   median and interquartile range. Placement, optical and temporal groups are
@@ -165,9 +166,10 @@ Fig. 2 presents:
 Fig. 2b's horizontal deviation axis and Fig. 2c's vertical deviation axis share
 the same zero-preserving pseudo-log transform and limits. Fig. 2c also expands
 small frozen A values using a pseudo-log x-axis. Ticks retain original units;
-these are display transforms, not new inferential cutoffs. Reference-heatmap
-labels are shortened only for display; full metric IDs, ordering, and all three
-audit CSV contracts remain unchanged. The distortion–inference relationship is
+these are display transforms, not new inferential cutoffs. The reference panel aggregates only for display; full metric IDs, ordering,
+and all three audit CSV contracts remain unchanged. In panel b, median/IQR
+marks occupy a separate vertical lane above the metric-outcome dots. The lane
+offset is categorical spacing only; deviation coordinates are unchanged. The distortion–inference relationship is
 descriptive and does not establish causal propagation.
 
 The main x-axis in Fig. 2c must come from the frozen RQ1 summary. The distortion

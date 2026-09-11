@@ -189,7 +189,7 @@ ms_fig1_refine_main <- function(env) {
     ggplot2::geom_point(
       data = metric,
       ggplot2::aes(A_plot, rank_loss_plot, colour = metric_class),
-      size = .70, alpha = .48, shape = 16
+      size = .82, alpha = .55, shape = 16
     ) +
 
     # Metric-class summaries stay visible on close inspection but no longer
@@ -283,7 +283,7 @@ ms_fig1_refine_main <- function(env) {
     ) +
     theme_fig1_fn(base_size = 6.70) +
     ggplot2::theme(
-      panel.grid.major = ggplot2::element_line(colour = "#F0F2F3", linewidth = .18),
+      panel.grid.major = ggplot2::element_line(colour = "#F1F3F4", linewidth = .14),
       panel.grid.minor = ggplot2::element_blank(),
       strip.background = ggplot2::element_blank(),
       strip.text = ggplot2::element_text(size = 6, face = "bold"),
@@ -318,7 +318,7 @@ ms_fig1_refine_main <- function(env) {
       ggplot2::geom_point(
         data = d |> dplyr::filter(!offscale),
         ggplot2::aes(coherence, A_display, colour = metric_class, shape = transition),
-        size = 1.24, alpha = .80
+        size = 1.05, alpha = .65
       ) +
       ggplot2::geom_point(
         data = d |> dplyr::filter(offscale),

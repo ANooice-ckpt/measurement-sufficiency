@@ -135,12 +135,12 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
       ggplot2::geom_segment(
         data = overall,
         ggplot2::aes(x = estimate_q05_plot, xend = estimate_q95_plot, y = y, yend = y),
-        linewidth = .24, alpha = .26, colour = "#687075", lineend = "round"
+        linewidth = .18, alpha = .18, colour = "#687075", lineend = "round"
       ) +
       ggplot2::geom_segment(
         data = overall,
         ggplot2::aes(x = estimate_q25_plot, xend = estimate_q75_plot, y = y, yend = y),
-        linewidth = .48, alpha = .65, colour = "#4A5256", lineend = "round"
+        linewidth = .40, alpha = .56, colour = "#4A5256", lineend = "round"
       ) +
       ggplot2::geom_point(
         data = overall,
@@ -151,12 +151,12 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
         data = dim_i,
         ggplot2::aes(x = estimate_q25_plot, xend = estimate_q75_plot,
                      y = y_refined, yend = y_refined),
-        linewidth = .22, alpha = .72, colour = "#747C80", lineend = "round"
+        linewidth = .18, alpha = .40, colour = "#747C80", lineend = "round"
       ) +
       ggplot2::geom_point(
         data = dim_i,
         ggplot2::aes(estimate_q50_plot, y_refined, shape = dimension_label),
-        size = .82, stroke = .32, colour = "#39464D", fill = "white", alpha = .98
+        size = .76, stroke = .26, colour = "#39464D", fill = "white", alpha = .98
       ) +
       ggplot2::geom_text(
         data = miss_i,
@@ -275,12 +275,12 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
         data = raw,
         ggplot2::aes(delta_A, delta_direction,
                      group = interaction(metric, metric_class), colour = metric_class),
-        linewidth = .11, alpha = .085
+        linewidth = .10, alpha = .055
       ) +
       ggplot2::geom_point(
         data = raw |> dplyr::filter(state_num > 1L),
         ggplot2::aes(delta_A, delta_direction, colour = metric_class),
-        size = .26, alpha = .15
+        size = .30, alpha = .12
       ) +
       ggplot2::geom_path(
         data = cls,
@@ -295,7 +295,7 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
       ggplot2::geom_path(
         data = ov,
         ggplot2::aes(delta_A, delta_direction, group = 1),
-        linewidth = .98, colour = "#343B3F"
+        linewidth = .60, colour = "#343B3F"
       ) +
       ggplot2::geom_point(
         data = ov,
@@ -518,7 +518,7 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
   )
   main_body <- cowplot::plot_grid(
     p2a, right_column,
-    ncol = 2, rel_widths = c(.60, .40),
+    ncol = 2, rel_widths = c(.57, .43),
     align = "hv", axis = "tblr", greedy = TRUE
   )
   final <- cowplot::plot_grid(

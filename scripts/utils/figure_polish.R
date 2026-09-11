@@ -115,7 +115,7 @@ ms_polish_fig1 <- function(plot, env, width, height) {
     p1a_core,
     "a  Absolute and relational preservation",
     assoc_text,
-    title_size = 6.35, subtitle_size = 3.60, body_height = .845
+    title_size = 6.35, subtitle_size = 3.60, body_height = .89
   )
 
   p1b_body <- if (!is.null(p1b_shape_legend)) {
@@ -148,20 +148,20 @@ ms_polish_fig1 <- function(plot, env, width, height) {
     align = "hv", axis = "tblr", greedy = TRUE
   )
   body <- cowplot::plot_grid(
-    p1a, bottom, ncol = 1, rel_heights = c(.82, 1.18),
+    p1a, bottom, ncol = 1, rel_heights = c(.68, 1.32),
     align = "v", axis = "lr", greedy = TRUE
   )
   final <- cowplot::plot_grid(
     metric_legend, body, ncol = 1, rel_heights = c(.046, 1),
     align = "v", axis = "l", greedy = TRUE
   )
-  list(plot = final, width = 7.40, height = 5.90)
+  list(plot = final, width = 7.40, height = 5.65)
 }
 
 ms_polish_fig2 <- function(plot, env, width, height) {
   # Fig. 2 is the current layout reference. Preserve its composition and only
   # normalize the export box so it remains the visual anchor for the other RQs.
-  list(plot = plot, width = 8.20, height = 4.64)
+  list(plot = plot, width = 8.20, height = 4.85)
 }
 
 ms_polish_fig3 <- function(plot, env, width, height) {
