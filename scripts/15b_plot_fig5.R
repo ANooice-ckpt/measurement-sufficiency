@@ -312,67 +312,6 @@ entry_boundary50 <- build_stepped_boundary5(
   entry_grid, .50, "epsilon_entry_median", direction = "le"
 )
 
-p5a <- ggplot(entry_grid, aes(resolution_rank, n_days, fill = epsilon_entry_median)) +
-  geom_tile(width = .94, height = .94, color = FIG5_CELL_BORDER, linewidth = .14) +
-  geom_tile(
-    data = entry_grid |> filter(cell_unresolved),
-    aes(resolution_rank, n_days), inherit.aes = FALSE,
-    width = .94, height = .94, fill = FIG5_UNRESOLVED,
-    color = FIG5_CELL_BORDER, linewidth = .14
-  ) +
-  geom_segment(
-    data = entry_boundary25,
-    aes(x = x, y = y, xend = xend, yend = yend),
-    inherit.aes = FALSE, color = "#7F878B", linewidth = .27,
-    linetype = "22", lineend = "butt"
-  ) +
-  geom_segment(
-    data = entry_boundary50,
-    aes(x = x, y = y, xend = xend, yend = yend),
-    inherit.aes = FALSE, color = "#26373E", linewidth = .62,
-    lineend = "butt"
-  ) +
-  geom_text(
-    data = entry_grid |> filter(cell_unresolved),
-    aes(resolution_rank, n_days, label = "U"),
-    inherit.aes = FALSE, size = 1.95, fontface = "bold", color = "#596064"
-  ) +
-  scale_fill_gradientn(
-    colours = FIG5_TOLERANCE_COLORS,
-    limits = entry_fill_limits5, oob = scales::squish,
-    trans = scales::transform_asinh(),
-    na.value = "#F1F2F2",
-    name = "entry tolerance, ε"
-  ) +
-  scale_x_continuous(
-    breaks = seq_along(fig5_res_levels), labels = fig5_res_labels,
-    expand = expansion(add = .28)
-  ) +
-  scale_y_continuous(
-    breaks = fig5_days, labels = paste0(fig5_days, " d"),
-    expand = expansion(add = .28)
-  ) +
-  coord_fixed(ratio = .86, clip = "off") +
-  labs(
-    title = "a  Joint entry-tolerance landscape",
-    subtitle = "fill = median entry tolerance; thin dashed = ε 0.25; dark frontier = ε 0.50; U = unresolved",
-    x = "temporal resolution  (low → high burden)", y = "monitoring duration"
-  ) +
-  theme_rq3(base_size = 6.0, legend_position = "bottom") +
-  theme(
-    panel.grid = element_blank(),
-    axis.text.x = element_text(angle = 30, hjust = 1, size = 4.65),
-    axis.text.y = element_text(size = 4.65),
-    plot.subtitle = element_text(size = 4.10, colour = "#666A6D", margin = margin(t = -1, b = 2)),
-    legend.text = element_text(size = 4.0), legend.title = element_text(size = 4.10),
-    legend.key.height = grid::unit(2.5, "mm"),
-    legend.margin = margin(0, 0, 0, 0)
-  ) +
-  guides(fill = guide_colorbar(
-    title.position = "top", barwidth = grid::unit(23, "mm"),
-    barheight = grid::unit(2.5, "mm"), ticks = TRUE
-  ))
-
 # -----------------------------------------------------------------------------
 # b. Pareto occupancy as a continuous phase field
 # -----------------------------------------------------------------------------
@@ -457,63 +396,6 @@ pareto_boundary50 <- build_stepped_boundary5(
 ) |>
   mutate(epsilon_label = factor(
     epsilon_label, levels = levels(pareto_grid5$epsilon_label)
-  ))
-
-p5b <- ggplot(pareto_grid5, aes(resolution_rank, n_days, fill = pareto_fraction)) +
-  geom_tile(width = .94, height = .94, color = FIG5_CELL_BORDER, linewidth = .11) +
-  geom_tile(
-    data = pareto_grid5 |> filter(cell_unresolved),
-    aes(resolution_rank, n_days), inherit.aes = FALSE,
-    width = .94, height = .94, fill = FIG5_UNRESOLVED,
-    color = FIG5_CELL_BORDER, linewidth = .11
-  ) +
-  geom_segment(
-    data = pareto_boundary50,
-    aes(x = x, y = y, xend = xend, yend = yend),
-    inherit.aes = FALSE, color = "#263E49", linewidth = .52,
-    lineend = "butt"
-  ) +
-  geom_text(
-    data = pareto_grid5 |> filter(cell_unresolved),
-    aes(resolution_rank, n_days, label = "U"),
-    inherit.aes = FALSE, size = 1.40, fontface = "bold", color = "#596064"
-  ) +
-  facet_wrap(~epsilon_label, nrow = 1) +
-  scale_fill_gradientn(
-    colours = FIG5_FRACTION_COLORS, limits = c(0, 1), oob = scales::squish,
-    breaks = c(0, .25, .50, .75, 1), labels = scales::label_percent(accuracy = 1),
-    na.value = "#F1F2F2", name = "Pareto occupancy"
-  ) +
-  scale_x_continuous(
-    breaks = seq_along(fig5_res_levels), labels = fig5_res_labels_compact,
-    expand = expansion(add = .14)
-  ) +
-  scale_y_continuous(
-    breaks = fig5_days, labels = paste0(fig5_days, " d"),
-    expand = expansion(add = .14)
-  ) +
-  coord_fixed(ratio = .86, clip = "off") +
-  labs(
-    title = "b  Pareto occupancy across tolerance",
-    subtitle = "continuous fill = fraction on the frozen Pareto set; dark frontier = 50%; U = unresolved",
-    x = "temporal resolution", y = NULL
-  ) +
-  theme_rq3(base_size = 5.45, legend_position = "bottom") +
-  theme(
-    panel.grid = element_blank(),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 3.25),
-    axis.text.y = element_text(size = 3.75), axis.title.y = element_blank(),
-    strip.text = element_text(size = 4.65, face = "bold"),
-    plot.title = element_text(size = 6.0),
-    plot.subtitle = element_text(size = 3.85, colour = "#666A6D", margin = margin(t = -1, b = 1)),
-    panel.spacing = grid::unit(.75, "mm"),
-    legend.text = element_text(size = 3.7), legend.title = element_text(size = 3.9),
-    legend.key.height = grid::unit(2.4, "mm"), legend.margin = margin(0, 0, 0, 0),
-    plot.margin = margin(2.5, 1.5, 1.5, 1.5)
-  ) +
-  guides(fill = guide_colorbar(
-    title.position = "top", barwidth = grid::unit(22, "mm"),
-    barheight = grid::unit(2.4, "mm"), ticks = TRUE
   ))
 
 # -----------------------------------------------------------------------------
@@ -601,78 +483,13 @@ class_boundary50 <- build_stepped_boundary5(
     class_label, levels = levels(class_grid5$class_label)
   ))
 
-p5c <- ggplot(class_grid5, aes(resolution_rank, n_days, fill = suff_fraction)) +
-  geom_tile(width = .94, height = .94, color = FIG5_CELL_BORDER, linewidth = .11) +
-  geom_tile(
-    data = class_grid5 |> filter(class_unresolved),
-    aes(resolution_rank, n_days), inherit.aes = FALSE,
-    width = .94, height = .94, fill = FIG5_UNRESOLVED,
-    color = FIG5_CELL_BORDER, linewidth = .11
-  ) +
-  geom_segment(
-    data = class_boundary50,
-    aes(x = x, y = y, xend = xend, yend = yend),
-    inherit.aes = FALSE, color = "#263E49", linewidth = .54,
-    lineend = "butt"
-  ) +
-  geom_text(
-    data = class_grid5 |> filter(class_unresolved),
-    aes(resolution_rank, n_days, label = "U"),
-    inherit.aes = FALSE, size = 1.42, fontface = "bold", color = "#596064"
-  ) +
-  facet_wrap(~class_label, ncol = 4) +
-  scale_fill_gradientn(
-    colours = FIG5_FRACTION_COLORS, limits = c(0, 1), oob = scales::squish,
-    breaks = c(0, .25, .50, .75, 1), labels = scales::label_percent(accuracy = 1),
-    na.value = "#F1F2F2", name = "fraction sufficient"
-  ) +
-  scale_x_continuous(
-    breaks = seq_along(fig5_res_levels), labels = fig5_res_labels_compact,
-    expand = expansion(add = .14)
-  ) +
-  scale_y_continuous(
-    breaks = fig5_days, labels = paste0(fig5_days, " d"),
-    expand = expansion(add = .14)
-  ) +
-  coord_fixed(ratio = .86, clip = "off") +
-  labs(
-    title = "c  Class-specific sufficient regions",
-    subtitle = paste0(
-      "shared ε = ", sprintf("%.2f", class_threshold5),
-      "; fill = class fraction sufficient; dark frontier = 50%; facets ordered stringent → permissive"
-    ),
-    x = "temporal resolution", y = "monitoring duration"
-  ) +
-  theme_rq3(base_size = 5.45, legend_position = "bottom") +
-  theme(
-    panel.grid = element_blank(),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 3.00),
-    axis.text.y = element_text(size = 3.40),
-    strip.text = element_text(size = 4.25, face = "bold"),
-    plot.title = element_text(size = 6.1),
-    plot.subtitle = element_text(size = 3.55, colour = "#666A6D", margin = margin(t = -1, b = 1)),
-    panel.spacing = grid::unit(1.15, "mm"),
-    legend.text = element_text(size = 3.75), legend.title = element_text(size = 3.9),
-    legend.key.height = grid::unit(2.4, "mm"), legend.margin = margin(0, 0, 0, 0),
-    plot.margin = margin(2.5, 2, 1.5, 2)
-  ) +
-  guides(fill = guide_colorbar(
-    title.position = "top", barwidth = grid::unit(24, "mm"),
-    barheight = grid::unit(2.4, "mm"), ticks = TRUE
-  ))
-
-# Keep the existing broad composition: one overall landscape, a tolerance
-# progression, then four class-specific landscapes. The global figure-polish
-# pass will normalize the final production box to the house style.
-fig5_top <- cowplot::plot_grid(
-  p5a, p5b, ncol = 2, rel_widths = c(.40, .60),
-  align = "hv", axis = "tblr", greedy = TRUE
-)
-fig5_body <- cowplot::plot_grid(
-  fig5_top, p5c, ncol = 1, rel_heights = c(.82, 1.00),
-  align = "v", axis = "l", greedy = TRUE
-)
-ms_plot_save(fig5_body, file.path(OUT_DIR, "Fig5_RQ3.png"), 7.40, 6.10)
+# Fig. 6 redesign consumes the same display grids without changing their values.
+source("scripts/utils/fig6_redesign.R")
+fig6_display <- ms_fig6_redesign(entry_grid, pareto_grid5, class_grid5,
+                                fig5_res_labels_compact, fig5_days)
+fig6_redesigned <- fig6_display$plot
+p5a <- fig6_display$a; p5b <- fig6_display$b; p5c <- fig6_display$c
+ms_plot_save(fig6_redesigned, file.path(OUT_DIR, "Fig5_RQ3.png"), 7.40, 6.10)
 
 ms_plot_write_manifest(
   file.path(OUT_DIR, "figure_artifact_manifest.csv"),
@@ -686,4 +503,4 @@ ms_plot_write_manifest(
   )
 )
 
-message("Fig. 5 complete: entry tolerance, Pareto occupancy and class sufficiency as discrete phase fields.")
+message("Fig. 6 complete: joint stability, Pareto occupancy and class-specific profiles.")

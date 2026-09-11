@@ -259,6 +259,10 @@ ms_polish_fig4 <- function(plot, env, width, height) {
 }
 
 ms_polish_fig5 <- function(plot, env, width, height) {
+  # This legacy identity routes exclusively to current Fig. 6 via the registry.
+  # Its redesigned panels already share an explicit aligned composition.
+  redesigned <- ms_polish_env_get(env, "fig6_redesigned")
+  if (!is.null(redesigned)) return(list(plot = redesigned, width = 7.40, height = 6.10))
   p5a <- ms_polish_env_get(env, "p5a")
   p5b <- ms_polish_env_get(env, "p5b")
   p5c <- ms_polish_env_get(env, "p5c")
