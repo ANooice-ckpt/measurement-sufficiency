@@ -19,6 +19,13 @@ expected_legacy <- c(
   "Fig4_RQ3",
   "Fig5_RQ3"
 )
+retired_plot_paths <- c(
+  "scripts/13a_plot_fig2.R",
+  "scripts/13b_plot_fig3.R",
+  "scripts/15a_plot_fig4.R",
+  "scripts/15b_plot_fig5.R",
+  "scripts/16_plot_supplementary.R"
+)
 
 stopifnot(
   identical(registry$current_id, expected_current),
@@ -26,7 +33,7 @@ stopifnot(
   !anyDuplicated(registry$current_id),
   !anyDuplicated(registry$canonical_script),
   all(file.exists(registry$canonical_script)),
-  all(file.exists(registry$implementation_script)),
+  !any(file.exists(retired_plot_paths)),
   identical(ms_current_main_figure_ids(), expected_current),
   identical(ms_main_figure_from_legacy_id(expected_legacy), expected_current),
   identical(ms_main_figure_to_legacy_id(expected_current), expected_legacy),
@@ -34,10 +41,7 @@ stopifnot(
     ms_main_figure_filename_from_legacy(paste0(expected_legacy, ".png")),
     paste0(expected_current, ".png")
   ),
-  identical(ms_main_figure_implementation("Fig3_RQ2"), "scripts/13a_plot_fig2.R"),
-  identical(ms_main_figure_implementation("Fig4_RQ2"), "scripts/13b_plot_fig3.R"),
-  identical(ms_main_figure_implementation("Fig5_RQ3"), "scripts/15a_plot_fig4.R"),
-  identical(ms_main_figure_implementation("Fig6_RQ3"), "scripts/15b_plot_fig5.R")
+  identical(ms_main_plot_scripts(), basename(registry$canonical_script))
 )
 
 # The overlap is intentional and is why conversion direction is explicit:
@@ -51,13 +55,14 @@ stopifnot(
   identical(ms_main_figure_to_legacy_id("Fig5_RQ3"), "Fig4_RQ3")
 )
 
-# Orchestration is intentionally explicit, but it must invoke every canonical
-# numbered entrypoint from the registry rather than a historical implementation.
+# Orchestration is explicit and must invoke every canonical entrypoint exactly
+# through its current numbered path.
 runner <- readLines("scripts/run_downstream_server.sh", warn = FALSE)
 stopifnot(all(vapply(
   registry$canonical_script,
   function(path) any(grepl(path, runner, fixed = TRUE)),
   logical(1)
 )))
+stopifnot(!any(grepl("16_plot_supplementary.R", runner, fixed = TRUE)))
 
-cat("PASS: main-figure registry identities, paths, conversion directions and runner entrypoints are consistent\n")
+cat("PASS: canonical main-figure identities, paths, legacy output mapping and runner entrypoints are consistent\n")

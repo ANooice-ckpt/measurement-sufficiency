@@ -156,9 +156,6 @@ LOG="results/logs/downstream_v5.log"
   echo "===== FIGURE 6 ====="
   Rscript scripts/15b_plot_fig6.R
 
-  echo "===== SUPPLEMENTARY FIGURES ====="
-  Rscript scripts/16_plot_supplementary.R
-
   echo "===== PROVENANCE ====="
   git rev-parse HEAD > results/logs/git_commit.txt
   git status --short > results/logs/git_status_after_run.txt

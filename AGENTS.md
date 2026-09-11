@@ -20,9 +20,9 @@ The expensive source-to-core layer ends at `scripts/09_build_core_artifacts.R`. 
 14_rq3_analysis.R                    -> 15a_plot_fig5.R + 15b_plot_fig6.R
 ```
 
-Main-figure identity has one source of truth: `scripts/utils/figure_registry.R`. It records the current manuscript ID, canonical numbered entrypoint and, where needed, the pre-insertion implementation ID/source. The numbered RQ2/RQ3 entrypoints ask the registry for their implementation; they do not encode old-to-new figure numbers themselves. `scripts/utils/plot_contracts.R` consumes the registry when mature implementations emit historical filenames/manifests. Legacy -> current and current -> legacy conversions are intentionally separate because some strings overlap across generations (for example current `Fig3_RQ2` was also a historical implementation ID). A stored manifest is already current and must never be renumbered again.
+Main-figure identity has one source of truth: `scripts/utils/figure_registry.R`. It records the current manuscript ID and the single canonical plotting entrypoint for every main figure. RQ2/RQ3 plotting code still contains some pre-insertion figure IDs and component names internally because Fig. 2 was inserted after those figures matured; `scripts/utils/plot_contracts.R` converts those legacy output identities to current identities exactly once. There is no separate canonical-wrapper versus legacy-implementation script layer. A stored manifest is already current and must never be renumbered again.
 
-Main plot scripts read frozen outputs only and must not silently refit/recompute their corresponding analysis. Active inferential-preservation plotting belongs exclusively to `11b_plot_fig2.R`. Supplementary drawing remains centralized in `scripts/16_plot_supplementary.R`; its historical inference block points only to the retired v1 artifact path and is not part of the active Fig. 2 graph.
+Main plot scripts read frozen outputs only and must not silently refit/recompute their corresponding analysis. Active inferential-preservation plotting belongs exclusively to `11b_plot_fig2.R`. `scripts/16_plot_supplementary.R` has been retired and must not be referenced by runners, registries or plot-contract auto-detection.
 
 ## Frozen scientific rules
 - Scientific object: `configuration -> observed exposure process -> target representation`.
@@ -72,3 +72,4 @@ Full rebuilds use R 4.5.0, LightLogR 0.10.3, melidosData 1.0.6. On the large Lin
 - Expand the inferential-preservation layer back into all 35 placement × optical × cadence combinations unless the scientific estimand is explicitly redesigned.
 - Recompute an outcome-specific distortion and present it as the RQ1 distortion propagated downstream.
 - Reinterpret same-day EMA associations as temporally ordered acute health effects without redesigning the exposure support.
+- Reintroduce duplicate numbered plot wrappers or retired pre-insertion plotting filenames; each main figure has one canonical script.

@@ -33,24 +33,11 @@ if (!exists("ms_polish_main_figure", mode = "function") &&
   source("scripts/utils/figure_polish.R")
 }
 
+# Explicit opt-in remains useful for diagnostics that need to construct plot
+# objects without writing files. There is no longer a supplementary-script
+# auto-detection path.
 ms_plot_prep_only <- function() {
-  if (identical(Sys.getenv("MS_PLOT_PREP_ONLY", unset = "0"), "1")) return(TRUE)
-
-  file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
-  if (!length(file_arg)) return(FALSE)
-  top_script <- basename(sub("^--file=", "", file_arg[[1]]))
-  if (!identical(top_script, "16_plot_supplementary.R")) return(FALSE)
-
-  call_text <- vapply(
-    sys.calls(),
-    function(cl) paste(deparse(cl, width.cutoff = 500L), collapse = " "),
-    character(1)
-  )
-  any(vapply(
-    ms_main_plot_scripts(include_implementations = TRUE),
-    function(script) any(grepl(script, call_text, fixed = TRUE)),
-    logical(1)
-  ))
+  identical(Sys.getenv("MS_PLOT_PREP_ONLY", unset = "0"), "1")
 }
 
 ms_plot_require_files <- function(paths, artifact = "plot input") {
@@ -111,9 +98,9 @@ ms_plot_write_manifest <- function(path, figure_rows) {
   if (ms_plot_prep_only()) return(invisible(path))
 
   figure_rows <- tibble::as_tibble(figure_rows)
-  # Rows arriving from a plotting implementation use that implementation's
-  # legacy identity. Convert exactly once on entry; a stored manifest is already
-  # canonical/current and must never be renumbered a second time.
+  # Mature RQ2/RQ3 plotting code may still emit a pre-insertion figure identity.
+  # Convert exactly once on entry; a stored manifest is already canonical/current
+  # and must never be renumbered a second time.
   if ("figure" %in% names(figure_rows)) {
     figure_rows$figure <- ms_main_figure_from_legacy_id(figure_rows$figure)
   }
@@ -129,10 +116,10 @@ ms_plot_write_manifest <- function(path, figure_rows) {
     path
   }
 
-  # Later figure/supplementary writes may update the same per-RQ manifest. Keep
-  # earlier canonical main-figure rows only when their PNG still exists; the
-  # downstream runner clears results/figures first, so stale main figures cannot
-  # survive a complete rerun.
+  # Multiple main-figure writes may update the same per-RQ manifest. Keep earlier
+  # canonical main-figure rows only when their PNG still exists; the downstream
+  # runner clears results/figures first, so stale main figures cannot survive a
+  # complete rerun.
   if (file.exists(manifest_path) && "figure" %in% names(figure_rows)) {
     previous <- suppressMessages(readr::read_csv(manifest_path, show_col_types = FALSE, progress = FALSE))
     if ("figure" %in% names(previous)) {
@@ -166,11 +153,9 @@ ms_plot_write_manifest <- function(path, figure_rows) {
 }
 
 ms_plot_apply_current_crossrefs <- function(current_id, caller_env) {
-  # The pre-insertion RQ3 Fig. 4 implementation points its tolerance guides to
-  # the then-current Fig. 5. After insertion of the RQ1 Fig. 2 that destination
-  # is Fig. 6. Correct only the visible cross-reference; data and geometry are
-  # untouched. This compatibility correction can disappear when the legacy
-  # implementation is eventually retired.
+  # The pre-insertion RQ3 Fig. 4 code points its tolerance guides to the then-current
+  # Fig. 5. After insertion of the RQ1 Fig. 2 that destination is Fig. 6. Correct
+  # only the visible cross-reference; data and geometry are untouched.
   if (identical(current_id, "Fig5_RQ3") &&
       is.environment(caller_env) && exists("p4c", envir = caller_env, inherits = FALSE)) {
     p4c <- get("p4c", envir = caller_env, inherits = FALSE)
@@ -188,8 +173,8 @@ ms_plot_save <- function(plot, path, width, height,
                          dpi = if (exists("MS_RASTER_DPI", inherits = TRUE)) MS_RASTER_DPI else 600) {
   if (ms_plot_prep_only()) return(invisible(path))
 
-  # Main plotting implementations may still request their historical filename.
-  # Convert that request once to the current public filename before any export.
+  # Mature plotting code may still request its pre-insertion filename. Convert
+  # that request once to the current public filename before any export.
   resolved_name <- ms_main_figure_filename_from_legacy(basename(path))
   if (!identical(resolved_name, basename(path))) path <- file.path(dirname(path), resolved_name)
   ext <- tolower(tools::file_ext(path))
@@ -216,9 +201,9 @@ ms_plot_save <- function(plot, path, width, height,
     }
   }
 
-  # Refinement helpers retain the component names of their mature legacy
-  # implementations. Route by legacy identity rather than hard-coding the
-  # current manuscript number in several places.
+  # Refinement helpers retain component names from the pre-insertion figure
+  # numbering. Route by legacy identity rather than duplicate a second dispatch
+  # table here.
   if (identical(legacy_id, "Fig2_RQ2") &&
       exists("ms_fig2_refine_main", mode = "function")) {
     refined <- ms_fig2_refine_main(caller_env)
@@ -257,8 +242,8 @@ ms_plot_save <- function(plot, path, width, height,
 
   if (exists("ms_polish_main_figure", mode = "function")) {
     # figure_polish.R intentionally retains legacy component identities. Passing
-    # the registry-derived legacy filename preserves the exact mature layout
-    # without another current-number dispatch table here.
+    # the registry-derived legacy filename preserves the mature layout without
+    # another current-number dispatch table here.
     polish_path <- file.path(dirname(path), paste0(legacy_id, ".png"))
     polished <- ms_polish_main_figure(plot, polish_path, caller_env, width, height)
     if (is.list(polished) && !is.null(polished$plot)) plot <- polished$plot
