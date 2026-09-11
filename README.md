@@ -81,16 +81,13 @@ Rscript scripts/13b_plot_fig4.R
 Rscript scripts/14_rq3_analysis.R
 Rscript scripts/15a_plot_fig5.R
 Rscript scripts/15b_plot_fig6.R
-
-# Supplementary figures
-Rscript scripts/16_plot_supplementary.R
 ```
 
 RQ1-RQ3 remain the canonical scientific analysis sources. The inferential-preservation extension is an RQ1 downstream-consequence layer rather than a new research question. It uses 52 participant-day light representations and six day-level outcomes spanning **Sleep** (sleep quality, awakenings, awake duration), **Alertness** (daily KSS) and **Affect** (daily positive and negative MoodZoom composites), with exactly eight single-axis contrasts against eye/MEDI/10 s: chest, wrist, LIGHT, and 20/30/40/60/120 s. Sleep outcomes pair exposure day D with the following-morning diary; repeated current-conditions EMA responses are harmonized to nominal 11/14/17/20 h slots and summarized to same-day alertness/affect phenotypes. The analysis is descriptive association preservation rather than a temporally resolved causal health-effect model.
 
 The active Fig. 2 artifact is `results/rq1/inference/rq1_inferential_preservation_domains_anchor8.rds`. Candidate/reference exposure values and their pair-specific support are read directly from the frozen RQ1 pairwise artifact; the main propagation analysis links the already-frozen RQ1 distortion to downstream association displacement. Reference and candidate associations use identical participant-day support, participant fixed effects and paired site-stratified participant bootstrap resampling. Eye/MEDI/10 s remains an empirical high-information anchor, not biological truth.
 
-Main-figure identity is centralized in `scripts/utils/figure_registry.R`. The public Fig. 1–6 IDs and canonical numbered entrypoints live there once; the mature RQ2/RQ3 implementation filenames may retain their pre-insertion numbers internally. `scripts/utils/plot_contracts.R` converts only implementation-emitted legacy identities to current output identities and never renumbers an already-written current manifest. Existing historical `fig2_*`/`fig3_*`/`fig4_*`/`fig5_*` audit CSV filenames are retained for output compatibility.
+Main-figure identity is centralized in `scripts/utils/figure_registry.R`. The public Fig. 1–6 IDs and their canonical plotting entrypoints live there once. Each main figure now has exactly one plotting script. The registry retains the pre-insertion legacy figure IDs only where mature refinement/output code still needs compatibility mapping; there is no separate wrapper/implementation file layer. `scripts/utils/plot_contracts.R` converts legacy output identities to current output identities exactly once and never renumbers an already-written current manifest. Existing historical `fig2_*`/`fig3_*`/`fig4_*`/`fig5_*` audit CSV filenames are retained for output compatibility.
 
 RQ1 keeps concrete nested duration-window comparisons in its canonical pairwise artifact but projects them to generic 1–6 day comparison types before pooled summaries and bootstrap inference. The RQ2 entrypoint contains the streamed conditional analysis directly and, in the same R process, adds the layered contextual models. Those models reuse existing ERA5 fields from `unit_context` and harmonized MeLiDos light-exposure, exercise and sleep diaries; they do not introduce an alternate core/weather preprocessing path.
 

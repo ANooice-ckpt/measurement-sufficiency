@@ -34,7 +34,7 @@ does not enter the primary figures.
 
 ## Plot-script architecture
 
-Each main-text figure has one canonical numbered plotting entrypoint:
+Each main-text figure has exactly one canonical plotting script:
 
 - `scripts/11_plot_fig1.R` → Fig. 1
 - `scripts/11b_plot_fig2.R` → Fig. 2
@@ -43,42 +43,20 @@ Each main-text figure has one canonical numbered plotting entrypoint:
 - `scripts/15a_plot_fig5.R` → Fig. 5
 - `scripts/15b_plot_fig6.R` → Fig. 6
 
-Main-figure identity is defined once in `scripts/utils/figure_registry.R`. For
-each figure the registry records its current manuscript/output ID, canonical
-entrypoint and implementation source. RQ2/RQ3 implementations predate insertion
-of the RQ1 inferential-preservation Fig. 2, so their internal figure IDs remain:
+Main-figure identity is defined once in `scripts/utils/figure_registry.R`. The
+registry records the current manuscript/output ID and canonical script. RQ2/RQ3
+plotting code still contains several pre-insertion figure IDs and component names
+internally because the RQ1 inferential-preservation Fig. 2 was inserted after
+those figures matured. `scripts/utils/plot_contracts.R` therefore retains an
+explicit legacy-ID → current-ID mapping at the output boundary. This mapping is
+for filenames, manifests and mature refinement/polish helpers only; there is no
+second implementation script or wrapper layer.
 
-- `scripts/13a_plot_fig2.R`
-- `scripts/13b_plot_fig3.R`
-- `scripts/15a_plot_fig4.R`
-- `scripts/15b_plot_fig5.R`
-
-The numbered entrypoints do not duplicate this mapping; they request their
-implementation from the registry. `scripts/utils/plot_contracts.R` converts an
-ID emitted by a legacy implementation to the current public ID exactly once at
-save/manifest-write time. The reverse current → legacy conversion is used only
-to select the mature refinement/polish logic. These directions are deliberately
-separate because a current ID can equal the legacy ID of another figure (for
-example current `Fig3_RQ2` was also the pre-insertion ID of current Fig. 4).
-Persisted manifests therefore contain current IDs and are never renumbered a
-second time.
-
-All active supplementary drawing code remains centralized in:
-
-- `scripts/16_plot_supplementary.R` → `FigS_*` outputs from RQ1–RQ3
-
-The historical RQ1 inference drawing block still present in that file reads only
-the retired v1 artifact path `rq1_inferential_preservation.rds`. The current
-v3 analysis writes `rq1_inferential_preservation_domains_anchor8.rds` and removes
-both the v1 path and the intermediate sleep-only `rq1_inferential_preservation_anchor8.rds`,
-so active inferential-preservation plotting belongs exclusively to `11b_plot_fig2.R`.
-
-The supplementary script sources the mature RQ2/RQ3 implementations inside
-RQ-specific local environments to reconstruct frozen display objects.
-`scripts/utils/plot_contracts.R` detects this prep-only sourcing path from the
-registry and suppresses main-figure saves and main-only manifest writes while
-those sources are on the call stack. Therefore running
-`16_plot_supplementary.R` does not regenerate or overwrite Fig. 1–6.
+Persisted manifests contain current IDs and are never renumbered a second time.
+The previously duplicated pre-insertion scripts (`13a_plot_fig2.R`,
+`13b_plot_fig3.R`, `15a_plot_fig4.R`, `15b_plot_fig5.R`) are retired. The former
+`scripts/16_plot_supplementary.R` entrypoint is also retired and is not part of
+the runner or plot-contract dispatch.
 
 ## Main-figure visual composition contract
 
@@ -99,9 +77,9 @@ Across Fig. 1–6:
 
 Fig. 1 retains its established preservation geometry. Fig. 2 intentionally uses
 an asymmetric information-dense layout: a tall association landscape on the left
-and two downstream-consequence panels on the right. Figs. 3–6 retain the mature
-layouts of the pre-insertion RQ2/RQ3 figures through their historical refinement
-and polish functions; numbering alone must not degrade those layouts.
+and two downstream-consequence panels on the right. Figs. 3–6 retain their mature
+layouts and refinement/polish helpers; canonical file numbering is now identical
+to manuscript numbering.
 
 ## Frozen inputs and output locations
 
@@ -125,9 +103,9 @@ folders and written at the corresponding RQ root:
 
 The downstream runner clears `results/figures/` before plotting so obsolete
 figure files cannot survive a complete downstream rerun. Existing audit/display
-CSV names inside mature RQ2/RQ3 implementations retain their historical `fig2_`,
-`fig3_`, `fig4_` and `fig5_` prefixes for output compatibility; those filenames
-are implementation artifacts, not current manuscript figure identities.
+CSV names inside mature RQ2/RQ3 code retain their historical `fig2_`, `fig3_`,
+`fig4_` and `fig5_` prefixes for output compatibility; those filenames are
+internal artifacts, not current manuscript figure identities.
 
 Every RQ artifact version incorporates the current analysis-design identifier.
 Ordered-axis levels are read or reconstructed from the same frozen design so a
@@ -146,7 +124,7 @@ historical hard-coded temporal lattice cannot silently survive a design change.
   the frozen temporal transitions and 1–6 d duration transitions.
 
 The complete metric-by-pair atlas, pairwise distributions and availability atlas
-remain supplementary.
+remain secondary outputs rather than main-figure panels.
 
 ## Figure 2 — RQ1 downstream inferential preservation
 
@@ -205,7 +183,7 @@ observation rather than two unrelated timing coefficients.
 
 ## Figure 3 — RQ2 contextual dependence
 
-`13a_plot_fig3.R` is the canonical numbered entrypoint. It presents:
+`13a_plot_fig3.R` presents:
 
 - Fig. 3a: a contextual predictor atlas spanning the prespecified external
   opportunity, micro-environment, behaviour and exposure-state predictors,
@@ -218,11 +196,11 @@ observation rather than two unrelated timing coefficients.
   CV R².
 
 The complete conditional geometry atlas, transition state-spread diagnostic and
-incremental grouped-CV information diagnostic remain supplementary.
+incremental grouped-CV information diagnostic remain secondary outputs.
 
 ## Figure 4 — RQ2 cross-dimensional non-additivity
 
-`13b_plot_fig4.R` is the canonical numbered entrypoint. It presents:
+`13b_plot_fig4.R` presents:
 
 - Fig. 4a: class-level distributions of metric-level non-additivity magnitude,
   using the display projection `Q_mp = median_t(Q_mpt)`;
@@ -232,12 +210,12 @@ incremental grouped-CV information diagnostic remain supplementary.
   `C = median_t(R_mpt / Q_mpt)` across dimension pairs.
 
 The complete transition-level gamma atlas and model-validation diagnostics are
-supplementary. Duration does not enter the primary RQ2 gamma interaction set;
+secondary outputs. Duration does not enter the primary RQ2 gamma interaction set;
 it enters multidimensional stability directly in RQ3.
 
 ## Figure 5 — RQ3 single-dimension sufficiency
 
-`15a_plot_fig5.R` is the canonical numbered entrypoint. It presents:
+`15a_plot_fig5.R` presents:
 
 - Fig. 5a: tolerance-dependent 100% stacked distributions of the minimum
   sufficient measurement state for the overall metric set and each metric
@@ -250,12 +228,12 @@ it enters multidimensional stability directly in RQ3.
   vertical tolerance guides refer to the joint tolerance slices in Fig. 6.
 
 The detailed adjacent-transition convergence and metric-level sufficiency
-trajectories remain supplementary.
+trajectories remain secondary outputs.
 
 ## Figure 6 — RQ3 joint temporal × duration sufficiency geometry
 
-`15b_plot_fig6.R` is the canonical numbered entrypoint. It presents the frozen
-6 × 6 temporal-resolution × duration candidate lattice:
+`15b_plot_fig6.R` presents the frozen 6 × 6 temporal-resolution × duration
+candidate lattice:
 
 - Fig. 6a: the joint entry-tolerance landscape based on metric-equal pooling of
   resolved `epsilon_entry`, with boundary-unresolved cells marked explicitly;
@@ -283,7 +261,6 @@ Fig. 1 from frozen RQ1
 → RQ3 analysis
 → Fig. 5
 → Fig. 6
-→ all supplementary figures and RQ-specific figure manifests
 ```
 
 `scripts/run_full_server.sh` remains the full raw-data-to-results entrypoint and
@@ -295,5 +272,5 @@ Files under `results/legacy/pre_refactor` are retained for audit only and are
 not valid inputs to current plotting scripts. The old unversioned inference
 artifact `results/rq1/inference/rq1_inferential_preservation.rds` and the
 intermediate sleep-only `rq1_inferential_preservation_anchor8.rds` are retired.
-Historical implementation filenames are internal compatibility details; the
-numbered Fig. 1–6 graph and `figure_registry.R` are canonical.
+Pre-insertion figure IDs may still appear inside mature refinement helpers and
+audit filenames, but there are no duplicate plotting entrypoint files.
