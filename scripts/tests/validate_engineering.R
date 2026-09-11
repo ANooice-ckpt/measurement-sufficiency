@@ -27,6 +27,8 @@ stopifnot(
 )
 
 # Sleep: calendar alignment uses the diary's local zone, not host zone/UTC.
+# Consistent duplicate submissions collapse to one daily value; conflicting
+# duplicate values are excluded for that outcome rather than selected arbitrarily.
 diary <- tibble(
   Id = "001",
   wake = as.POSIXct("2025-04-02 01:00:00", tz = "Europe/Berlin"),
@@ -42,7 +44,27 @@ stopifnot(
   d$outcome_value[d$outcome == "sleep_quality"] == 4,
   d$outcome_value[d$outcome == "awake_duration"] == 12
 )
-expect_error(rq1_sleep_outcomes(bind_rows(diary, diary), "test"))
+d_dup <- rq1_sleep_outcomes(bind_rows(diary, diary), "test")
+stopifnot(
+  nrow(d_dup) == 3L,
+  all(d_dup$outcome_n_records == 2L),
+  all(d_dup$outcome_duplicate_status == "consistent_duplicate_collapsed"),
+  all(is.na(d_dup$outcome_reason)),
+  identical(d_dup$outcome_value, d$outcome_value)
+)
+diary_conflict <- bind_rows(diary, mutate(diary, awakenings = 3))
+d_conflict <- rq1_sleep_outcomes(diary_conflict, "test")
+stopifnot(
+  d_conflict$outcome_reason[d_conflict$outcome == "awakenings"] == "conflicting_duplicate_sleepdiary",
+  is.na(d_conflict$outcome_value[d_conflict$outcome == "awakenings"]),
+  all(is.na(d_conflict$outcome_reason[d_conflict$outcome != "awakenings"]))
+)
+diary_missing_wake <- bind_rows(
+  diary,
+  mutate(diary, wake = as.POSIXct(NA_real_, origin = "1970-01-01", tz = "Europe/Berlin"))
+)
+d_missing_wake <- rq1_sleep_outcomes(diary_missing_wake, "test")
+stopifnot(nrow(d_missing_wake) == 3L, identical(d_missing_wake$outcome_value, d$outcome_value))
 bad <- diary; bad$sleepquality <- "Unexpected"
 expect_error(rq1_sleep_outcomes(bad, "test"))
 
