@@ -546,7 +546,8 @@ pair_e50 <- pair_ecdf |>
 
 # Add only a recovery overlay to panel c. The original RQ3 curves, axes and
 # panel layout remain unchanged. Recovery must come from a completed XGBoost run
-# built on the same frozen RQ1 version, and its raw A must reproduce the RQ3 A.
+# built on the same frozen RQ1 version, and its raw A must reproduce the RQ3 A
+# for matched recovery-eligible metrics.
 resolve_recovery_run <- function() {
   explicit <- Sys.getenv("RQ2_RECOVERY_RUN_DIR", "")
   if (nzchar(explicit)) {
@@ -619,8 +620,6 @@ if (is.character(recovery_run_dir) && length(recovery_run_dir) == 1L && !is.na(r
     )
   expected <- rq3_pair_metric |>
     count(dimension, comparison_pair_id, pair, name = "n_expected")
-  available <- recovery_metric |>
-    count(dimension, comparison_pair_id, name = "n_recovered")
   matched <- inner_join(
     rq3_pair_metric, recovery_metric,
     by = c("dimension", "comparison_pair_id", "metric")
@@ -632,15 +631,11 @@ if (is.character(recovery_run_dir) && length(recovery_run_dir) == 1L && !is.na(r
       raw_agrees = all(abs(A_raw_recovery - A_rq3) <= 1e-7 * (1 + abs(A_rq3))),
       .groups = "drop"
     )
-  valid_pairs <- expected |>
-    left_join(available, by = c("dimension", "comparison_pair_id")) |>
-    left_join(raw_check, by = c("dimension", "comparison_pair_id", "pair")) |>
-    mutate(n_recovered = coalesce(n_recovered, 0L), n_joined = coalesce(n_joined, 0L),
-           raw_agrees = coalesce(raw_agrees, FALSE)) |>
-    filter(n_expected == n_recovered, n_joined == n_expected, raw_agrees)
+  valid_pairs <- raw_check |>
+    filter(n_joined > 0L, raw_agrees)
 
   if (nrow(valid_pairs) < nrow(expected)) {
-    warning("Recovery overlay skipped for pair(s) without complete matched metrics or frozen-A agreement.", call. = FALSE)
+    warning("Recovery overlay skipped for pair(s) without matched recovery metrics or with frozen-A disagreement.", call. = FALSE)
   }
   matched <- matched |>
     semi_join(valid_pairs, by = c("dimension", "comparison_pair_id", "pair"))
@@ -681,7 +676,7 @@ if (is.character(recovery_run_dir) && length(recovery_run_dir) == 1L && !is.na(r
 
 recovery_overlay_used <- nrow(pair_recovered_ecdf) > 0L
 p4c_subtitle <- if (recovery_overlay_used) {
-  "solid/open = raw curve/ε50; dashed/filled = after held-out XGBoost recovery; faint vertical guides = Fig. 5 tolerance slices"
+  "solid/open = raw curve/ε50; dashed/filled = after held-out XGBoost recovery on matched metrics; faint vertical guides = Fig. 5 tolerance slices"
 } else {
   "open points = ε50; faint vertical guides = Fig. 5 tolerance slices"
 }
