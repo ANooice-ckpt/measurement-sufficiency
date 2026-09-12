@@ -53,10 +53,12 @@ fig4_stage_plot <- function(atlas_long, stage_name) {
     filter(learner == "xgboost", stage == stage_name, n_unique_metrics >= 3L,
       comparison_pair_id %in% PAIR_ORDER, metric_class %in% CLASS_ORDER) |>
     mutate(
-      pair = factor(comparison_pair_id, levels = PAIR_ORDER, labels = unname(PAIR_LABELS[PAIR_ORDER])),
+      pair = factor(comparison_pair_id, levels = PAIR_ORDER,
+        labels = unname(PAIR_LABELS[PAIR_ORDER])),
       metric_class_plot = factor(metric_class, levels = rev(CLASS_ORDER),
         labels = unname(CLASS_LABELS[rev(CLASS_ORDER)])),
-      win_label = if_else(is.finite(fraction_improved), sprintf("%.0f%%", 100 * fraction_improved), "")
+      win_label = if_else(is.finite(fraction_improved),
+        sprintf("%.0f%%", 100 * fraction_improved), "")
     )
   if (!nrow(d)) stop("No plot-ready XGBoost cells for stage: ", stage_name, call. = FALSE)
   lim <- max(abs(d$mean_increment), na.rm = TRUE)
@@ -74,15 +76,12 @@ fig4_stage_plot <- function(atlas_long, stage_name) {
     labs(x = NULL, y = NULL, title = unname(STAGE_TITLES[[stage_name]])) +
     theme_ms(base_size = 7.0, legend_position = "right") +
     theme(
-      panel.grid = element_blank(),
-      panel.border = element_blank(),
-      axis.ticks = element_blank(),
+      panel.grid = element_blank(), panel.border = element_blank(), axis.ticks = element_blank(),
       axis.text.x = element_text(angle = 0, hjust = .5, size = 6.3),
       axis.text.y = element_text(size = 6.6),
       plot.title = element_text(size = 7.7, face = "bold", margin = margin(b = 3)),
       legend.title = element_text(size = 6.2), legend.text = element_text(size = 5.8),
-      legend.key.height = grid::unit(9, "mm"),
-      plot.margin = margin(2, 3, 2, 3)
+      legend.key.height = grid::unit(9, "mm"), plot.margin = margin(2, 3, 2, 3)
     )
 }
 
@@ -113,33 +112,35 @@ fig4_decoder_plot <- function(by_dimension) {
       title = "Linear and nonlinear decoders separate information availability from model flexibility") +
     theme_ms_axes(base_size = 7.0, legend_position = "bottom") +
     theme(
-      strip.text = element_text(size = 6.8),
-      axis.text = element_text(size = 6.2),
-      plot.title = element_text(size = 7.6),
-      legend.text = element_text(size = 6.2),
+      strip.text = element_text(size = 6.8), axis.text = element_text(size = 6.2),
+      plot.title = element_text(size = 7.6), legend.text = element_text(size = 6.2),
       panel.spacing.x = grid::unit(5, "mm")
     )
 }
 
 plot_recovery_ablation <- function(run_dir = NULL) {
   ablation_dir <- recovery_ablation_summarize(run_dir)
-  run_dir <- dirname(ablation_dir)
   atlas_long <- read_csv(file.path(ablation_dir, "recovery_information_atlas_long.csv"),
     show_col_types = FALSE, progress = FALSE)
   by_dimension <- read_csv(file.path(ablation_dir, "recovery_ablation_by_dimension.csv"),
     show_col_types = FALSE, progress = FALSE)
 
   panels <- lapply(names(STAGE_TITLES), function(stage) fig4_stage_plot(atlas_long, stage))
-  main <- plot_grid(plotlist = panels, ncol = 1, align = "v", axis = "lr", rel_heights = c(1, 1, 1))
+  main <- plot_grid(plotlist = panels, ncol = 1, align = "v", axis = "lr",
+    rel_heights = c(1, 1, 1))
   caption <- ggdraw() + draw_label(
     "Cell text = percentage of metrics improved at that information step. Cells with <3 metrics are omitted.\nColour bars are stage-specific because self-calibration and auxiliary-information gains differ strongly in scale; compare numeric ΔA scales rather than hue intensity across panels.",
     x = 0, hjust = 0, vjust = .5, size = 6.0, fontfamily = MS_FONT, colour = "#404447"
   )
   main <- plot_grid(main, caption, ncol = 1, rel_heights = c(1, .085))
-
   decoder <- fig4_decoder_plot(by_dimension)
-  fig_dir <- file.path(ablation_dir, "figures")
+
+  # Keep run-specific analysis tables under the provenance path, but write graphics
+  # to a short stable path so Windows PDF devices do not hit legacy MAX_PATH limits.
+  fig_dir <- file.path("results", "rq2", "figures", "recovery_ablation")
   dir.create(fig_dir, recursive = TRUE, showWarnings = FALSE)
+  if (!dir.exists(fig_dir)) stop("Could not create figure output directory: ", fig_dir, call. = FALSE)
+
   ggsave(file.path(fig_dir, "Fig4_recovery_information_ablation.pdf"), main,
     width = 174, height = 190, units = "mm")
   ggsave(file.path(fig_dir, "Fig4_recovery_information_ablation.png"), main,
@@ -150,13 +151,15 @@ plot_recovery_ablation <- function(run_dir = NULL) {
     width = 174, height = 62, units = "mm", dpi = MS_RASTER_DPI)
   write_csv(atlas_long |> filter(learner == "xgboost"),
     file.path(fig_dir, "Fig4_recovery_information_ablation_source.csv"))
-  write_csv(by_dimension, file.path(fig_dir, "FigS_recovery_decoder_capacity_source.csv"))
+  write_csv(by_dimension,
+    file.path(fig_dir, "FigS_recovery_decoder_capacity_source.csv"))
   message("Recovery ablation figures: ", fig_dir)
   invisible(fig_dir)
 }
 
 if (sys.nframe() == 0L) {
   args <- commandArgs(trailingOnly = TRUE)
-  if (length(args) > 1L) stop("Usage: Rscript scripts/13c_plot_fig4_recovery.R [recovery_run_dir]", call. = FALSE)
+  if (length(args) > 1L)
+    stop("Usage: Rscript scripts/13c_plot_fig4_recovery.R [recovery_run_dir]", call. = FALSE)
   plot_recovery_ablation(if (length(args)) args[[1]] else NULL)
 }
