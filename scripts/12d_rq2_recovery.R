@@ -17,12 +17,14 @@ recovery_signature_predictors <- function() paste0("sl_", c("mean", "median", "q
   "hour_fraction_le10", "adjacent_abs_change", "lag1_correlation"))
 recovery_temporal_predictors <- function() unlist(lapply(c("external", "micro", "behaviour"),
   function(f) paste0("ct_", f, "_", names(recovery_dayparts()))), use.names = FALSE)
+recovery_context_predictors <- function() c(recovery_predictors(), recovery_temporal_predictors())
 recovery_layer_predictors <- function(state) {
   switch(state, calibration = character(), signature = recovery_signature_predictors(),
-    context = c(recovery_signature_predictors(), recovery_predictors(), recovery_temporal_predictors()),
+    context_only = recovery_context_predictors(),
+    context = c(recovery_signature_predictors(), recovery_context_predictors()),
     stop("Unknown recovery information layer"))
 }
-recovery_states <- function() c("raw", "calibration", "signature", "context")
+recovery_states <- function() c("raw", "calibration", "signature", "context_only", "context")
 
 # Compact, configuration-local hourly basis ONLY; never the 52 target-metric vector.
 # isiv_hXX is already mean(log10(observed low-channel light + 0.1)) in core.
@@ -451,9 +453,9 @@ recovery_pairs <- function(inputs) {
 # Imputation, missingness indicators, variance screening and scaling use training only.
 # The only measurement predictors are this task's Y_L (or its sin/cos).
 recovery_design <- function(tr, te, context, circular, screen = TRUE) {
-  allowed <- lapply(c("calibration", "signature", "context"), recovery_layer_predictors)
+  allowed <- lapply(c("calibration", "signature", "context_only", "context"), recovery_layer_predictors)
   if (!any(vapply(allowed, identical, logical(1), context)))
-    stop("Predictors must match one of the three prespecified information layers")
+    stop("Predictors must match one of the four prespecified fitted information states")
   basis <- function(d) {
     if (circular) data.frame(low_sin = sin(d$candidate_value * 2*pi/86400),
       low_cos = cos(d$candidate_value * 2*pi/86400)) else data.frame(low = d$candidate_value)
@@ -619,7 +621,7 @@ recovery_worker_exports <- function() c("recovery_task", "recovery_fit", "recove
   "recovery_design", "recovery_delta", "recovery_predictors", "recovery_atomic", "rq2_model_helpers",
   "recovery_target", "recovery_inner", "recovery_boost", "recovery_xgb_config",
   "recovery_layer_predictors", "recovery_signature_predictors", "recovery_temporal_predictors",
-  "recovery_states", "recovery_dayparts", "rq2_context_external_predictors",
+  "recovery_context_predictors", "recovery_states", "recovery_dayparts", "rq2_context_external_predictors",
   "rq2_context_micro_predictors", "rq2_context_behaviour_predictors")
 
 # Bounded real-data end-to-end smoke: one well-supported linear and circular
@@ -670,7 +672,7 @@ recovery_smoke <- function(inputs) {
     obj <- readRDS(r$path)
     if (!identical(obj$status, "complete")) stop("Real smoke task failed: ", if (is.null(obj$error)) obj$status else obj$error)
     counts <- table(obj$predictions$state)
-    stopifnot(length(counts) == 4L, length(unique(counts)) == 1L)
+    stopifnot(length(counts) == length(recovery_states()), length(unique(counts)) == 1L)
     models <- obj$models
     for (model in models) {
       allowed <- c("intercept", "low", "low_sin", "low_cos", recovery_layer_predictors(model$state),
@@ -688,7 +690,8 @@ recovery_smoke <- function(inputs) {
   }))
   stopifnot(identical(cache_md5, tools::md5sum(cache_path)))
   print(report)
-  message("PASS real smoke: ", nrow(report), " tasks; ", workers, " workers; all three layers, nested CV, XGBoost/ridge and checkpoint reuse; ",
+  message("PASS real smoke: ", nrow(report), " tasks; ", workers,
+    " workers; factorial context branch, nested CV, XGBoost/ridge and checkpoint reuse; ",
     round(as.numeric(difftime(Sys.time(), started, units = "secs")), 1), " s")
   invisible(report)
 }
@@ -713,11 +716,12 @@ recovery_run <- function(inputs) {
     "scripts/utils/parallel_runtime.R", "scripts/utils/analysis_design.R", "scripts/utils/artifact_validation.R",
     "scripts/12c_rq2_context_models.R", "scripts/utils/rq_context.R", "scripts/utils/melidos_io.R",
     "scripts/utils/core_context.R", "scripts/utils/core_artifacts.R", "external/LightLogR/R/normalise.R")
-  provenance <- list(recovery_version = "rq2_recovery_v3_low_signature_temporal_context", rq1_analysis_version = inputs$version,
+  provenance <- list(recovery_version = "rq2_recovery_v4_factorial_context", rq1_analysis_version = inputs$version,
     core_artifact_version = inputs$core, analysis_design_id = ms_analysis_design_id(),
     input_md5 = tools::md5sum(inputs$paths), code_md5 = tools::md5sum(code),
     seed = seed, folds = folds, lambda = lambda, G_floor = floor, predictors = recovery_predictors(),
     signature_predictors = recovery_signature_predictors(), temporal_predictors = recovery_temporal_predictors(),
+    fitted_states = recovery_states(), factorial_context_state = "Y_L plus daily/daypart context without low-measurement signature",
     temporal_source_manifest = inputs$temporal_sources, dayparts = recovery_dayparts(),
     learners = c(primary = "xgboost", sensitivity = "ridge"), xgb_config = recovery_xgb_config(),
     inner_validation = "20% of outer-training participants; shared split/protocol across predictor states; full-training refit",
@@ -725,7 +729,7 @@ recovery_run <- function(inputs) {
       function(p) as.character(utils::packageVersion(p))),
     context_provenance_limit = "Legacy frozen context CSV has no upstream version; content fingerprint and producer code audited; no regeneration",
     scale_role = "Frozen RQ1 SD used ONLY for scoring; never for fitting/tuning",
-    model = "Identity-anchored residual correction; primary XGBoost with nested early stopping; ridge sensitivity; no target-state predictors")
+    model = "Identity-anchored residual correction; factorial context-only branch; primary XGBoost with nested early stopping; ridge sensitivity; no target-state predictors")
   run_id <- recovery_hash(provenance)
   out <- file.path("results/rq2/recovery", inputs$version, run_id)
   dir.create(out, recursive = TRUE, showWarnings = FALSE)
@@ -796,7 +800,7 @@ recovery_run <- function(inputs) {
       error = if (is.null(obj$error)) NA_character_ else obj$error,
       reused = r$reused, checkpoint = r$path, elapsed_seconds = obj$elapsed_seconds))
     if (!nrow(obj$predictions)) {
-      state_rows[[r$index]] <- bind_cols(catalog[rep(r$index, 4L), ], tibble(
+      state_rows[[r$index]] <- bind_cols(catalog[rep(r$index, length(recovery_states())), ], tibble(
         state = recovery_states(), n_test = 0L, n_test_participants = 0L,
         MAE_native = NA_real_, RMSE_native = NA_real_, A = NA_real_, B = NA_real_,
         standardized_RMSE = NA_real_, n_circular_fallback = 0L, status = obj$status))
@@ -829,19 +833,33 @@ recovery_summaries <- function(states, out, floor) {
   raw <- states |> filter(state == "raw") |> select(task_index, A_raw = A)
   cal <- states |> filter(state == "calibration") |> select(task_index, A_calibration = A)
   sig <- states |> filter(state == "signature") |> select(task_index, A_signature = A)
+  ctx0 <- states |> filter(state == "context_only") |> select(task_index, A_context_only = A)
   comparison <- states |> filter(state != "raw") |>
-    left_join(raw, by = "task_index") |> left_join(cal, by = "task_index") |> left_join(sig, by = "task_index") |>
+    left_join(raw, by = "task_index") |> left_join(cal, by = "task_index") |>
+    left_join(sig, by = "task_index") |> left_join(ctx0, by = "task_index") |>
     mutate(delta_A = A_raw - A, G = if_else(A_raw > floor, 1 - A / A_raw, NA_real_),
       G_denominator_small = A_raw <= floor,
       signature_increment = if_else(state == "signature", A_calibration - A, NA_real_),
+      context_total_increment = if_else(state == "context_only", A_calibration - A, NA_real_),
       context_increment = if_else(state == "context", A_signature - A, NA_real_),
-      context_vs_calibration = if_else(state == "context", A_calibration - A, NA_real_))
+      signature_after_context_increment = if_else(state == "context", A_context_only - A, NA_real_),
+      context_vs_calibration = if_else(state == "context", A_calibration - A, NA_real_),
+      context_overlap_or_interaction = if_else(state == "context",
+        (A_calibration - A_context_only) - (A_signature - A), NA_real_))
   decomposition <- comparison |> filter(state == "context") |>
     transmute(task_index, learner, comparison_pair_id, metric, raw_loss = A_raw,
-      calibration_gain = A_raw - A_calibration, signature_gain = A_calibration - A_signature,
+      calibration_gain = A_raw - A_calibration,
+      signature_gain = A_calibration - A_signature,
+      context_total_gain = A_calibration - A_context_only,
+      context_unique_after_signature = A_signature - A,
+      signature_unique_after_context = A_context_only - A,
+      context_shared_or_interaction = (A_calibration - A_context_only) - (A_signature - A),
       self_recoverable_loss = A_raw - A_signature, context_recoverable_loss = A_signature - A,
-      unrecovered_residual = A,
-      reconstruction_error = A_raw - ((A_raw - A_signature) + (A_signature - A) + A))
+      full_auxiliary_gain = A_calibration - A, unrecovered_residual = A,
+      reconstruction_error_signature_first = A_raw - ((A_raw - A_calibration) +
+        (A_calibration - A_signature) + (A_signature - A) + A),
+      reconstruction_error_context_first = A_raw - ((A_raw - A_calibration) +
+        (A_calibration - A_context_only) + (A_context_only - A) + A))
   readr::write_csv(decomposition, file.path(out, "loss_decomposition.csv"))
   # Descriptive raw-magnitude adjustment, not evidence of statistical independence.
   comparison <- comparison |> group_by(learner, comparison_pair_id, state) |> group_modify(function(d, key) {
@@ -858,8 +876,10 @@ recovery_summaries <- function(states, out, floor) {
     fraction_improved = mean(delta_A > 0), median_delta_A = median(delta_A),
     median_G = if (any(is.finite(G))) median(G[is.finite(G)]) else NA_real_,
     fraction_context_better_than_signature = if (first(state) == "context") mean(context_increment > 0) else NA_real_,
+    fraction_context_only_better_than_calibration = if (first(state) == "context_only") mean(context_total_increment > 0) else NA_real_,
     fraction_signature_better_than_calibration = if (first(state) == "signature") mean(signature_increment > 0) else NA_real_,
     median_context_increment = if (first(state) == "context") median(context_increment) else NA_real_,
+    median_context_total_increment = if (first(state) == "context_only") median(context_total_increment) else NA_real_,
     raw_recovered_spearman = if (sd(A_raw) > 0 && sd(A) > 0) cor(A_raw, A, method = "spearman") else NA_real_,
     adjusted_delta_IQR = if (any(is.finite(delta_A_raw_adjusted))) IQR(delta_A_raw_adjusted, na.rm = TRUE) else NA_real_,
     .groups = "drop")
@@ -914,26 +934,32 @@ ablation_metric_decomposition <- function(comparison) {
   ablation_require(comparison,
     c("learner", "task_index", "dimension", "comparison_pair_id", "candidate_config",
       "support_id", "metric", "metric_class", "metric_geometry", "state", "A",
-      "A_raw", "A_calibration", "A_signature"), "recovery_comparison.csv")
+      "A_raw", "A_calibration", "A_signature", "A_context_only"), "recovery_comparison.csv")
   out <- comparison |> filter(state == "context") |>
     transmute(learner, task_index, dimension, comparison_pair_id, candidate_config, support_id,
       metric, metric_class, metric_geometry,
       A_raw = as.numeric(A_raw), A_calibration = as.numeric(A_calibration),
-      A_signature = as.numeric(A_signature), A_context = as.numeric(A),
+      A_signature = as.numeric(A_signature), A_context_only = as.numeric(A_context_only), A_context = as.numeric(A),
       calibration_increment = A_raw - A_calibration,
       signature_increment = A_calibration - A_signature,
+      context_total_increment = A_calibration - A_context_only,
       context_increment = A_signature - A_context,
+      signature_after_context_increment = A_context_only - A_context,
+      context_shared_or_interaction = context_total_increment - context_increment,
       total_increment = A_raw - A_context, unrecovered_residual = A_context)
   if (!nrow(out)) stop("No context-state rows in recovery_comparison.csv", call. = FALSE)
   if (any(!is.finite(out$A_raw) | !is.finite(out$A_calibration) |
-          !is.finite(out$A_signature) | !is.finite(out$A_context)))
+          !is.finite(out$A_signature) | !is.finite(out$A_context_only) | !is.finite(out$A_context)))
     stop("Non-finite stage A in completed recovery comparison", call. = FALSE)
   key <- c("learner", "task_index")
   if (nrow(out) != nrow(distinct(out, across(all_of(key)))))
     stop("Context rows are not unique by learner/task_index", call. = FALSE)
-  reconstruction <- with(out,
+  reconstruction_signature_first <- with(out,
     A_raw - (calibration_increment + signature_increment + context_increment + unrecovered_residual))
-  if (max(abs(reconstruction)) > 1e-10) stop("Stage decomposition does not reconstruct raw A", call. = FALSE)
+  reconstruction_context_first <- with(out,
+    A_raw - (calibration_increment + context_total_increment + signature_after_context_increment + unrecovered_residual))
+  if (max(abs(c(reconstruction_signature_first, reconstruction_context_first))) > 1e-10)
+    stop("Factorial stage decomposition does not reconstruct raw A", call. = FALSE)
   out
 }
 ablation_dominant_layer <- function(calibration, signature, context) {
@@ -946,26 +972,38 @@ ablation_group_summary <- function(metric_level, groups) {
   metric_level |> group_by(across(all_of(groups))) |>
     summarise(n_tasks = n(), n_unique_metrics = n_distinct(metric),
       mean_A_raw = ablation_safe_mean(A_raw), mean_A_calibration = ablation_safe_mean(A_calibration),
-      mean_A_signature = ablation_safe_mean(A_signature), mean_A_context = ablation_safe_mean(A_context),
+      mean_A_signature = ablation_safe_mean(A_signature), mean_A_context_only = ablation_safe_mean(A_context_only),
+      mean_A_context = ablation_safe_mean(A_context),
       median_A_raw = ablation_safe_median(A_raw), median_A_calibration = ablation_safe_median(A_calibration),
-      median_A_signature = ablation_safe_median(A_signature), median_A_context = ablation_safe_median(A_context),
+      median_A_signature = ablation_safe_median(A_signature), median_A_context_only = ablation_safe_median(A_context_only),
+      median_A_context = ablation_safe_median(A_context),
       mean_calibration_increment = ablation_safe_mean(calibration_increment),
       mean_signature_increment = ablation_safe_mean(signature_increment),
+      mean_context_total_increment = ablation_safe_mean(context_total_increment),
       mean_context_increment = ablation_safe_mean(context_increment),
+      mean_signature_after_context_increment = ablation_safe_mean(signature_after_context_increment),
+      mean_context_shared_or_interaction = ablation_safe_mean(context_shared_or_interaction),
       mean_total_increment = ablation_safe_mean(total_increment),
       median_calibration_increment = ablation_safe_median(calibration_increment),
       median_signature_increment = ablation_safe_median(signature_increment),
+      median_context_total_increment = ablation_safe_median(context_total_increment),
       median_context_increment = ablation_safe_median(context_increment),
+      median_signature_after_context_increment = ablation_safe_median(signature_after_context_increment),
+      median_context_shared_or_interaction = ablation_safe_median(context_shared_or_interaction),
       median_total_increment = ablation_safe_median(total_increment),
       q25_calibration_increment = ablation_safe_quantile(calibration_increment, .25),
       q75_calibration_increment = ablation_safe_quantile(calibration_increment, .75),
       q25_signature_increment = ablation_safe_quantile(signature_increment, .25),
       q75_signature_increment = ablation_safe_quantile(signature_increment, .75),
+      q25_context_total_increment = ablation_safe_quantile(context_total_increment, .25),
+      q75_context_total_increment = ablation_safe_quantile(context_total_increment, .75),
       q25_context_increment = ablation_safe_quantile(context_increment, .25),
       q75_context_increment = ablation_safe_quantile(context_increment, .75),
       fraction_calibration_improved = ablation_fraction_positive(calibration_increment),
       fraction_signature_improved = ablation_fraction_positive(signature_increment),
+      fraction_context_total_improved = ablation_fraction_positive(context_total_increment),
       fraction_context_improved = ablation_fraction_positive(context_increment),
+      fraction_signature_after_context_improved = ablation_fraction_positive(signature_after_context_increment),
       fraction_final_improved = ablation_fraction_positive(total_increment), .groups = "drop") |>
     rowwise() |> mutate(dominant_recovery_layer = ablation_dominant_layer(
       mean_calibration_increment, mean_signature_increment, mean_context_increment),
@@ -991,8 +1029,9 @@ ablation_atlas_long <- function(atlas) {
 ablation_decoder_capacity <- function(atlas) {
   keys <- c("dimension", "comparison_pair_id", "metric_class")
   keep <- c(keys, "n_tasks", "n_unique_metrics", "dominant_recovery_layer",
-    "mean_calibration_increment", "mean_signature_increment", "mean_context_increment",
-    "fraction_calibration_improved", "fraction_signature_improved", "fraction_context_improved")
+    "mean_calibration_increment", "mean_signature_increment", "mean_context_total_increment", "mean_context_increment",
+    "fraction_calibration_improved", "fraction_signature_improved", "fraction_context_total_improved",
+    "fraction_context_improved")
   xgb <- atlas |> filter(learner == "xgboost") |> select(all_of(keep))
   ridge <- atlas |> filter(learner == "ridge") |> select(all_of(keep))
   names(xgb)[!names(xgb) %in% keys] <- paste0("xgb_", names(xgb)[!names(xgb) %in% keys])
@@ -1000,6 +1039,7 @@ ablation_decoder_capacity <- function(atlas) {
   full_join(xgb, ridge, by = keys) |>
     mutate(xgb_minus_ridge_calibration_increment = xgb_mean_calibration_increment - ridge_mean_calibration_increment,
       xgb_minus_ridge_signature_increment = xgb_mean_signature_increment - ridge_mean_signature_increment,
+      xgb_minus_ridge_context_total_increment = xgb_mean_context_total_increment - ridge_mean_context_total_increment,
       xgb_minus_ridge_context_increment = xgb_mean_context_increment - ridge_mean_context_increment,
       dominant_layer_concordant = xgb_dominant_recovery_layer == ridge_dominant_recovery_layer)
 }
@@ -1025,17 +1065,19 @@ recovery_ablation_summarize <- function(run_dir = NULL) {
   readr::write_csv(by_metric_class, file.path(out, "recovery_ablation_by_metric_class.csv"))
   readr::write_csv(overall, file.path(out, "recovery_ablation_overall.csv"))
   readr::write_csv(decoder, file.path(out, "recovery_decoder_capacity_atlas.csv"))
-  readr::write_csv(metric_level |> filter(learner == "xgboost") |> arrange(desc(context_increment)),
+  readr::write_csv(metric_level |> filter(learner == "xgboost") |> arrange(desc(context_total_increment)),
     file.path(out, "context_gain_ranked.csv"))
   message("Recovery information-ablation outputs: ", out)
   message("Primary XGBoost summary by degradation dimension:")
   print(by_dimension |> filter(learner == "xgboost") |>
     select(dimension, n_tasks, mean_calibration_increment, mean_signature_increment,
-      mean_context_increment, fraction_context_improved, mean_A_context))
-  message("Largest XGBoost context-assisted cells (descriptive; no selection was used in fitting):")
-  print(atlas |> filter(learner == "xgboost") |> arrange(desc(mean_context_increment)) |>
+      mean_context_total_increment, mean_context_increment, fraction_context_total_improved,
+      fraction_context_improved, mean_A_context))
+  message("Largest XGBoost context-assisted cells (factorial total context gain; unique-after-signature retained separately):")
+  print(atlas |> filter(learner == "xgboost") |> arrange(desc(mean_context_total_increment)) |>
     select(dimension, comparison_pair_id, metric_class, n_tasks,
-      mean_context_increment, fraction_context_improved) |> slice_head(n = 12L))
+      mean_context_total_increment, mean_context_increment,
+      fraction_context_total_improved, fraction_context_improved) |> slice_head(n = 12L))
   invisible(out)
 }
 
