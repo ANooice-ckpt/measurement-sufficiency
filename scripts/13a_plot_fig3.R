@@ -1,4 +1,6 @@
 # Canonical RQ2 plotting source. All accepted display refinements are consolidated here.
+options(encoding = "UTF-8")
+if (.Platform$OS.type == "windows") invisible(suppressWarnings(Sys.setlocale("LC_CTYPE", "English_United States.utf8")))
 .ms_file <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 if (length(.ms_file)) {
   .ms_script <- normalizePath(sub("^--file=", "", .ms_file[[1]]), winslash = "/", mustWork = TRUE)
@@ -26,7 +28,7 @@ MODEL_MANIFEST_CSV <- file.path("results", "rq2", "rq2_model_artifact_manifest.c
 GAMMA_RDS <- file.path("results", "rq2", "rq2_gamma_long.rds")
 GAMMA_SUMMARY_CSV <- file.path("results", "rq2", "rq2_gamma_summary.csv")
 SCOPE_CSV <- file.path("results", "rq2", "rq2_interaction_scope.csv")
-OUT_DIR <- file.path("results", "rq2", "figures")
+OUT_DIR <- file.path("results", "rq2")
 ms_plot_require_files(c(RQ1_SUMMARY_CSV, CONDITION_RDS, COND_GEOM_CSV, MODEL_COEF_CSV,
                         MODEL_PERF_CSV, MODEL_MANIFEST_CSV, GAMMA_RDS,
                         GAMMA_SUMMARY_CSV, SCOPE_CSV),
@@ -108,7 +110,7 @@ conditional <- conditional |>
       levels = c("Target alignment", "Measurement requirement")
     ),
     dimension = factor(dimension, levels = DIMENSIONS),
-    pair_label = paste(config_a_label, "→", config_b_label),
+    pair_label = paste(config_a_label, "\u2192", config_b_label),
     state_bin_label = factor(state_bin_label, levels = c("Low", "Middle", "High")),
     direction_ratio = ms_direction_ratio(B_conditional, A_conditional)
   ) |>
@@ -203,7 +205,7 @@ squish_to_limits <- function(x, limits) {
 }
 
 # =============================================================================
-# Fig. 2 — context dependence of distortion
+# Fig. 2 \u2014 context dependence of distortion
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -642,7 +644,7 @@ status_grid <- tidyr::crossing(
             by = c("dimension", "term", "outcome_label")) |>
   mutate(
     structural_na = term == "duration_day_variability" & dimension != "duration",
-    status_label = case_when(structural_na ~ "—", !is.finite(estimate_q50) ~ "×", TRUE ~ NA_character_),
+    status_label = case_when(structural_na ~ "\u2014", !is.finite(estimate_q50) ~ "\u00d7", TRUE ~ NA_character_),
     dimension_label = factor(unname(DIM_TITLES[dimension]), levels = unname(DIM_TITLES[DIMENSIONS])),
     y_pos = y + unname(DIMENSION_OFFSETS[dimension])
   )
@@ -698,7 +700,7 @@ p_strength <- ggplot(predictor_order, aes(fill = predictor_family)) +
     expand = expansion(mult = c(0, .02))
   ) +
   scale_y_continuous(limits = predictor_y_limits, expand = expansion(mult = c(0, 0))) +
-  labs(title = "Strength", x = "median |β|", y = NULL) +
+  labs(title = "Strength", x = "median |\u03b2|", y = NULL) +
   theme_rq2(base_size = 5.45) +
   theme(
     panel.grid = element_blank(), axis.line.y = element_blank(), axis.ticks.y = element_blank(),
@@ -757,7 +759,7 @@ make_effect_panel <- function(outcome_name, panel_title) {
     scale_shape_manual(values = DIMENSION_SHAPES, drop = FALSE, guide = "none") +
     scale_x_continuous(limits = coef_window_global, breaks = scales::breaks_extended(n = 3)) +
     scale_y_continuous(limits = predictor_y_limits, expand = expansion(mult = c(0, 0))) +
-    labs(title = panel_title, x = "standardized β", y = NULL) +
+    labs(title = panel_title, x = "standardized \u03b2", y = NULL) +
     theme_rq2(base_size = 5.30) +
     theme(
       panel.grid.major.y = element_blank(), axis.line.y = element_blank(),
@@ -997,7 +999,7 @@ p_cv_panel <- ggplot(joint_cv_metric_panel, aes(r2_plot, y_pos, colour = metric_
     breaks = dim_map_panel$y, labels = dim_map_panel$dimension_label,
     limits = range(dim_map_panel$y) + c(-.34, .34), expand = expansion(mult = c(0, 0))
   ) +
-  labs(x = "participant-grouped CV R²", y = NULL) +
+  labs(x = "participant-grouped CV R\u00b2", y = NULL) +
   theme_rq2(base_size = 4.9) +
   theme(
     panel.grid.major.y = element_blank(), axis.line.y = element_blank(), axis.ticks.y = element_blank(),
@@ -1029,7 +1031,7 @@ p_frac_panel <- ggplot(joint_cv_positive_panel, aes(fraction_plot, y)) +
   scale_y_continuous(
     limits = range(dim_map_panel$y) + c(-.34, .34), expand = expansion(mult = c(0, 0))
   ) +
-  labs(title = "% metrics with CV R² > 0", x = "%", y = NULL) +
+  labs(title = "% metrics with CV R\u00b2 > 0", x = "%", y = NULL) +
   theme_rq2(base_size = 4.75) +
   theme(
     panel.grid.major.y = element_blank(), panel.grid.minor = element_blank(), axis.line.y = element_blank(),
@@ -1072,23 +1074,128 @@ metric_legend_right <- cowplot::get_legend(metric_legend_plot)
 # -----------------------------------------------------------------------------
 # Main composition
 # -----------------------------------------------------------------------------
-right_top <- cowplot::plot_grid(
-  metric_legend_right, p2b,
-  ncol = 1, rel_heights = c(.095, .905),
-  align = "v", axis = "l", greedy = TRUE
-)
-right_column <- cowplot::plot_grid(
-  right_top, p2c,
-  ncol = 1, rel_heights = c(.67, .33),
-  align = "v", axis = "l", greedy = TRUE
-)
-p2 <- cowplot::plot_grid(
-  p2a, right_column,
-  ncol = 2, rel_widths = c(.60, .40),
-  align = "hv", axis = "tb", greedy = TRUE
-)
-ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.pdf"), 8.2, 4.64)
-ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.png"), 8.2, 4.64)
+# Preserve the accepted predictor atlas, but compose the new scientific panels
+# here. Legacy whole-figure refinement must not overwrite this composition.
+accepted <- ms_fig2_refine_main(environment())
+if (is.null(accepted$p2a)) stop("Missing accepted Fig. 3a predictor atlas")
+p2a <- accepted$p2a
+theme_dense <- function() theme_ms_axes(base_size = 6, legend_position = "none") +
+  theme(panel.grid.minor = element_blank(), panel.grid.major = element_line(colour = "#ECEFF0", linewidth = .18),
+    strip.text = element_text(size = 6, face = "bold"), axis.text = element_text(size = 5.4),
+    plot.title = element_text(size = 7, face = "bold"), plot.subtitle = element_text(size = 5.2),
+    plot.margin = margin(3, 4, 3, 4))
+section <- function(plot, title, subtitle, header = .15) ggdraw() +
+  draw_plot(plot, 0, 0, 1, 1 - header) +
+  draw_label(title, x = .012, y = .995, hjust = 0, vjust = 1, size = 7.4, fontface = "bold", fontfamily = MS_FONT) +
+  draw_label(subtitle, x = .012, y = 1 - header * .48, hjust = 0, vjust = 1,
+    size = 5.1, colour = "#666A6D", fontfamily = MS_FONT)
+
+# Every metric is visible. Smooth, zero-preserving display transforms retain
+# tails without clipping or using different windows for different dimensions.
+p_shift <- ggplot(conditional_shift_path_metric,
+    aes(delta_A, delta_direction, group = metric, colour = metric_class)) +
+  geom_hline(yintercept = 0, colour = "#BFC5C8", linewidth = .25) +
+  geom_vline(xintercept = 0, colour = "#BFC5C8", linewidth = .25) +
+  geom_path(linewidth = .18, alpha = .18) +
+  geom_point(data = conditional_shift_path_metric |> filter(state_num > 1),
+    aes(shape = state), size = .7, alpha = .40) +
+  geom_path(data = conditional_shift_class_path, aes(group = metric_class), linewidth = .65) +
+  geom_point(data = conditional_shift_class_path |> filter(state_num > 1), aes(shape = state, group = metric_class), size = 1.4) +
+  facet_wrap(~dimension_label, ncol = 2) +
+  scale_colour_manual(values = MS_METRIC_COLORS) + scale_shape_manual(values = c(Low = 1, Middle = 16, High = 18)) +
+  scale_x_continuous(trans = scales::pseudo_log_trans(sigma = .025), breaks = c(-.5, -.1, 0, .1, .5)) +
+  scale_y_continuous(trans = scales::pseudo_log_trans(sigma = .05), breaks = c(-1, -.2, 0, .2, 1)) +
+  labs(x = expression(Delta*A~"relative to low state"), y = expression(Delta*(B/A))) + theme_dense()
+p2b <- section(p_shift, "b  Exposure state modulates distortion",
+  "Low \u2192 middle (circle) \u2192 high (diamond); lines = metric-class medians", .13)
+
+# Full CV distributions replace the selected top-eight showcase. Exposure-state
+# and joint models are explanatory and are not deployable recovery models.
+cv_display <- performance |> filter(validation_scheme == "participant_grouped", is.finite(r2)) |>
+  group_by(dimension, metric, model_family, outcome) |>
+  summarise(r2 = median(r2), .groups = "drop") |>
+  mutate(family = factor(model_family, levels = rev(c("external_context", "microenvironment", "behaviour", "exposure_state", "joint")),
+      labels = rev(c("External", "Micro-env.", "Behaviour", "Exposure", "Joint"))),
+    dimension = factor(dimension, levels = DIMENSIONS, labels = c("Placement", "Optical", "Temporal", "Duration")),
+    outcome = factor(outcome, levels = c("signed", "magnitude"), labels = c("Signed", "Absolute")))
+cv_summary <- cv_display |> group_by(dimension, family, outcome) |>
+  summarise(mid = median(r2), lo = quantile(r2, .25), hi = quantile(r2, .75), .groups = "drop")
+p_cv <- ggplot(cv_display, aes(r2, family, colour = outcome)) +
+  geom_vline(xintercept = 0, colour = "#A7ADB0", linewidth = .3) +
+  geom_point(position = position_jitter(width = 0, height = .14, seed = 12), size = .4, alpha = .22) +
+  geom_linerange(data = cv_summary, aes(x = mid, xmin = lo, xmax = hi),
+    position = position_dodge(width = .4), linewidth = .65) +
+  geom_point(data = cv_summary, aes(x = mid), position = position_dodge(width = .4), size = 1.1) +
+  facet_wrap(~dimension, nrow = 1) +
+  scale_colour_manual(values = c(Signed = "#2F5D7E", Absolute = "#C67C2E")) +
+  scale_x_continuous(trans = scales::pseudo_log_trans(sigma = .003), breaks = c(-1, 0, .5)) +
+  labs(x = expression("Participant-grouped CV "*R^2), y = NULL) + theme_dense() +
+  theme(axis.text.x = element_text(size = 4.7), panel.spacing = unit(1.2, "mm"))
+p2c <- section(p_cv, "c  Which information predicts distortion?",
+  "All metrics; median / IQR \u00b7 blue = signed, ochre = absolute", .21)
+
+# Frozen four-cell gamma only: reorganize Q and R/Q, never recompute gamma.
+if (any(gamma_summary$Q < 0, na.rm = TRUE) ||
+    any(abs(gamma_summary$R) > gamma_summary$Q + 1e-8, na.rm = TRUE)) stop("Invalid frozen gamma geometry")
+gamma_display <- gamma_summary |>
+  mutate(pair = paste(dimension_a, dimension_b, sep = " \u00d7 "),
+    pair = factor(pair, levels = c("placement \u00d7 optical", "optical \u00d7 temporal", "placement \u00d7 temporal"),
+      labels = c("Placement \u00d7 optical", "Optical \u00d7 temporal", "Placement \u00d7 temporal")),
+    placement = case_when(str_detect(transition, "^chest") ~ "Chest", str_detect(transition, "^wrist") ~ "Wrist", TRUE ~ "Eye"),
+    step = str_remove(transition, "^(chest|wrist)_"),
+    step_index = if_else(dimension_b == "optical", if_else(placement == "Chest", 1L, 2L),
+      match(step, c("120to60", "60to40", "40to30", "30to20", "20to10"))),
+    C = if_else(Q > NUMERIC_TOL, R / Q, NA_real_)) |>
+  filter(!is.na(pair), !is.na(step_index))
+gamma_class <- gamma_display |> group_by(pair, placement, step_index, metric_class) |>
+  summarise(Q = median(Q, na.rm = TRUE), C = median(C, na.rm = TRUE), .groups = "drop")
+# A compact transition atlas replaces sparse columns and overlapping lines.
+# Both quantities are medians of the existing metric-level frozen summaries.
+gamma_tiles <- gamma_class |> mutate(
+  block = case_when(pair == "Placement \u00d7 optical" ~ "P \u00d7 O",
+    pair == "Optical \u00d7 temporal" ~ "O \u00d7 T", placement == "Chest" ~ "P \u00d7 T: chest", TRUE ~ "P \u00d7 T: wrist"),
+  block = factor(block, levels = c("P \u00d7 O", "O \u00d7 T", "P \u00d7 T: chest", "P \u00d7 T: wrist")),
+  step_label = if_else(pair == "Placement \u00d7 optical", if_else(placement == "Chest", "Ch", "Wr"), as.character(step_index)),
+  step_label = factor(step_label, levels = c("Ch", "Wr", as.character(1:5))),
+  class_plot = factor(metric_class, levels = rev(MS_METRIC_CLASSES),
+    labels = rev(c("Duration", "History", "Level", "Spectrum", "Dynamics", "Timing"))))
+gamma_tiles <- gamma_tiles |> group_by(block) |>
+  tidyr::complete(tidyr::nesting(step_label), class_plot) |> ungroup()
+gamma_panel <- function(field) {
+  limit <- max(abs(gamma_tiles[[field]]), na.rm = TRUE)
+  ggplot(gamma_tiles, aes(step_label, class_plot, fill = .data[[field]])) +
+    geom_tile(colour = "white", linewidth = .4) +
+    geom_point(data = gamma_tiles |> filter(!is.finite(.data[[field]])), shape = 4, size = .7,
+      colour = "#879198", stroke = .3) +
+    facet_grid(~block, scales = "free_x", space = "free_x") +
+    {if (field == "Q") scale_fill_gradientn(colours = c("#F2F6F7", "#B4CBD9", "#5E91B0", "#254F6D"),
+      trans = scales::pseudo_log_trans(sigma = .015), limits = c(0, limit), breaks = c(0, .03, .1, .3), name = "Median Q", na.value = "#E5E8EA")
+      else scale_fill_gradient2(low = "#31678C", mid = "#F5F5F0", high = "#B66A30",
+        limits = c(-limit, limit), breaks = c(-limit, 0, limit), labels = function(x) signif(x, 2), name = "Median R/Q", na.value = "#E5E8EA")} +
+    labs(x = NULL, y = NULL) + theme_dense() +
+    theme(panel.grid = element_blank(), axis.line = element_blank(), axis.ticks = element_blank(),
+      axis.text.y = element_text(size = 5.4), strip.text = element_text(size = 5),
+      panel.spacing.x = unit(1.4, "mm"), legend.position = "right", legend.title = element_text(size = 4.9),
+      legend.text = element_text(size = 4.7), legend.key.height = unit(5, "mm"), legend.key.width = unit(2, "mm"))
+}
+gamma_body <- plot_grid(gamma_panel("Q"), gamma_panel("C"), ncol = 1, align = "v", axis = "lr")
+p2d <- section(gamma_body, "d  Where do configuration effects interact?",
+  "Class medians: magnitude (top), coherence (bottom); crosses = unavailable", .15)
+right_column <- plot_grid(p2b, p2c, p2d, ncol = 1, rel_heights = c(.40, .24, .36))
+main_body <- plot_grid(p2a, right_column, ncol = 2, rel_widths = c(.49, .51))
+legends <- plot_grid(predictor_legend, dimension_legend, ms_metric_legend(text_size = 5.3),
+  ncol = 1, rel_heights = c(1, 1, 1))
+foot <- ggdraw() + draw_label(paste0(
+  "State-conditioned explanation includes high-information exposure state; it is excluded from recovery in Fig. 4.\n",
+  "d: placement \u00d7 optical steps 1/2 = chest/wrist; temporal steps 1\u20135 = 120\u219260, 60\u219240, 40\u219230, 30\u219220, 20\u219210 s.\n",
+  "Display summaries weight metrics equally. IQRs describe metric heterogeneity, not confidence intervals."),
+  x = .015, hjust = 0, size = 5.1, colour = "#626A70", fontfamily = MS_FONT)
+p2 <- plot_grid(main_body, legends, foot, ncol = 1, rel_heights = c(1, .07, .06))
+ms_fig2_refine_main <- function(...) NULL
+ms_polish_main_figure <- function(plot, path, caller_env, width, height) list(plot = plot, width = width, height = height)
+ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.png"), 7.40, 8.60)
+write_csv(cv_display, file.path(OUT_DIR, "fig3_context_cv_complete.csv"))
+write_csv(gamma_display, file.path(OUT_DIR, "fig3_nonadditivity_display.csv"))
 
 # -----------------------------------------------------------------------------
 # Audit/display tables
@@ -1156,7 +1263,7 @@ ms_plot_write_manifest(
   file.path(OUT_DIR, "figure_artifact_manifest.csv"),
   tibble(
     figure = "Fig2_RQ2",
-    input_artifact = "rq2_conditional_geometry+rq2_model_coefficients",
+    input_artifact = "rq2_conditional_geometry+rq2_model_coefficients+rq2_model_performance+rq2_gamma_summary",
     core_artifact_version = CORE_VERSION,
     rq1_analysis_version = RQ1_VERSION,
     rq2_analysis_version = RQ2_VERSION,
@@ -1164,4 +1271,4 @@ ms_plot_write_manifest(
   )
 )
 
-message("Fig. 2 complete: hierarchical contextual effects, state-induced geometry shifts and held-out predictability.")
+message("Fig. 3 complete: contextual effects, state modulation, full held-out predictability and cross-dimensional non-additivity.")
