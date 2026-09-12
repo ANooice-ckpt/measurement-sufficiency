@@ -1,11 +1,12 @@
 # RQ2 recovery as a nested information-ablation experiment
 
-This note describes the post-hoc analysis in `scripts/12e_rq2_recovery_ablation.R`
-and the figure source in `scripts/13c_plot_fig4_recovery.R`.
+This note describes the post-hoc information-ablation helpers now integrated in
+`scripts/12d_rq2_recovery.R` and the figure source in
+`scripts/13c_plot_fig4_recovery.R`.
 
-The analysis does **not** refit the recovery models and therefore does not change
-the frozen run ID or any checkpoint. It only reorganizes the already-held-out
-errors from `12d_rq2_recovery.R`.
+The ablation analysis does **not** refit the recovery models and therefore does
+not change any existing completed checkpoint. It only reorganizes the
+already-held-out errors from the completed `12d` recovery run.
 
 ## Experimental interpretation
 
@@ -76,14 +77,19 @@ placement/level losses, and largely unrecovered timing/geometric losses.
 Run after a completed `12d` recovery analysis:
 
 ```powershell
-Rscript scripts/12e_rq2_recovery_ablation.R
+Rscript scripts/12d_rq2_recovery.R --ablation
 Rscript scripts/13c_plot_fig4_recovery.R
 ```
 
 If several completed recovery runs exist, set `RQ2_RECOVERY_RUN_DIR` or pass the
-run directory as the sole command-line argument.
+run directory after `--ablation`:
 
-`12e` writes `<run_dir>/ablation/`:
+```powershell
+Rscript scripts/12d_rq2_recovery.R --ablation <recovery_run_dir>
+Rscript scripts/13c_plot_fig4_recovery.R <recovery_run_dir>
+```
+
+The ablation helper writes `<run_dir>/ablation/`:
 
 - `recovery_metric_decomposition.csv`: one row per learner × metric × contrast;
 - `recovery_information_atlas.csv`: contrast × metric-class summaries;
