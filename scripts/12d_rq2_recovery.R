@@ -855,11 +855,20 @@ recovery_summaries <- function(states, out, floor) {
       signature_unique_after_context = A_context_only - A,
       context_shared_or_interaction = (A_calibration - A_context_only) - (A_signature - A),
       self_recoverable_loss = A_raw - A_signature, context_recoverable_loss = A_signature - A,
-      full_auxiliary_gain = A_calibration - A, unrecovered_residual = A,
+      full_auxiliary_gain = A_calibration - A,
+      context_shapley_gain = .5 * ((A_calibration - A_context_only) + (A_signature - A)),
+      signature_shapley_gain = .5 * ((A_calibration - A_signature) + (A_context_only - A)),
+      context_share_of_auxiliary_gain = if_else(full_auxiliary_gain > floor,
+        context_shapley_gain / full_auxiliary_gain, NA_real_),
+      signature_share_of_auxiliary_gain = if_else(full_auxiliary_gain > floor,
+        signature_shapley_gain / full_auxiliary_gain, NA_real_),
+      unrecovered_residual = A,
       reconstruction_error_signature_first = A_raw - ((A_raw - A_calibration) +
         (A_calibration - A_signature) + (A_signature - A) + A),
       reconstruction_error_context_first = A_raw - ((A_raw - A_calibration) +
-        (A_calibration - A_context_only) + (A_context_only - A) + A))
+        (A_calibration - A_context_only) + (A_context_only - A) + A),
+      shapley_reconstruction_error = full_auxiliary_gain -
+        (context_shapley_gain + signature_shapley_gain))
   readr::write_csv(decomposition, file.path(out, "loss_decomposition.csv"))
   # Descriptive raw-magnitude adjustment, not evidence of statistical independence.
   comparison <- comparison |> group_by(learner, comparison_pair_id, state) |> group_modify(function(d, key) {
@@ -893,6 +902,8 @@ recovery_summaries <- function(states, out, floor) {
 
 # Post-hoc information-ablation summaries. These functions NEVER refit recovery
 # models; they only reorganize already-held-out errors from recovery_comparison.csv.
+# S and C are also attributed with the exact two-player Shapley decomposition,
+# which is order-independent and sums to the full auxiliary-information gain.
 ablation_require <- function(x, columns, label) {
   missing <- setdiff(columns, names(x))
   if (length(missing)) stop(label, " missing columns: ", paste(missing, collapse = ", "), call. = FALSE)
@@ -946,6 +957,13 @@ ablation_metric_decomposition <- function(comparison) {
       context_increment = A_signature - A_context,
       signature_after_context_increment = A_context_only - A_context,
       context_shared_or_interaction = context_total_increment - context_increment,
+      full_auxiliary_gain = A_calibration - A_context,
+      context_shapley_gain = .5 * (context_total_increment + context_increment),
+      signature_shapley_gain = .5 * (signature_increment + signature_after_context_increment),
+      context_share_of_auxiliary_gain = if_else(full_auxiliary_gain > 1e-6,
+        context_shapley_gain / full_auxiliary_gain, NA_real_),
+      signature_share_of_auxiliary_gain = if_else(full_auxiliary_gain > 1e-6,
+        signature_shapley_gain / full_auxiliary_gain, NA_real_),
       total_increment = A_raw - A_context, unrecovered_residual = A_context)
   if (!nrow(out)) stop("No context-state rows in recovery_comparison.csv", call. = FALSE)
   if (any(!is.finite(out$A_raw) | !is.finite(out$A_calibration) |
@@ -958,8 +976,10 @@ ablation_metric_decomposition <- function(comparison) {
     A_raw - (calibration_increment + signature_increment + context_increment + unrecovered_residual))
   reconstruction_context_first <- with(out,
     A_raw - (calibration_increment + context_total_increment + signature_after_context_increment + unrecovered_residual))
-  if (max(abs(c(reconstruction_signature_first, reconstruction_context_first))) > 1e-10)
-    stop("Factorial stage decomposition does not reconstruct raw A", call. = FALSE)
+  reconstruction_shapley <- with(out,
+    full_auxiliary_gain - (context_shapley_gain + signature_shapley_gain))
+  if (max(abs(c(reconstruction_signature_first, reconstruction_context_first, reconstruction_shapley))) > 1e-10)
+    stop("Factorial/Shapley decomposition does not reconstruct observed losses", call. = FALSE)
   out
 }
 ablation_dominant_layer <- function(calibration, signature, context) {
@@ -983,6 +1003,9 @@ ablation_group_summary <- function(metric_level, groups) {
       mean_context_increment = ablation_safe_mean(context_increment),
       mean_signature_after_context_increment = ablation_safe_mean(signature_after_context_increment),
       mean_context_shared_or_interaction = ablation_safe_mean(context_shared_or_interaction),
+      mean_context_shapley_gain = ablation_safe_mean(context_shapley_gain),
+      mean_signature_shapley_gain = ablation_safe_mean(signature_shapley_gain),
+      mean_full_auxiliary_gain = ablation_safe_mean(full_auxiliary_gain),
       mean_total_increment = ablation_safe_mean(total_increment),
       median_calibration_increment = ablation_safe_median(calibration_increment),
       median_signature_increment = ablation_safe_median(signature_increment),
@@ -990,6 +1013,9 @@ ablation_group_summary <- function(metric_level, groups) {
       median_context_increment = ablation_safe_median(context_increment),
       median_signature_after_context_increment = ablation_safe_median(signature_after_context_increment),
       median_context_shared_or_interaction = ablation_safe_median(context_shared_or_interaction),
+      median_context_shapley_gain = ablation_safe_median(context_shapley_gain),
+      median_signature_shapley_gain = ablation_safe_median(signature_shapley_gain),
+      median_full_auxiliary_gain = ablation_safe_median(full_auxiliary_gain),
       median_total_increment = ablation_safe_median(total_increment),
       q25_calibration_increment = ablation_safe_quantile(calibration_increment, .25),
       q75_calibration_increment = ablation_safe_quantile(calibration_increment, .75),
@@ -999,16 +1025,26 @@ ablation_group_summary <- function(metric_level, groups) {
       q75_context_total_increment = ablation_safe_quantile(context_total_increment, .75),
       q25_context_increment = ablation_safe_quantile(context_increment, .25),
       q75_context_increment = ablation_safe_quantile(context_increment, .75),
+      q25_context_shapley_gain = ablation_safe_quantile(context_shapley_gain, .25),
+      q75_context_shapley_gain = ablation_safe_quantile(context_shapley_gain, .75),
+      q25_signature_shapley_gain = ablation_safe_quantile(signature_shapley_gain, .25),
+      q75_signature_shapley_gain = ablation_safe_quantile(signature_shapley_gain, .75),
       fraction_calibration_improved = ablation_fraction_positive(calibration_increment),
       fraction_signature_improved = ablation_fraction_positive(signature_increment),
       fraction_context_total_improved = ablation_fraction_positive(context_total_increment),
       fraction_context_improved = ablation_fraction_positive(context_increment),
       fraction_signature_after_context_improved = ablation_fraction_positive(signature_after_context_increment),
+      fraction_context_shapley_positive = ablation_fraction_positive(context_shapley_gain),
+      fraction_signature_shapley_positive = ablation_fraction_positive(signature_shapley_gain),
       fraction_final_improved = ablation_fraction_positive(total_increment), .groups = "drop") |>
     rowwise() |> mutate(dominant_recovery_layer = ablation_dominant_layer(
       mean_calibration_increment, mean_signature_increment, mean_context_increment),
       mean_unrecovered_fraction = if_else(is.finite(mean_A_raw) & mean_A_raw > 0,
-        mean_A_context / mean_A_raw, NA_real_)) |> ungroup()
+        mean_A_context / mean_A_raw, NA_real_),
+      context_share_of_auxiliary_gain = if_else(is.finite(mean_full_auxiliary_gain) & mean_full_auxiliary_gain > 1e-6,
+        mean_context_shapley_gain / mean_full_auxiliary_gain, NA_real_),
+      signature_share_of_auxiliary_gain = if_else(is.finite(mean_full_auxiliary_gain) & mean_full_auxiliary_gain > 1e-6,
+        mean_signature_shapley_gain / mean_full_auxiliary_gain, NA_real_)) |> ungroup()
 }
 ablation_atlas_long <- function(atlas) {
   bind_rows(
@@ -1030,8 +1066,10 @@ ablation_decoder_capacity <- function(atlas) {
   keys <- c("dimension", "comparison_pair_id", "metric_class")
   keep <- c(keys, "n_tasks", "n_unique_metrics", "dominant_recovery_layer",
     "mean_calibration_increment", "mean_signature_increment", "mean_context_total_increment", "mean_context_increment",
+    "mean_context_shapley_gain", "mean_signature_shapley_gain", "mean_full_auxiliary_gain",
+    "context_share_of_auxiliary_gain", "signature_share_of_auxiliary_gain",
     "fraction_calibration_improved", "fraction_signature_improved", "fraction_context_total_improved",
-    "fraction_context_improved")
+    "fraction_context_improved", "fraction_context_shapley_positive", "fraction_signature_shapley_positive")
   xgb <- atlas |> filter(learner == "xgboost") |> select(all_of(keep))
   ridge <- atlas |> filter(learner == "ridge") |> select(all_of(keep))
   names(xgb)[!names(xgb) %in% keys] <- paste0("xgb_", names(xgb)[!names(xgb) %in% keys])
@@ -1041,6 +1079,8 @@ ablation_decoder_capacity <- function(atlas) {
       xgb_minus_ridge_signature_increment = xgb_mean_signature_increment - ridge_mean_signature_increment,
       xgb_minus_ridge_context_total_increment = xgb_mean_context_total_increment - ridge_mean_context_total_increment,
       xgb_minus_ridge_context_increment = xgb_mean_context_increment - ridge_mean_context_increment,
+      xgb_minus_ridge_context_shapley_gain = xgb_mean_context_shapley_gain - ridge_mean_context_shapley_gain,
+      xgb_minus_ridge_signature_shapley_gain = xgb_mean_signature_shapley_gain - ridge_mean_signature_shapley_gain,
       dominant_layer_concordant = xgb_dominant_recovery_layer == ridge_dominant_recovery_layer)
 }
 recovery_ablation_summarize <- function(run_dir = NULL) {
@@ -1071,13 +1111,15 @@ recovery_ablation_summarize <- function(run_dir = NULL) {
   message("Primary XGBoost summary by degradation dimension:")
   print(by_dimension |> filter(learner == "xgboost") |>
     select(dimension, n_tasks, mean_calibration_increment, mean_signature_increment,
-      mean_context_total_increment, mean_context_increment, fraction_context_total_improved,
+      mean_context_total_increment, mean_context_increment, mean_context_shapley_gain,
+      context_share_of_auxiliary_gain, fraction_context_total_improved,
       fraction_context_improved, mean_A_context))
-  message("Largest XGBoost context-assisted cells (factorial total context gain; unique-after-signature retained separately):")
-  print(atlas |> filter(learner == "xgboost") |> arrange(desc(mean_context_total_increment)) |>
+  message("Largest XGBoost context-assisted cells (factorial total, Shapley, and unique-after-signature gains):")
+  print(atlas |> filter(learner == "xgboost") |> arrange(desc(mean_context_shapley_gain)) |>
     select(dimension, comparison_pair_id, metric_class, n_tasks,
-      mean_context_total_increment, mean_context_increment,
-      fraction_context_total_improved, fraction_context_improved) |> slice_head(n = 12L))
+      mean_context_total_increment, mean_context_shapley_gain, mean_context_increment,
+      context_share_of_auxiliary_gain, fraction_context_total_improved,
+      fraction_context_improved) |> slice_head(n = 12L))
   invisible(out)
 }
 
