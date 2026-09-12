@@ -1,6 +1,6 @@
 # Recovery information-ablation atlas for the redesigned RQ2 Fig. 4.
 # No model is fitted here. Existing held-out recovery estimates are summarized by
-# scripts/12e_rq2_recovery_ablation.R, then visualized as stage-specific gains.
+# scripts/12d_rq2_recovery.R, then visualized as stage-specific gains.
 #
 # Usage:
 #   Rscript scripts/13c_plot_fig4_recovery.R
@@ -25,7 +25,7 @@ suppressPackageStartupMessages({
   library(cowplot)
 })
 source("scripts/utils/figure_style.R")
-source("scripts/12e_rq2_recovery_ablation.R")
+source("scripts/12d_rq2_recovery.R")
 
 PAIR_ORDER <- c(
   "chest_vs_eye", "wrist_vs_eye", "LIGHT_vs_MEDI",
