@@ -18,7 +18,7 @@ if (!nzchar(run_dir)) {
   candidates <- candidates[vapply(candidates, function(p) {
     z <- readRDS(p)
     isTRUE(z$complete) && identical(z$provenance$analysis_design_id, ms_analysis_design_id()) &&
-      identical(z$provenance$recovery_version, "rq2_recovery_v4_factorial_context")
+      identical(z$provenance$recovery_version, "rq2_recovery_v5_rich_temporal_context")
   }, logical(1))]
   if (length(candidates) != 1L) stop("Set RQ2_RECOVERY_RUN_DIR: expected exactly one compatible completed run")
   run_dir <- dirname(candidates)
@@ -28,8 +28,8 @@ ms_plot_require_files(c(manifest_path, "results/rq1/rq1_pairwise_summary.csv"), 
 frozen <- readRDS(manifest_path); prov <- frozen$provenance
 if (!isTRUE(frozen$complete) || any(frozen$statuses$status == "failed")) stop("Incomplete recovery run")
 if (!identical(prov$analysis_design_id, ms_analysis_design_id()) ||
-    !identical(prov$recovery_version, "rq2_recovery_v4_factorial_context") ||
-    length(prov$signature_predictors) != 16L || length(prov$predictors) != 18L || length(prov$temporal_predictors) != 12L)
+    !identical(prov$recovery_version, "rq2_recovery_v5_rich_temporal_context") ||
+    length(prov$signature_predictors) != 16L || length(prov$predictors) != 18L || length(prov$temporal_predictors) != 32L)
   stop("Recovery version/design/information contract mismatch")
 CORE_VERSION <- ms_plot_assert_core(prov$core_artifact_version)
 RQ1_VERSION <- ms_plot_one_version(prov$rq1_analysis_version, "rq1_analysis_version")
@@ -271,7 +271,7 @@ foot <- ggdraw() + draw_label(paste0(
   "d thresholds (50% recovery; 33/67% context dominance) are descriptive deployment heuristics, not inferential cutoffs; crosses at y=0 indicate no stable non-negative partition.\n",
   "Shapley values average the two S/C entry orders and exactly partition observed S+C recovery; they are model-dependent attribution, not causal effects or information-theoretic necessity.\n",
   "Class displays require \u22653 metrics; singleton exposure-history/spectrum summaries remain in the audit. b/d: filled circle = placement; triangle = optical; open circle = temporal.\n",
-  "YL = low metric; S = 16 signature features; C = 18 daily + 12 daypart features. All gains use identical participant-grouped held-out support; full signed estimates are retained in exported audits."),
+  "YL = low metric; S = 16 signature features; C = 18 daily + 32 daypart features. All gains use identical participant-grouped held-out support; full signed estimates are retained in exported audits."),
   x = .01, hjust = 0, size = 4.85, colour = "#626A70", fontfamily = MS_FONT)
 figure <- plot_grid(top, legend, lower, foot, ncol = 1, rel_heights = c(.34, .04, .52, .10))
 write_csv(contrast_summary, "results/rq2/fig4_recovery_relative_display.csv")
