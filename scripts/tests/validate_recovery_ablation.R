@@ -1,6 +1,6 @@
-# Synthetic checks for scripts/12e_rq2_recovery_ablation.R.
+# Synthetic checks for the information-ablation helpers in scripts/12d_rq2_recovery.R.
 # No formal recovery artifact is read.
-source("scripts/12e_rq2_recovery_ablation.R")
+source("scripts/12d_rq2_recovery.R")
 
 states <- c("calibration", "signature", "context")
 meta <- tibble::tibble(
