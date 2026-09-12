@@ -160,77 +160,120 @@ p_context <- ggplot(attribution_points,
 pb <- panel_header(p_context, "b  Order-independent attribution of recoverable information",
   "Class \u00d7 contrast; above diagonal = context-dominant", .15)
 
-# Panels c/d express the same Shapley attribution as percent of YL-only loss,
-# using one common scale. Panel e displays the context share of the positive
-# auxiliary-information partition rather than a difference of two small gains.
-shared_relative_lim <- max(abs(c(class_attribution_main$relative_signature_shapley,
-  class_attribution_main$relative_context_shapley)), na.rm = TRUE)
-if (!is.finite(shared_relative_lim) || shared_relative_lim <= 0) shared_relative_lim <- 1
-attribution_panel <- function(value_col, fraction_col, title) {
-  z <- class_attribution_main |>
-    mutate(class_plot = factor(metric_class, levels = rev(display_classes),
-      labels = stringr::str_to_sentence(rev(display_classes))),
-      pair = factor(pair, levels = PAIR_LABELS),
-      value = .data[[value_col]], fraction = .data[[fraction_col]],
-      label = sprintf("%.0f%%", 100 * fraction),
-      text_colour = if_else(abs(value) > .6 * shared_relative_lim, "white", "#30373B"))
-  ggplot(z, aes(pair, class_plot, fill = value)) +
-    geom_tile(colour = "white", linewidth = .65) +
-    geom_text(aes(label = label, colour = text_colour), size = 2.4, fontface = "bold", family = MS_FONT) +
-    scale_colour_identity() +
-    geom_vline(xintercept = c(2.5, 3.5), colour = "#7E888E", linewidth = .3) +
-    scale_fill_gradient2(low = "#31678C", mid = "#F5F5F0", high = "#B66A30", midpoint = 0,
-      limits = c(-shared_relative_lim, shared_relative_lim), name = "Relative Shapley gain",
-      breaks = c(-shared_relative_lim, 0, shared_relative_lim), labels = function(x) paste0(signif(x, 2), "%"),
-      guide = guide_colourbar(barwidth = unit(2.7, "mm"), barheight = unit(16, "mm"), title.position = "top")) +
-    labs(x = NULL, y = NULL, title = title) + theme_recovery() +
-    theme(panel.grid = element_blank(), axis.ticks = element_blank(), axis.line = element_blank(),
-      axis.text.x = element_text(size = 6), axis.text.y = element_text(size = 6.5),
-      legend.position = "right", legend.title = element_text(size = 5.4), legend.text = element_text(size = 5.5),
-      plot.title = element_text(size = 7.5), plot.margin = margin(4, 4, 4, 4))
-}
-pc <- attribution_panel("relative_signature_shapley", "fraction_signature_shapley_positive",
-  "c  Relative signature-attributed recovery")
-pd <- attribution_panel("relative_context_shapley", "fraction_context_shapley_positive",
-  "d  Relative context-attributed recovery")
+# Main lower panels are intentionally orthogonal to a/b: c shows the metric-level
+# composition hidden by class means, while d translates that heterogeneity into a
+# descriptive acquisition/action map. Signed estimates remain in the audit CSVs.
+COMPONENT_LEVELS <- c("Context-dominant", "Signature-dominant", "Mixed / unstable", "No usable recovery")
+COMPONENT_COLORS <- c("Context-dominant" = "#C57A32", "Signature-dominant" = "#4D9085",
+  "Mixed / unstable" = "#AEB6BA", "No usable recovery" = "#E2E6E8")
+composition <- wide |> filter(learner == "xgboost", metric_class %in% display_classes) |>
+  mutate(recovery_component = case_when(
+    joint_gain <= 0 ~ "No usable recovery",
+    signature_shapley_gain < 0 | context_shapley_gain < 0 ~ "Mixed / unstable",
+    context_shapley_gain > signature_shapley_gain ~ "Context-dominant",
+    TRUE ~ "Signature-dominant"),
+    recovery_component = factor(recovery_component, levels = COMPONENT_LEVELS),
+    class_plot = factor(as.character(metric_class), levels = display_classes,
+      labels = stringr::str_to_sentence(display_classes)),
+    pair_plot = factor(as.character(pair), levels = rev(PAIR_LABELS))) |>
+  count(comparison_pair_id, pair_plot, class_plot, recovery_component, name = "n_metrics") |>
+  group_by(comparison_pair_id, pair_plot, class_plot) |>
+  mutate(total_metrics = sum(n_metrics), fraction = n_metrics / total_metrics,
+    label = if_else(fraction >= .14, sprintf("%.0f%%", 100 * fraction), ""),
+    text_colour = if_else(recovery_component %in% c("Context-dominant", "Signature-dominant"),
+      "white", "#30373B")) |> ungroup() |>
+  filter(total_metrics >= 3L)
 
-dominance_data <- class_attribution_main |>
-  mutate(class_plot = factor(metric_class, levels = rev(display_classes),
-    labels = stringr::str_to_sentence(rev(display_classes))),
-    pair = factor(pair, levels = PAIR_LABELS),
-    share_label = if_else(is.finite(context_share), sprintf("%.0f%% C", 100 * context_share), "\u2014"),
-    text_colour = if_else(is.finite(context_share) & abs(context_share - .5) > .34, "white", "#30373B"))
-pe <- ggplot(dominance_data, aes(pair, class_plot, fill = context_share)) +
-  geom_tile(colour = "white", linewidth = .65) +
-  geom_text(aes(label = share_label, colour = text_colour), size = 2.3, fontface = "bold", family = MS_FONT) +
+p_composition <- ggplot(composition, aes(fraction, pair_plot, fill = recovery_component)) +
+  geom_col(width = .72, colour = "white", linewidth = .25) +
+  geom_text(aes(label = label, colour = text_colour), position = position_stack(vjust = .5),
+    size = 2.05, fontface = "bold", family = MS_FONT) +
   scale_colour_identity() +
-  geom_vline(xintercept = c(2.5, 3.5), colour = "#7E888E", linewidth = .3) +
-  scale_fill_gradient2(low = "#31678C", mid = "#F5F5F0", high = "#B66A30", midpoint = .5,
-    limits = c(0, 1), na.value = "#ECEFED", name = "Context share",
-    breaks = c(0, .5, 1), labels = scales::label_percent(accuracy = 1),
-    guide = guide_colourbar(barwidth = unit(2.7, "mm"), barheight = unit(16, "mm"), title.position = "top")) +
-  labs(x = NULL, y = NULL, title = "e  Context share of auxiliary recovery") + theme_recovery() +
-  theme(panel.grid = element_blank(), axis.ticks = element_blank(), axis.line = element_blank(),
-    axis.text.x = element_text(size = 6), axis.text.y = element_text(size = 6.5),
-    legend.position = "right", legend.title = element_text(size = 5.4), legend.text = element_text(size = 5.5),
-    plot.title = element_text(size = 7.5), plot.margin = margin(4, 4, 4, 4))
+  scale_fill_manual(values = COMPONENT_COLORS, limits = COMPONENT_LEVELS, drop = FALSE, name = NULL) +
+  scale_x_continuous(limits = c(0, 1), breaks = c(0, .5, 1), labels = scales::label_percent(accuracy = 1),
+    expand = expansion(mult = c(0, .01))) +
+  facet_wrap(~class_plot, ncol = 2) +
+  labs(x = "Share of metrics", y = NULL) + theme_recovery() +
+  theme(panel.grid.major.y = element_blank(), panel.grid.minor = element_blank(),
+    strip.text = element_text(size = 6.2, face = "bold"), axis.text = element_text(size = 5.4),
+    legend.position = "bottom", legend.text = element_text(size = 5.3), legend.key.width = unit(5.5, "mm"),
+    legend.margin = margin(t = 1), panel.spacing = unit(2.3, "mm"), plot.margin = margin(3, 3, 3, 3))
+pc <- panel_header(p_composition, "c  Metric-level composition of full recovery",
+  "Each bar partitions all metrics: usable S/C dominance, mixed attribution, or no gain", .11)
 
-# Keep the pre-attribution sequential summaries in the audit outputs; the main
-# c-e panels now use the order-independent factorial attribution above.
+# Practical action coordinates are frequencies rather than mean gains. The x-axis
+# is how often S+C improves over YL-only; the y-axis is how often context dominates
+# among recovered metrics with a stable non-negative Shapley partition.
+action_summary <- wide |> filter(learner == "xgboost", metric_class %in% display_classes) |>
+  group_by(comparison_pair_id, pair, metric_class) |>
+  summarise(n_metrics = n(), p_recovery = mean(joint_gain > 0),
+    n_stable_positive = sum(joint_gain > 0 & signature_shapley_gain >= 0 & context_shapley_gain >= 0),
+    n_context_dominant = sum(joint_gain > 0 & signature_shapley_gain >= 0 & context_shapley_gain >= 0 &
+      context_shapley_gain > signature_shapley_gain), .groups = "drop") |>
+  mutate(p_context_dominant = if_else(n_stable_positive > 0,
+      n_context_dominant / n_stable_positive, NA_real_),
+    dimension = case_when(comparison_pair_id %in% PAIR_ORDER[1:2] ~ "Placement",
+      comparison_pair_id == PAIR_ORDER[3] ~ "Optical", TRUE ~ "Temporal"),
+    action_class = case_when(
+      p_recovery < .50 ~ "No deployable benefit",
+      !is.finite(p_context_dominant) ~ "Mixed evidence",
+      p_context_dominant < .33 ~ "Signature-led",
+      p_context_dominant < .67 ~ "Context-useful",
+      TRUE ~ "Context-important")) |>
+  filter(n_metrics >= 3L)
+action_finite <- action_summary |> filter(is.finite(p_context_dominant))
+action_unresolved <- action_summary |> filter(!is.finite(p_context_dominant)) |> mutate(p_context_dominant = 0)
+
+p_action <- ggplot() +
+  annotate("rect", xmin = 0, xmax = .5, ymin = 0, ymax = 1, fill = "#AEB6BA", alpha = .10) +
+  annotate("rect", xmin = .5, xmax = 1, ymin = 0, ymax = .33, fill = "#4D9085", alpha = .08) +
+  annotate("rect", xmin = .5, xmax = 1, ymin = .33, ymax = .67, fill = "#D9B07C", alpha = .10) +
+  annotate("rect", xmin = .5, xmax = 1, ymin = .67, ymax = 1, fill = "#C57A32", alpha = .10) +
+  geom_vline(xintercept = .5, linetype = 2, colour = "#8A9398", linewidth = .3) +
+  geom_hline(yintercept = c(.33, .67), linetype = 2, colour = "#A0A8AC", linewidth = .28) +
+  geom_point(data = action_finite,
+    aes(p_recovery, p_context_dominant, colour = metric_class, shape = dimension),
+    size = 2.15, stroke = .7, alpha = .92) +
+  geom_point(data = action_unresolved, aes(p_recovery, p_context_dominant),
+    shape = 4, size = 2.0, stroke = .7, colour = "#858D92") +
+  annotate("text", x = .24, y = .93, label = "No deployable\nbenefit", size = 2.15,
+    family = MS_FONT, colour = "#70787D") +
+  annotate("text", x = .76, y = .16, label = "Signature-led", size = 2.15,
+    family = MS_FONT, colour = "#667176") +
+  annotate("text", x = .76, y = .50, label = "Context-useful", size = 2.15,
+    family = MS_FONT, colour = "#756B60") +
+  annotate("text", x = .76, y = .84, label = "Context-important", size = 2.15,
+    family = MS_FONT, colour = "#75685F") +
+  scale_colour_manual(values = MS_METRIC_COLORS) +
+  scale_shape_manual(values = c(Placement = 16, Optical = 17, Temporal = 1)) +
+  scale_x_continuous(limits = c(0, 1), breaks = c(0, .5, 1), labels = scales::label_percent(accuracy = 1),
+    expand = expansion(mult = .01)) +
+  scale_y_continuous(limits = c(0, 1), breaks = c(0, .33, .67, 1), labels = scales::label_percent(accuracy = 1),
+    expand = expansion(mult = .01)) +
+  labs(x = "Metrics with positive S + C recovery", y = "Context-dominant among stable recovered metrics") +
+  theme_recovery() +
+  theme(panel.grid = element_blank(), axis.text = element_text(size = 5.2), axis.title = element_text(size = 5.5),
+    plot.margin = margin(3, 4, 3, 4))
+pd <- panel_header(p_action, "d  Practical recovery action map",
+  "Frequency-based deployment view; shaded regions are descriptive heuristics", .11)
+
+# Preserve all signed and sequential summaries in audit outputs; only the main
+# lower panels switch from mean signed heatmaps to heterogeneity/actionability.
 atlas_long <- class_summary
-atlas_body <- plot_grid(pc, pd, pe, ncol = 1, align = "v", axis = "lr")
 legend <- ms_metric_legend(text_size = 5.8, point_size = 1.2)
 top <- plot_grid(pa, pb, nrow = 1, rel_widths = c(.61, .39))
+lower <- plot_grid(pc, pd, nrow = 1, rel_widths = c(.64, .36), align = "h", axis = "tb")
 foot <- ggdraw() + draw_label(paste0(
   "a: 100 \u00d7 mean(branch gain) / mean(YL-only loss); denominators \u2264 ", format(ratio_floor, scientific = TRUE), " are unavailable.\n",
   "b: axes = 100 \u00d7 mean(two-player Shapley gain) / mean(YL-only loss); diagonal = equal order-independent attribution.\n",
-  "c,d: colour = 100 \u00d7 mean Shapley gain / mean(YL-only loss); text = % of metrics with positive attribution; c/d share one relative scale.\n",
-  "e: colour/text = context share of positive joint auxiliary recovery; cells are unavailable when joint gain \u2264 floor or either attributed component is negative.\n",
+  "c: metric-level categories use full S+C gain and two-player Shapley components; mixed = positive S+C recovery with either attributed component < 0.\n",
+  "d: x = P(S+C improves YL-only); y = P(context Shapley > signature Shapley | positive S+C recovery and both Shapley components \u2265 0).\n",
+  "d thresholds (50% recovery; 33/67% context dominance) are descriptive deployment heuristics, not inferential cutoffs; crosses at y=0 indicate no stable non-negative partition.\n",
   "Shapley values average the two S/C entry orders and exactly partition observed S+C recovery; they are model-dependent attribution, not causal effects or information-theoretic necessity.\n",
-  "Class displays require \u22653 metrics; singleton exposure-history/spectrum summaries remain in the audit. b: filled circle = placement; triangle = optical; open circle = temporal.\n",
-  "YL = low metric; S = 16 signature features; C = 18 daily + 12 daypart features. All gains use identical participant-grouped held-out support; negative gains are retained."),
-  x = .01, hjust = 0, size = 5.0, colour = "#626A70", fontfamily = MS_FONT)
-figure <- plot_grid(top, legend, atlas_body, foot, ncol = 1, rel_heights = c(.33, .04, .53, .10))
+  "Class displays require \u22653 metrics; singleton exposure-history/spectrum summaries remain in the audit. b/d: filled circle = placement; triangle = optical; open circle = temporal.\n",
+  "YL = low metric; S = 16 signature features; C = 18 daily + 12 daypart features. All gains use identical participant-grouped held-out support; full signed estimates are retained in exported audits."),
+  x = .01, hjust = 0, size = 4.85, colour = "#626A70", fontfamily = MS_FONT)
+figure <- plot_grid(top, legend, lower, foot, ncol = 1, rel_heights = c(.34, .04, .52, .10))
 write_csv(contrast_summary, "results/rq2/fig4_recovery_relative_display.csv")
 
 # Keep registry numbering and PNG export, but bypass the retired composition
@@ -241,10 +284,12 @@ ms_polish_main_figure <- function(plot, path, caller_env, width, height) list(pl
 ms_plot_save(figure, "results/rq2/Fig3_RQ2.png", 7.40, 8.20)
 write_csv(atlas_long, "results/rq2/fig4_recovery_increment_display.csv")
 write_csv(class_attribution, "results/rq2/fig4_recovery_attribution_display.csv")
+write_csv(composition, "results/rq2/fig4_recovery_composition_display.csv")
+write_csv(action_summary, "results/rq2/fig4_recovery_action_display.csv")
 write_csv(wide, "results/rq2/fig4_recovery_loss_display.csv")
 ms_plot_write_manifest("results/rq2/figure_artifact_manifest.csv", tibble(
   figure = "Fig3_RQ2", input_artifact = manifest_path, core_artifact_version = CORE_VERSION,
   rq1_analysis_version = RQ1_VERSION, rq2_analysis_version = prov$recovery_version,
   rq3_analysis_version = NA_character_, recovery_run_id = frozen$run_id,
   source_md5 = unname(tools::md5sum(manifest_path))))
-message("Fig. 4 complete: 414 matched-support tasks, 52 metrics, eight anchors; relative Shapley attribution and context share; recovery run ", frozen$run_id)
+message("Fig. 4 complete: 414 matched-support tasks, 52 metrics, eight anchors; orthogonal recovery composition/actionability panels; recovery run ", frozen$run_id)
