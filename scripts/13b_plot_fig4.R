@@ -18,7 +18,7 @@ if (!nzchar(run_dir)) {
   candidates <- candidates[vapply(candidates, function(p) {
     z <- readRDS(p)
     isTRUE(z$complete) && identical(z$provenance$analysis_design_id, ms_analysis_design_id()) &&
-      identical(z$provenance$recovery_version, "rq2_recovery_v3_low_signature_temporal_context")
+      identical(z$provenance$recovery_version, "rq2_recovery_v4_factorial_context")
   }, logical(1))]
   if (length(candidates) != 1L) stop("Set RQ2_RECOVERY_RUN_DIR: expected exactly one compatible completed run")
   run_dir <- dirname(candidates)
@@ -28,7 +28,7 @@ ms_plot_require_files(c(manifest_path, "results/rq1/rq1_pairwise_summary.csv"), 
 frozen <- readRDS(manifest_path); prov <- frozen$provenance
 if (!isTRUE(frozen$complete) || any(frozen$statuses$status == "failed")) stop("Incomplete recovery run")
 if (!identical(prov$analysis_design_id, ms_analysis_design_id()) ||
-    !identical(prov$recovery_version, "rq2_recovery_v3_low_signature_temporal_context") ||
+    !identical(prov$recovery_version, "rq2_recovery_v4_factorial_context") ||
     length(prov$signature_predictors) != 16L || length(prov$predictors) != 18L || length(prov$temporal_predictors) != 12L)
   stop("Recovery version/design/information contract mismatch")
 CORE_VERSION <- ms_plot_assert_core(prov$core_artifact_version)
@@ -41,7 +41,7 @@ for (p in intersect(names(prov$input_md5), c("results/rq1/rq1_pairwise_summary.c
 
 PAIR_ORDER <- c("chest_vs_eye", "wrist_vs_eye", "LIGHT_vs_MEDI", "20s_vs_10s", "30s_vs_10s", "40s_vs_10s", "60s_vs_10s", "120s_vs_10s")
 PAIR_LABELS <- c("Chest \u2192 eye", "Wrist \u2192 eye", "LIGHT \u2192 MEDI", "20 \u2192 10 s", "30 \u2192 10 s", "40 \u2192 10 s", "60 \u2192 10 s", "120 \u2192 10 s")
-STATES <- c("raw", "calibration", "signature", "context")
+STATES <- c("raw", "calibration", "signature", "context_only", "context")
 STAGE_COLORS <- c(raw = "#737B82", calibration = "#405F80", signature = "#4D9085", context = "#C57A32")
 errors <- as_tibble(frozen$heldout_errors)
 ms_plot_require_columns(errors, c("learner", "task_index", "comparison_pair_id", "metric", "metric_class", "state", "A", "n_test", "n_test_participants", "status", "support_id"), "Recovery errors")
@@ -50,7 +50,7 @@ if (!setequal(unique(errors$comparison_pair_id), PAIR_ORDER) || !setequal(unique
 support_audit <- errors |> group_by(learner, task_index) |>
   summarise(n_states = n_distinct(state), supports = n_distinct(support_id),
     n_supports = n_distinct(n_test), n_participant_supports = n_distinct(n_test_participants), .groups = "drop")
-if (any(support_audit$n_states != 4L | support_audit$supports != 1L | support_audit$n_supports != 1L | support_audit$n_participant_supports != 1L))
+if (any(support_audit$n_states != 5L | support_audit$supports != 1L | support_audit$n_supports != 1L | support_audit$n_participant_supports != 1L))
   stop("Recovery layers do not share held-out support")
 available <- errors |> filter(status == "complete")
 if (any(!is.finite(available$A) | available$A < 0)) stop("Invalid held-out standardized loss")
@@ -58,9 +58,11 @@ if (!setequal(unique(available$learner), c("xgboost", "ridge"))) stop("Both lear
 wide <- available |> select(learner, task_index, dimension, comparison_pair_id, metric, metric_class, support_id, state, A) |>
   pivot_wider(names_from = state, values_from = A) |>
   mutate(calibration_gain = raw - calibration, signature_gain = calibration - signature,
-    context_gain = signature - context, total_gain = raw - context,
+    context_gain = signature - context, context_total_gain = calibration - context_only,
+    joint_gain = calibration - context, signature_after_context_gain = context_only - context,
+    shared_or_interaction = (calibration - context_only) - (signature - context), total_gain = raw - context,
     pair = factor(comparison_pair_id, levels = PAIR_ORDER, labels = PAIR_LABELS))
-if (anyNA(wide[STATES])) stop("Incomplete four-state estimates")
+if (anyNA(wide[STATES])) stop("Incomplete factorial estimates")
 primary <- wide |> filter(learner == "xgboost")
 if (nrow(primary) != 414L || n_distinct(primary$metric) != 52L) stop("Expected 414 available tasks and 52 daily metrics")
 
@@ -74,14 +76,14 @@ panel_header <- function(p, title, subtitle, header = .14) ggdraw() +
   draw_label(title, x = .012, y = .995, hjust = 0, vjust = 1, size = 7.4, fontface = "bold", fontfamily = MS_FONT) +
   draw_label(subtitle, x = .012, y = 1 - header * .50, hjust = 0, vjust = 1, size = 5.2, colour = "#626A70", fontfamily = MS_FONT)
 
-# Relative stage gains use ratios of metric-equal means, not means of
-# potentially unstable per-metric ratios. Signed gains are never truncated.
-gain_names <- c("calibration_gain", "signature_gain", "context_gain")
-STAGE_LABELS <- c(calibration_gain = "Calibrate YL", signature_gain = "+ signature", context_gain = "+ context")
+# Factorial branch gains share the calibrated YL baseline. Ratios of metric-equal
+# means avoid unstable per-metric ratios; signed gains are never truncated.
+gain_names <- c("signature_gain", "context_total_gain", "joint_gain", "context_gain")
+STAGE_LABELS <- c(signature_gain = "+ S", context_total_gain = "+ C", joint_gain = "+ S + C", context_gain = "C after S")
 ratio_floor <- max(as.numeric(prov$G_floor), 1e-6)
 relative_gain <- function(gain, baseline) ifelse(is.finite(baseline) & baseline > ratio_floor, 100 * gain / baseline, NA_real_)
 stage_rows <- wide |> pivot_longer(all_of(gain_names), names_to = "stage", values_to = "gain") |>
-  mutate(baseline = case_when(stage == "calibration_gain" ~ raw, stage == "signature_gain" ~ calibration, TRUE ~ signature),
+  mutate(baseline = calibration,
     stage = factor(stage, levels = gain_names, labels = unname(STAGE_LABELS)),
     metric_class = factor(metric_class, levels = MS_METRIC_CLASSES))
 contrast_summary <- stage_rows |> group_by(learner, pair, stage) |>
@@ -96,47 +98,53 @@ class_summary <- stage_rows |> group_by(learner, comparison_pair_id, pair, metri
 class_main <- class_summary |> filter(learner == "xgboost", n_metrics >= 3L)
 display_classes <- MS_METRIC_CLASSES[MS_METRIC_CLASSES %in% as.character(class_main$metric_class)]
 
-p_stage <- ggplot(contrast_summary |> filter(learner == "xgboost"), aes(relative, pair, colour = stage)) +
+p_stage <- ggplot(contrast_summary |> filter(learner == "xgboost", stage != "C after S"), aes(relative, pair, colour = stage)) +
   geom_vline(xintercept = 0, colour = "#909A9F", linewidth = .35) +
-  geom_segment(data = contrast_summary |> filter(learner == "xgboost"),
+  geom_segment(data = contrast_summary |> filter(learner == "xgboost", stage != "C after S"),
     aes(x = 0, xend = relative, yend = pair), linewidth = .75, alpha = .55) +
   geom_point(size = 1.8, stroke = .6) +
   facet_wrap(~stage, nrow = 1, scales = "free_x") +
-  scale_colour_manual(values = c("Calibrate YL" = "#405F80", "+ signature" = "#4D9085", "+ context" = "#C57A32")) +
+  scale_colour_manual(values = c("+ S" = "#4D9085", "+ C" = "#C57A32", "+ S + C" = "#405F80")) +
   scale_x_continuous(breaks = scales::breaks_pretty(n = 3), labels = function(x) paste0(x, "%"), expand = expansion(mult = .16)) +
-  labs(x = "Reduction of preceding-stage loss", y = NULL) + theme_recovery() +
+  labs(x = "Reduction relative to YL-only loss", y = NULL) + theme_recovery() +
   theme(panel.grid.major.y = element_blank(), panel.spacing.x = unit(2, "mm"), axis.text.x = element_text(size = 5.2))
-pa <- panel_header(p_stage, "a  What does each information layer add?",
-  "XGBoost; relative reduction at each step; separate x-scales", .15)
+pa <- panel_header(p_stage, "a  Independent and joint information gains",
+  "XGBoost; all branches share YL-only baseline; separate x-scales", .15)
 
-# Plot context's incremental effect directly instead of near-diagonal final A.
-context_points <- class_main |> filter(stage == "+ context") |>
+# With a common YL-only denominator, the identity diagonal compares context's
+# standalone contribution with its conditional contribution after S. This is a
+# model-dependent factorial contrast, not causal mediation or information theory.
+context_points <- class_main |> filter(stage %in% c("+ C", "C after S")) |>
+  select(comparison_pair_id, metric_class, stage, relative) |>
+  pivot_wider(names_from = stage, values_from = relative) |>
+  rename(context_alone = `+ C`, context_after_S = `C after S`) |>
   mutate(dimension = case_when(comparison_pair_id %in% PAIR_ORDER[1:2] ~ "Placement",
     comparison_pair_id == PAIR_ORDER[3] ~ "Optical", TRUE ~ "Temporal"))
-p_context <- ggplot(context_points, aes(mean_baseline, relative, colour = metric_class, shape = dimension)) +
-  geom_hline(yintercept = 0, colour = "#7C878D", linewidth = .4) +
+context_limits <- range(c(0, context_points$context_alone, context_points$context_after_S), na.rm = TRUE)
+p_context <- ggplot(context_points, aes(context_alone, context_after_S, colour = metric_class, shape = dimension)) +
+  geom_abline(slope = 1, intercept = 0, colour = "#9BA4A9", linewidth = .35) +
+  geom_hline(yintercept = 0, colour = "#7C878D", linewidth = .3) +
+  geom_vline(xintercept = 0, colour = "#7C878D", linewidth = .3) +
   geom_point(size = 2.1, stroke = .7, alpha = .90) +
-  geom_text(data = context_points |> filter(metric_class == "level", dimension != "Temporal") |>
-      mutate(label = case_when(comparison_pair_id == "LIGHT_vs_MEDI" ~ "LIGHT", comparison_pair_id == "chest_vs_eye" ~ "Chest", TRUE ~ "Wrist")),
-    aes(label = label), nudge_y = .22, size = 2.0, show.legend = FALSE, family = MS_FONT) +
   scale_colour_manual(values = MS_METRIC_COLORS) +
   scale_shape_manual(values = c(Placement = 16, Optical = 17, Temporal = 1)) +
-  scale_x_continuous(trans = scales::pseudo_log_trans(sigma = .01), breaks = c(.01, .1, .5), labels = scales::label_number()) +
-  scale_y_continuous(labels = function(x) paste0(x, "%"), breaks = scales::breaks_pretty(4), expand = expansion(mult = .12)) +
-  labs(x = expression("Loss before context, "*A[S]), y = "Additional reduction from context") + theme_recovery()
-pb <- panel_header(p_context, "b  Where does context help?",
-  "Each point = class \u00d7 contrast; above zero = added recovery", .15)
+  scale_x_continuous(limits = context_limits, labels = function(x) paste0(x, "%"), breaks = scales::breaks_pretty(3)) +
+  scale_y_continuous(limits = context_limits, labels = function(x) paste0(x, "%"), breaks = scales::breaks_pretty(3)) +
+  coord_fixed() + labs(x = "Context gain without S", y = "Context gain after S") + theme_recovery()
+pb <- panel_header(p_context, "b  Does S change the value of context?",
+  "Class \u00d7 contrast; below diagonal = smaller gain after S", .15)
 
 # Draft-inspired class-level ablation: absolute magnitude and the proportion of
-# improved metrics are complementary. Independent linear colourbars expose the
-# much smaller signature/context increments without changing numerical values.
+# improved metrics are complementary. Context-only and context-after-S share
+# a linear colourbar so their absolute contributions can be compared directly.
 atlas_long <- class_summary
 atlas_panel <- function(stage_name, title) {
   z <- class_main |> filter(stage == stage_name) |>
     mutate(class_plot = factor(metric_class, levels = rev(display_classes),
       labels = stringr::str_to_sentence(rev(display_classes))),
       pair = factor(pair, levels = PAIR_LABELS), label = sprintf("%.0f%%", 100 * fraction_improved))
-  lim <- max(abs(z$mean_gain))
+  lim <- if (stage_name %in% c("+ C", "C after S"))
+    max(abs(class_main$mean_gain[class_main$stage %in% c("+ C", "C after S")])) else max(abs(z$mean_gain))
   z$text_colour <- ifelse(abs(z$mean_gain) > .6 * lim, "white", "#30373B")
   ggplot(z, aes(pair, class_plot, fill = mean_gain)) +
     geom_tile(colour = "white", linewidth = .65) +
@@ -152,20 +160,21 @@ atlas_panel <- function(stage_name, title) {
       legend.position = "right", legend.title = element_text(size = 5.4), legend.text = element_text(size = 5.5),
       plot.title = element_text(size = 7.5), plot.margin = margin(4, 4, 4, 4))
 }
-pc <- atlas_panel("Calibrate YL", "c  Self-calibration from the low-configuration metric")
-pd <- atlas_panel("+ signature", "d  Additional information retained in the low measurement")
-pe <- atlas_panel("+ context", "e  Additional external, microenvironmental and behavioural context")
+pc <- atlas_panel("+ S", "c  Signature alone: YL versus YL + S")
+pd <- atlas_panel("+ C", "d  Context alone: YL versus YL + C")
+pe <- atlas_panel("C after S", "e  Context after signature: YL + S versus YL + S + C")
 atlas_body <- plot_grid(pc, pd, pe, ncol = 1, align = "v", axis = "lr")
 legend <- ms_metric_legend(text_size = 5.8, point_size = 1.2)
 top <- plot_grid(pa, pb, nrow = 1, rel_widths = c(.61, .39))
 foot <- ggdraw() + draw_label(paste0(
-  "a,b: 100 \u00d7 mean(stage gain) / mean(preceding-stage loss); denominators \u2264 ", format(ratio_floor, scientific = TRUE), " are unavailable.\n",
-  "c\u2013e: colour = signed mean \u0394A on the frozen RQ1 scale; text = % of metrics improved. Colour scales differ by stage.\n",
+  "a,b: 100 \u00d7 mean(branch gain) / mean(YL-only loss); denominators \u2264 ", format(ratio_floor, scientific = TRUE), " are unavailable.\n",
+  "c\u2013e: colour = signed mean \u0394A on the frozen RQ1 scale; text = % of metrics improved. Context panels d/e share a colour scale; S uses its own scale.\n",
+  "a compares S, C and S+C to the same YL baseline; b compares context with/without S. Below diagonal indicates overlap or interaction, not causality.\n",
   "Class displays require \u22653 metrics; singleton exposure-history/spectrum summaries remain in the audit. Classes are descriptive.\n",
   "b: filled circle = placement; triangle = optical; open circle = temporal. YL = low metric; S = 16 signature features; C = 18 daily + 12 daypart features.\n",
   "All gains use identical participant-grouped held-out support; negative gains are retained. Ridge sensitivity is retained in the display audit."),
   x = .01, hjust = 0, size = 5.2, colour = "#626A70", fontfamily = MS_FONT)
-figure <- plot_grid(top, legend, atlas_body, foot, ncol = 1, rel_heights = c(.33, .04, .54, .09))
+figure <- plot_grid(top, legend, atlas_body, foot, ncol = 1, rel_heights = c(.33, .04, .53, .10))
 write_csv(contrast_summary, "results/rq2/fig4_recovery_relative_display.csv")
 
 # Keep registry numbering and PNG export, but bypass the retired composition
