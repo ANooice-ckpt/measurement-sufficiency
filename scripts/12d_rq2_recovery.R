@@ -253,8 +253,8 @@ recovery_ensure_dayparts <- function(path, weather_path, unit_path, diary_paths,
   calendar <- unit |> filter(analysis_unit_type == "participant_day") |>
     distinct(site, Id, Date, timezone) |> mutate(Id = as.character(Id), Date = as.Date(Date))
   ms_assert_unique(calendar, c("site", "Id", "Date"), "Core context calendar")
-  if (anyNA(calendar$timezone) || any(!calendar$timezone %in% OlsonNames())) stop("Invalid core calendar timezone")
-  if (!setequal(unique(calendar$site), names(diary_paths))) stop("Diary sites differ from current calendar")
+  if (anyNA(calendar$timezone) || any(!calendar$timezone %in% OlsonNames()) ||
+      !setequal(unique(calendar$site), names(diary_paths))) stop("Invalid calendar/diary site-timezone contract")
   weather <- readr::read_csv(weather_path, col_types = readr::cols_only(core_artifact_version = readr::col_character(),
     site = readr::col_character(), time_utc = readr::col_datetime(), timezone = readr::col_character(),
     ssrd_w_m2 = readr::col_double()), progress = FALSE)
@@ -321,8 +321,7 @@ recovery_inputs <- function() {
   if (length(missing_extra)) problems <- c(problems, paste0("Missing input: ", missing_extra))
   if (any(!file.exists(paths))) return(list(problems = problems, paths = paths))
   upstream <- readRDS(paths[["pairwise"]]); version <- rq1_pairwise_version(upstream)
-  core <- if (!is.null(upstream$core_artifact_version) && length(upstream$core_artifact_version))
-    as.character(upstream$core_artifact_version)[1] else "current"
+  core <- if (!is.null(upstream$core_artifact_version) && length(upstream$core_artifact_version)) as.character(upstream$core_artifact_version)[1] else "current"
   if (!rq1_pairwise_is_partitioned(upstream)) stop("Expected partitioned RQ1 manifest")
   recovery_require(upstream$part_manifest, c("part", "dimension"), "RQ1 part manifest")
   records <- upstream$part_manifest |> filter(dimension == "placement_optical_temporal")
@@ -388,7 +387,7 @@ recovery_pairs <- function(inputs) {
 }
 
 # -----------------------------------------------------------------------------
-# Conventional calibration + information-set learning
+# Conventional calibration + anchored information-set learning
 # -----------------------------------------------------------------------------
 recovery_calibration <- function(tr, te, circular) {
   if (!circular) {
@@ -418,8 +417,9 @@ recovery_calibration <- function(tr, te, circular) {
     model = list(model_type = "circular_affine_calibration", coefficients = beta, columns = colnames(xtr), target = "sin_cos_Y_H_from_sin_cos_Y_L"))
 }
 
-# P is the conventional calibration prediction. The four flexible information states
-# differ only in whether low-configuration signature S and external context C are available.
+# Every information state is anchored at the same conventional calibration P.
+# Flexible reconstruction learns only the discrepancy from P; observability learns D=|z|.
+# Within an outer fold all states and both estimands use exactly the same inner participants.
 recovery_design <- function(tr, te, predictors, circular, prior_train, prior_test, screen = TRUE) {
   allowed <- lapply(c("prior_only", "signature", "context_only", "context"), recovery_layer_predictors)
   if (!any(vapply(allowed, identical, logical(1), predictors))) stop("Predictors must match an information state")
@@ -466,8 +466,6 @@ recovery_inner <- function(tr, seed) {
   data.frame(participant_key = people, inner_validation = people %in% validation)
 }
 
-# Same tuning procedure for every information state; complexity is selected independently
-# within training participants. This estimates information value rather than a fixed-model ablation.
 recovery_xgb_grid <- function() list(
   shallow = list(nrounds = 600L, early_stopping_rounds = 30L,
     params = list(objective = "reg:squarederror", eval_metric = "mae", booster = "gbtree", tree_method = "hist",
@@ -484,25 +482,31 @@ recovery_xgb_grid <- function() list(
 )
 recovery_ridge_grid <- function(lambda) sort(unique(pmax(c(lambda/10, lambda, lambda*10, lambda*100), 1e-8)))
 
-recovery_target_matrix <- function(x, estimand, circular) {
-  if (estimand == "observability") return(cbind(distortion = abs(x$z)))
-  if (!circular) return(cbind(value = x$reference_value))
-  a <- x$reference_value * 2*pi/86400
-  cbind(target_sin = sin(a), target_cos = cos(a))
+recovery_residual_target <- function(reference, baseline, circular) {
+  delta <- recovery_delta(reference, baseline, circular)
+  if (circular) cbind(sin_delta = sin(delta * 2*pi/86400), cos_delta_minus_one = cos(delta * 2*pi/86400) - 1) else cbind(delta = delta)
 }
-
-recovery_decode <- function(pr, estimand, circular, fallback) {
-  if (estimand == "observability") return(list(value = pmax(0, as.numeric(pr[, 1])), fallback = rep(FALSE, nrow(pr))))
-  if (!circular) return(list(value = as.numeric(pr[, 1]), fallback = rep(FALSE, nrow(pr))))
-  norm <- sqrt(rowSums(pr^2)); bad <- !is.finite(norm) | norm < 1e-10
-  value <- atan2(pr[, 1], pr[, 2]) * 86400/(2*pi); value <- value %% 86400
-  value[bad] <- fallback[bad] %% 86400
-  list(value = value, fallback = bad)
+recovery_apply_residual <- function(baseline, pr, circular) {
+  fallback <- rep(FALSE, length(baseline))
+  if (circular) {
+    pr[, 2] <- pr[, 2] + 1
+    fallback <- !is.finite(sqrt(rowSums(pr^2))) | sqrt(rowSums(pr^2)) < 1e-10
+    correction <- recovery_delta(atan2(pr[, 1], pr[, 2]) * 86400/(2*pi), 0, TRUE)
+    correction[fallback] <- 0
+    prediction <- (baseline + correction) %% 86400
+  } else {
+    correction <- as.numeric(pr[, 1]); prediction <- baseline + correction
+  }
+  list(prediction = prediction, correction = correction, fallback = fallback)
 }
-
 recovery_prediction_loss <- function(prediction, data, estimand, circular) {
   if (estimand == "observability") return(mean(abs(prediction - abs(data$z))))
   mean(abs(recovery_delta(data$reference_value, prediction, circular) / data$standardizer))
+}
+recovery_ridge_fit <- function(x, y, lambda) {
+  penalty <- diag(ncol(x)); penalty[1, 1] <- 0
+  lhs <- crossprod(x) / nrow(x) + lambda * penalty + diag(1e-10, ncol(x))
+  tryCatch(solve(lhs, crossprod(x, y) / nrow(x)), error = function(e) qr.solve(lhs, crossprod(x, y) / nrow(x), tol = 1e-10))
 }
 
 recovery_xgb_inner_channel <- function(xtr, ytr, xval, yval, config, seed) {
@@ -519,7 +523,6 @@ recovery_xgb_inner_channel <- function(xtr, ytr, xval, yval, config, seed) {
   score <- log[[metric]]; score[!is.finite(score)] <- Inf; rounds <- which.min(score)
   list(rounds = rounds, validation_prediction = as.numeric(predict(fit, make(xval))), evaluation_log = log, params = params)
 }
-
 recovery_xgb_refit_channel <- function(xtr, ytr, xte, selected) {
   params <- selected$params; params$base_score <- mean(ytr)
   make <- function(x, y = NULL) xgboost::xgb.DMatrix(data = x, label = y, nthread = 1L)
@@ -527,64 +530,133 @@ recovery_xgb_refit_channel <- function(xtr, ytr, xte, selected) {
   list(prediction = as.numeric(predict(model, make(xte))), booster_raw = xgboost::xgb.save.raw(model))
 }
 
-recovery_ridge_fit <- function(x, y, lambda) {
-  penalty <- diag(ncol(x)); penalty[1, 1] <- 0
-  lhs <- crossprod(x) / nrow(x) + lambda * penalty + diag(1e-10, ncol(x))
-  tryCatch(solve(lhs, crossprod(x, y) / nrow(x)), error = function(e) qr.solve(lhs, crossprod(x, y) / nrow(x), tol = 1e-10))
+recovery_choose_candidate <- function(candidates, min_relative_gain) {
+  scores <- vapply(candidates, `[[`, numeric(1), "score")
+  if (!length(scores) || !is.finite(scores[1])) stop("Invalid baseline candidate")
+  best <- which.min(scores)
+  required <- scores[1] * (1 - min_relative_gain)
+  if (best != 1L && is.finite(scores[best]) && scores[best] < required) best else 1L
 }
 
-recovery_predict_information <- function(tr, te, predictors, circular, estimand,
-                                         learner = "xgboost", lambda = .01, seed = 20260912L,
-                                         xgb_grid = recovery_xgb_grid(), calibration = NULL) {
+# One estimator for one information set. The estimand is information value; the estimator
+# conservatively selects among no update, ridge, and XGBoost on the shared inner participants.
+recovery_predict_information <- function(tr, te, predictors, circular, estimand, inner_split,
+                                         lambda = .01, seed = 20260912L,
+                                         xgb_grid = recovery_xgb_grid(), calibration = NULL,
+                                         min_relative_gain = .005) {
   if (!estimand %in% c("reconstructability", "observability")) stop("Unknown estimand")
-  if (!learner %in% c("ridge", "xgboost")) stop("Unknown learner")
   if (is.null(calibration)) calibration <- recovery_calibration(tr, te, circular)
-  full <- recovery_design(tr, te, predictors, circular, calibration$train_prediction, calibration$prediction,
-    screen = learner == "ridge")
-  split <- recovery_inner(tr, seed); v <- tr$participant_key %in% split$participant_key[split$inner_validation]
-  inner_cal <- recovery_calibration(tr[!v, ], tr[v, ], circular)
-  inner <- recovery_design(tr[!v, ], tr[v, ], predictors, circular,
-    inner_cal$train_prediction, inner_cal$prediction, screen = learner == "ridge")
-  y_inner <- recovery_target_matrix(tr[!v, ], estimand, circular)
-  y_val <- recovery_target_matrix(tr[v, ], estimand, circular)
-  y_full <- recovery_target_matrix(tr, estimand, circular)
-  details <- list()
+  if (!is.data.frame(inner_split) || !all(c("participant_key", "inner_validation") %in% names(inner_split))) stop("Invalid shared inner split")
+  if (!setequal(inner_split$participant_key, sort(unique(tr$participant_key)))) stop("Inner split does not match outer-training participants")
+  v <- tr$participant_key %in% inner_split$participant_key[inner_split$inner_validation]
+  if (!any(v) || !any(!v)) stop("Degenerate inner split")
 
-  if (learner == "ridge") {
-    candidates <- lapply(recovery_ridge_grid(lambda), function(lam) {
-      beta <- recovery_ridge_fit(inner$tr, y_inner, lam); pr <- inner$te %*% beta
-      decoded <- recovery_decode(pr, estimand, circular, inner_cal$prediction)
-      list(lambda = lam, score = recovery_prediction_loss(decoded$value, tr[v, ], estimand, circular))
-    })
-    scores <- vapply(candidates, `[[`, numeric(1), "score"); best <- which.min(scores); selected <- candidates[[best]]
-    beta <- recovery_ridge_fit(full$tr, y_full, selected$lambda); pr <- full$te %*% beta
-    details <- list(selected_lambda = selected$lambda, tuning_scores = scores, beta = beta)
-  } else {
+  inner_cal <- recovery_calibration(tr[!v, ], tr[v, ], circular)
+  d_inner_ridge <- recovery_design(tr[!v, ], tr[v, ], predictors, circular,
+    inner_cal$train_prediction, inner_cal$prediction, screen = TRUE)
+  d_full_ridge <- recovery_design(tr, te, predictors, circular,
+    calibration$train_prediction, calibration$prediction, screen = TRUE)
+  d_inner_xgb <- recovery_design(tr[!v, ], tr[v, ], predictors, circular,
+    inner_cal$train_prediction, inner_cal$prediction, screen = FALSE)
+  d_full_xgb <- recovery_design(tr, te, predictors, circular,
+    calibration$train_prediction, calibration$prediction, screen = FALSE)
+
+  if (estimand == "reconstructability") {
+    y_inner <- recovery_residual_target(tr$reference_value[!v], inner_cal$train_prediction, circular)
+    y_full <- recovery_residual_target(tr$reference_value, calibration$train_prediction, circular)
+    baseline_inner <- inner_cal$prediction
+    baseline_outer <- calibration$prediction
+    candidates <- list(list(kind = "none", name = "no_correction",
+      score = recovery_prediction_loss(baseline_inner, tr[v, ], estimand, circular)))
+
+    for (lam in recovery_ridge_grid(lambda)) {
+      beta <- recovery_ridge_fit(d_inner_ridge$tr, y_inner, lam)
+      pr <- d_inner_ridge$te %*% beta
+      applied <- recovery_apply_residual(inner_cal$prediction, pr, circular)
+      candidates[[length(candidates) + 1L]] <- list(kind = "ridge", name = paste0("ridge_", format(lam, scientific = TRUE)),
+        lambda = lam, score = recovery_prediction_loss(applied$prediction, tr[v, ], estimand, circular))
+    }
+
     trim <- function(d) list(tr = d$tr[, -1, drop = FALSE], te = d$te[, -1, drop = FALSE])
-    ii <- trim(inner); ff <- trim(full); configs <- xgb_grid
-    candidate_fits <- lapply(seq_along(configs), function(k) {
+    ii <- trim(d_inner_xgb); ff <- trim(d_full_xgb)
+    for (k in seq_along(xgb_grid)) {
       channels <- lapply(seq_len(ncol(y_inner)), function(j)
-        recovery_xgb_inner_channel(ii$tr, y_inner[, j], ii$te, y_val[, j], configs[[k]], seed + 100L*k + j))
-      pr_val <- do.call(cbind, lapply(channels, `[[`, "validation_prediction"))
-      decoded <- recovery_decode(pr_val, estimand, circular, inner_cal$prediction)
-      list(name = names(configs)[k], score = recovery_prediction_loss(decoded$value, tr[v, ], estimand, circular), channels = channels)
-    })
-    scores <- vapply(candidate_fits, `[[`, numeric(1), "score"); best <- which.min(scores); selected <- candidate_fits[[best]]
-    refits <- lapply(seq_len(ncol(y_full)), function(j)
-      recovery_xgb_refit_channel(ff$tr, y_full[, j], ff$te, selected$channels[[j]]))
-    pr <- do.call(cbind, lapply(refits, `[[`, "prediction"))
-    details <- list(selected_config = selected$name, tuning_scores = setNames(scores, names(configs)),
-      selected_rounds = vapply(selected$channels, `[[`, integer(1), "rounds"),
-      evaluation_logs = lapply(selected$channels, `[[`, "evaluation_log"),
-      boosters = lapply(refits, `[[`, "booster_raw"), inner_participants = split,
-      inner_calibration = inner_cal$model, inner_seed = seed)
+        recovery_xgb_inner_channel(ii$tr, y_inner[, j], ii$te, recovery_residual_target(tr$reference_value[v], inner_cal$prediction, circular)[, j],
+          xgb_grid[[k]], seed + 100L*k + j))
+      pr <- do.call(cbind, lapply(channels, `[[`, "validation_prediction"))
+      applied <- recovery_apply_residual(inner_cal$prediction, pr, circular)
+      candidates[[length(candidates) + 1L]] <- list(kind = "xgboost", name = paste0("xgb_", names(xgb_grid)[k]),
+        config = names(xgb_grid)[k], channels = channels,
+        score = recovery_prediction_loss(applied$prediction, tr[v, ], estimand, circular))
+    }
+
+    selected_index <- recovery_choose_candidate(candidates, min_relative_gain); selected <- candidates[[selected_index]]
+    if (selected$kind == "none") {
+      prediction <- baseline_outer; fallback <- calibration$fallback; fit_details <- list()
+    } else if (selected$kind == "ridge") {
+      beta <- recovery_ridge_fit(d_full_ridge$tr, y_full, selected$lambda)
+      applied <- recovery_apply_residual(calibration$prediction, d_full_ridge$te %*% beta, circular)
+      prediction <- applied$prediction; fallback <- applied$fallback; fit_details <- list(beta = beta, selected_lambda = selected$lambda)
+    } else {
+      refits <- lapply(seq_len(ncol(y_full)), function(j)
+        recovery_xgb_refit_channel(ff$tr, y_full[, j], ff$te, selected$channels[[j]]))
+      applied <- recovery_apply_residual(calibration$prediction,
+        do.call(cbind, lapply(refits, `[[`, "prediction")), circular)
+      prediction <- applied$prediction; fallback <- applied$fallback
+      fit_details <- list(selected_config = selected$config,
+        selected_rounds = vapply(selected$channels, `[[`, integer(1), "rounds"),
+        evaluation_logs = lapply(selected$channels, `[[`, "evaluation_log"),
+        boosters = lapply(refits, `[[`, "booster_raw"))
+    }
+  } else {
+    y_inner <- abs(tr$z[!v]); y_full <- abs(tr$z)
+    baseline_inner <- rep(median(y_inner), sum(v)); baseline_outer <- rep(median(y_full), nrow(te))
+    candidates <- list(list(kind = "none", name = "median_null",
+      score = recovery_prediction_loss(baseline_inner, tr[v, ], estimand, circular)))
+
+    for (lam in recovery_ridge_grid(lambda)) {
+      beta <- recovery_ridge_fit(d_inner_ridge$tr, cbind(distortion = y_inner), lam)
+      pr <- pmax(0, as.numeric(d_inner_ridge$te %*% beta))
+      candidates[[length(candidates) + 1L]] <- list(kind = "ridge", name = paste0("ridge_", format(lam, scientific = TRUE)),
+        lambda = lam, score = recovery_prediction_loss(pr, tr[v, ], estimand, circular))
+    }
+
+    trim <- function(d) list(tr = d$tr[, -1, drop = FALSE], te = d$te[, -1, drop = FALSE])
+    ii <- trim(d_inner_xgb); ff <- trim(d_full_xgb)
+    for (k in seq_along(xgb_grid)) {
+      channel <- recovery_xgb_inner_channel(ii$tr, y_inner, ii$te, abs(tr$z[v]), xgb_grid[[k]], seed + 100L*k + 1L)
+      pr <- pmax(0, channel$validation_prediction)
+      candidates[[length(candidates) + 1L]] <- list(kind = "xgboost", name = paste0("xgb_", names(xgb_grid)[k]),
+        config = names(xgb_grid)[k], channels = list(channel),
+        score = recovery_prediction_loss(pr, tr[v, ], estimand, circular))
+    }
+
+    selected_index <- recovery_choose_candidate(candidates, min_relative_gain); selected <- candidates[[selected_index]]
+    fallback <- rep(FALSE, nrow(te))
+    if (selected$kind == "none") {
+      prediction <- baseline_outer; fit_details <- list()
+    } else if (selected$kind == "ridge") {
+      beta <- recovery_ridge_fit(d_full_ridge$tr, cbind(distortion = y_full), selected$lambda)
+      prediction <- pmax(0, as.numeric(d_full_ridge$te %*% beta)); fit_details <- list(beta = beta, selected_lambda = selected$lambda)
+    } else {
+      refit <- recovery_xgb_refit_channel(ff$tr, y_full, ff$te, selected$channels[[1]])
+      prediction <- pmax(0, refit$prediction)
+      fit_details <- list(selected_config = selected$config, selected_rounds = selected$channels[[1]]$rounds,
+        evaluation_logs = list(selected$channels[[1]]$evaluation_log), boosters = list(refit$booster_raw))
+    }
   }
-  decoded <- recovery_decode(pr, estimand, circular, calibration$prediction)
-  if (any(!is.finite(decoded$value))) stop("Non-finite held-out prediction")
-  list(prediction = decoded$value, fallback = decoded$fallback,
-    model = c(list(learner = learner, estimand = estimand, circular = circular,
-      columns = colnames(full$tr), prior_columns = full$prior_columns, prior_basis = full$prior_basis,
-      centers = full$centers, scales = full$scales, context_imputation = full$audit), details))
+
+  if (any(!is.finite(prediction))) stop("Non-finite held-out prediction")
+  candidate_scores <- setNames(vapply(candidates, `[[`, numeric(1), "score"), vapply(candidates, `[[`, character(1), "name"))
+  list(prediction = prediction, fallback = fallback,
+    model = c(list(estimator = "anchored_adaptive_library", estimand = estimand, circular = circular,
+      selected_candidate = selected$name, selected_kind = selected$kind,
+      inner_baseline_loss = candidates[[1]]$score, inner_selected_loss = selected$score,
+      candidate_scores = candidate_scores, min_relative_gain = min_relative_gain,
+      inner_participants = inner_split,
+      columns_ridge = colnames(d_full_ridge$tr), columns_xgb = colnames(d_full_xgb$tr),
+      prior_columns = d_full_xgb$prior_columns, prior_basis = d_full_xgb$prior_basis,
+      centers = d_full_xgb$centers, scales = d_full_xgb$scales, context_imputation = d_full_xgb$audit), fit_details))
 }
 
 recovery_fit <- function(task) {
@@ -608,22 +680,24 @@ recovery_fit <- function(task) {
     models[[paste(f, "calibration", sep = "_")]] <- c(list(fold = f, state = "calibration", estimand = "reconstructability",
       learner = "conventional", n_train = nrow(tr), n_test = nrow(te), n_train_participants = n_distinct(tr$participant_key)), cal$model)
 
-    for (state in c("prior_only", "signature", "context_only", "context")) {
+    shared_inner <- recovery_inner(tr, task$seed + 1000L*f)
+    for (state_index in seq_along(c("prior_only", "signature", "context_only", "context"))) {
+      state <- c("prior_only", "signature", "context_only", "context")[[state_index]]
       predictors <- recovery_layer_predictors(state)
-      fit_y <- recovery_predict_information(tr, te, predictors, circular, "reconstructability",
-        learner = task$learner, lambda = task$lambda, seed = task$seed + 1000L*f + match(state, c("prior_only", "signature", "context_only", "context")),
-        xgb_grid = task$xgb_grid, calibration = cal)
+      fit_y <- recovery_predict_information(tr, te, predictors, circular, "reconstructability", shared_inner,
+        lambda = task$lambda, seed = task$seed + 10000L*f + 100L*state_index,
+        xgb_grid = task$xgb_grid, calibration = cal, min_relative_gain = task$min_relative_gain)
       x[[paste0("recon_", state)]][vi] <- fit_y$prediction
       x[[paste0("recon_", state, "_fallback")]][vi] <- fit_y$fallback
       models[[paste(f, "reconstructability", state, sep = "_")]] <- c(list(fold = f, state = state,
-        n_train = nrow(tr), n_test = nrow(te), n_train_participants = n_distinct(tr$participant_key)), fit_y$model)
+        learner = "xgboost", n_train = nrow(tr), n_test = nrow(te), n_train_participants = n_distinct(tr$participant_key)), fit_y$model)
 
-      fit_d <- recovery_predict_information(tr, te, predictors, circular, "observability",
-        learner = task$learner, lambda = task$lambda, seed = task$seed + 5000L + 1000L*f + match(state, c("prior_only", "signature", "context_only", "context")),
-        xgb_grid = task$xgb_grid, calibration = cal)
+      fit_d <- recovery_predict_information(tr, te, predictors, circular, "observability", shared_inner,
+        lambda = task$lambda, seed = task$seed + 50000L + 10000L*f + 100L*state_index,
+        xgb_grid = task$xgb_grid, calibration = cal, min_relative_gain = task$min_relative_gain)
       x[[paste0("obs_", state)]][vi] <- fit_d$prediction
       models[[paste(f, "observability", state, sep = "_")]] <- c(list(fold = f, state = state,
-        n_train = nrow(tr), n_test = nrow(te), n_train_participants = n_distinct(tr$participant_key)), fit_d$model)
+        learner = "xgboost", n_train = nrow(tr), n_test = nrow(te), n_train_participants = n_distinct(tr$participant_key)), fit_d$model)
     }
     x[["obs_null"]][vi] <- median(abs(tr$z))
   }
@@ -633,7 +707,7 @@ recovery_fit <- function(task) {
     pred <- x[[paste0("recon_", state)]]; fallback <- if (state == "raw") rep(FALSE, nrow(x)) else x[[paste0("recon_", state, "_fallback")]]
     err_native <- recovery_delta(x$reference_value, pred, circular); serr <- err_native / x$standardizer
     x |> transmute(site, Id, Date, support_id, participant_key, fold, context_row_present,
-      estimand = "reconstructability", state = state, learner = task$learner,
+      estimand = "reconstructability", state = state, learner = "xgboost",
       Y_L = candidate_value, Y_H = reference_value, raw_distortion = abs(z), target_value = reference_value,
       prediction = .env$pred, native_error = .env$err_native, signed_error = .env$serr, loss = abs(.env$serr),
       circular_fallback = .env$fallback)
@@ -641,7 +715,7 @@ recovery_fit <- function(task) {
   observability <- bind_rows(lapply(obs_states, function(state) {
     pred <- x[[paste0("obs_", state)]]; target <- abs(x$z); serr <- pred - target
     x |> transmute(site, Id, Date, support_id, participant_key, fold, context_row_present,
-      estimand = "observability", state = state, learner = task$learner,
+      estimand = "observability", state = state, learner = "xgboost",
       Y_L = candidate_value, Y_H = reference_value, raw_distortion = abs(z), target_value = .env$target,
       prediction = .env$pred, native_error = .env$serr, signed_error = .env$serr, loss = abs(.env$serr),
       circular_fallback = FALSE)
@@ -660,8 +734,8 @@ recovery_task <- function(task) {
 }
 
 recovery_worker_exports <- function() c("recovery_task", "recovery_fit", "recovery_predict_information", "recovery_calibration",
-  "recovery_design", "recovery_delta", "recovery_target_matrix", "recovery_decode", "recovery_prediction_loss",
-  "recovery_xgb_inner_channel", "recovery_xgb_refit_channel", "recovery_ridge_fit", "recovery_inner",
+  "recovery_design", "recovery_delta", "recovery_residual_target", "recovery_apply_residual", "recovery_prediction_loss",
+  "recovery_xgb_inner_channel", "recovery_xgb_refit_channel", "recovery_ridge_fit", "recovery_choose_candidate", "recovery_inner",
   "recovery_xgb_grid", "recovery_ridge_grid", "recovery_predictors", "recovery_atomic", "rq2_model_helpers",
   "recovery_layer_predictors", "recovery_signature_predictors", "recovery_temporal_bases", "recovery_temporal_predictors",
   "recovery_context_predictors", "recovery_reconstruction_states", "recovery_observability_states", "recovery_dayparts",
@@ -670,7 +744,8 @@ recovery_worker_exports <- function() c("recovery_task", "recovery_fit", "recove
 recovery_smoke <- function(inputs) {
   started <- Sys.time(); cache_path <- inputs$paths[["temporal_context"]]; cache_md5 <- tools::md5sum(cache_path)
   x <- recovery_pairs(inputs); seed <- as.integer(Sys.getenv("RQ2_RECOVERY_SEED", "20260912")); folds <- as.integer(Sys.getenv("RQ2_RECOVERY_FOLDS", "5"))
-  if (!is.finite(seed) || !is.finite(folds) || folds < 2L) stop("Invalid smoke seed/folds")
+  min_gain <- as.numeric(Sys.getenv("RQ2_RECOVERY_MIN_INNER_GAIN", "0.005"))
+  if (!is.finite(seed) || !is.finite(folds) || folds < 2L || !is.finite(min_gain) || min_gain < 0 || min_gain >= 1) stop("Invalid smoke settings")
   pm <- x |> distinct(site, participant_key) |> arrange(site, participant_key)
   set.seed(seed, kind = "Mersenne-Twister", normal.kind = "Inversion", sample.kind = "Rejection")
   pm <- pm |> group_by(site) |> mutate(fold = sample(rep(seq_len(folds), length.out = n()))) |> ungroup()
@@ -683,16 +758,14 @@ recovery_smoke <- function(inputs) {
   if (!setequal(meta$metric_geometry, c("linear", "circular_time"))) stop("Smoke needs both metric geometries")
   x <- semi_join(x, meta, by = keys); signature <- recovery_signature(recovery_read_csv(inputs$paths[["unit_context"]]), inputs$core, requested = x)
   x <- recovery_join_information(x, signature, inputs$temporal); root <- tempfile("recovery_real_smoke_"); dir.create(root); on.exit(unlink(root, recursive = TRUE), add = TRUE)
-  tasks <- list()
+  tasks <- vector("list", nrow(meta))
   for (i in seq_len(nrow(meta))) {
     g <- semi_join(x, meta[i, ], by = keys); frozen <- inputs$summary |> semi_join(meta[i, ], by = c("dimension", "comparison_pair_id", "metric"))
     if (nrow(frozen) != 1L || abs(mean(abs(g$z[g$eligible])) - frozen$A_mean_absolute) > 1e-7) stop("Smoke raw A disagrees with current summary")
     ip <- file.path(root, paste0("input_", i, ".rds")); saveRDS(g, ip)
-    for (learner in c("xgboost", "ridge")) {
-      k <- length(tasks) + 1L; tasks[[k]] <- list(index = k, input = ip, output = file.path(root, paste0("task_", k, ".rds")),
-        learner = learner, seed = seed + i, xgb_grid = recovery_xgb_grid(), run_id = "real_smoke",
-        lambda = as.numeric(Sys.getenv("RQ2_RECOVERY_LAMBDA", "0.01")), meta = meta[i, ])
-    }
+    tasks[[i]] <- list(index = i, input = ip, output = file.path(root, paste0("task_", i, ".rds")),
+      seed = seed + i, xgb_grid = recovery_xgb_grid(), run_id = "real_smoke",
+      lambda = as.numeric(Sys.getenv("RQ2_RECOVERY_LAMBDA", "0.01")), min_relative_gain = min_gain, meta = meta[i, ])
   }
   workers <- ms_resolve_workers("RQ2_RECOVERY_SMOKE_WORKERS", default = 2L, cap = 4L); ms_worker_init()
   refs <- ms_parallel_map(tasks, recovery_task, workers = workers, seed = seed,
@@ -704,12 +777,19 @@ recovery_smoke <- function(inputs) {
     if (!setequal(counts$n_states, expected)) stop("Smoke estimand/state contract failed")
     raw <- obj$predictions |> filter(estimand == "reconstructability", state == "raw")
     if (max(abs(raw$loss - raw$raw_distortion)) > 1e-8) stop("Raw reconstruction loss no longer equals RQ1 |z|")
+    flexible <- obj$models[vapply(obj$models, function(m) !identical(m$state, "calibration"), logical(1))]
+    for (fold in sort(unique(vapply(flexible, `[[`, integer(1), "fold")))) {
+      fm <- flexible[vapply(flexible, function(m) identical(m$fold, fold), logical(1))]
+      signatures <- vapply(fm, function(m) recovery_hash(m$inner_participants), character(1))
+      if (length(unique(signatures)) != 1L) stop("Information states do not share the same inner participants")
+      if (any(!vapply(fm, function(m) m$selected_kind %in% c("none", "ridge", "xgboost"), logical(1)))) stop("Unknown selected candidate")
+    }
     stopifnot(recovery_task(tasks[[r$index]])$reused)
-    tibble(learner = tasks[[r$index]]$learner, metric = obj$meta$metric, contrast = obj$meta$comparison_pair_id,
+    tibble(metric = obj$meta$metric, contrast = obj$meta$comparison_pair_id,
       geometry = obj$meta$metric_geometry, heldout_days = nrow(raw), fitted_models = length(obj$models))
   }))
   stopifnot(identical(cache_md5, tools::md5sum(cache_path))); print(report)
-  message("PASS real smoke: ", nrow(report), " tasks; direct reconstructability + distortion observability; ",
+  message("PASS real smoke: ", nrow(report), " tasks; anchored shared-split information recovery; ",
     round(as.numeric(difftime(Sys.time(), started, units = "secs")), 1), " s"); invisible(report)
 }
 
@@ -770,7 +850,8 @@ recovery_run <- function(inputs) {
   }
   seed <- integer_env("RQ2_RECOVERY_SEED", 20260912L, 1L); folds <- integer_env("RQ2_RECOVERY_FOLDS", 5L, 2L)
   lambda <- as.numeric(Sys.getenv("RQ2_RECOVERY_LAMBDA", "0.01")); floor <- as.numeric(Sys.getenv("RQ2_RECOVERY_G_FLOOR", "0.000001"))
-  if (!is.finite(lambda) || lambda <= 0 || !is.finite(floor) || floor <= 0) stop("Invalid lambda/G floor")
+  min_gain <- as.numeric(Sys.getenv("RQ2_RECOVERY_MIN_INNER_GAIN", "0.005"))
+  if (!is.finite(lambda) || lambda <= 0 || !is.finite(floor) || floor <= 0 || !is.finite(min_gain) || min_gain < 0 || min_gain >= 1) stop("Invalid recovery settings")
   workers <- ms_resolve_workers("RQ2_RECOVERY_WORKERS", default = 36L, cap = 48L); ms_worker_init()
   code <- c("scripts/12d_rq2_recovery.R", "scripts/utils/rq1_inference.R", "scripts/utils/rq1_inference_contract.R",
     "scripts/utils/rq1_pairwise_artifacts.R", "scripts/utils/rq2_context_features.R", "scripts/utils/rq2_model_helpers.R",
@@ -778,21 +859,24 @@ recovery_run <- function(inputs) {
     "scripts/12c_rq2_context_models.R", "scripts/utils/rq_context.R", "scripts/utils/melidos_io.R",
     "scripts/utils/core_context.R", "scripts/utils/core_artifacts.R", "external/LightLogR/R/normalise.R")
   provenance <- list(recovery_version = "information_recoverability_v1",
+    estimator_version = "anchored_shared_split_candidate_library_v2",
     rq1_analysis_version = inputs$version, core_artifact_version = inputs$core, analysis_design_id = ms_analysis_design_id(),
-    input_md5 = tools::md5sum(inputs$paths), code_md5 = tools::md5sum(code), seed = seed, folds = folds, lambda = lambda, G_floor = floor,
+    input_md5 = tools::md5sum(inputs$paths), code_md5 = tools::md5sum(code), seed = seed, folds = folds, lambda = lambda,
+    min_inner_relative_gain = min_gain, G_floor = floor,
     predictors = recovery_predictors(), signature_predictors = recovery_signature_predictors(), temporal_predictors = recovery_temporal_predictors(),
     reconstructability_states = recovery_reconstruction_states(), observability_states = recovery_observability_states(),
     calibration = "outer-training affine Y_H~Y_L; circular metrics use affine sin/cos mapping",
     information_sets = "P-only, P+S, P+C, P+S+C; identical predictor dictionaries for every metric and transition",
-    estimands = c(reconstructability = "standardized absolute geometric error in Y_H reconstruction",
+    estimands = c(reconstructability = "standardized absolute geometric error after anchored discrepancy correction",
       observability = "absolute error in predicting D=|z|"),
+    candidate_library = "no update/null, ridge, and XGBoost; conservative inner selection; same library for every information state",
     temporal_source_manifest = inputs$temporal_sources, dayparts = recovery_dayparts(),
-    learners = c(primary = "xgboost", sensitivity = "ridge"), xgb_grid = recovery_xgb_grid(), ridge_grid = recovery_ridge_grid(lambda),
-    inner_validation = "participant-grouped inner split; calibration refit inside inner training; model complexity selected independently for each information state by held-out target loss",
+    xgb_grid = recovery_xgb_grid(), ridge_grid = recovery_ridge_grid(lambda),
+    inner_validation = "one participant-grouped inner split per outer fold, shared by every information state and both estimands; calibration refit inside inner training",
     R = R.version.string, packages = sapply(c("dplyr", "tibble", "readr", "data.table", "xgboost"), function(p) as.character(utils::packageVersion(p))),
     context_provenance_limit = "Context is built only from current weather/diary/context files; no target-state predictors",
     scale_role = "RQ1 standardizer defines reconstruction loss and D=|z|",
-    model = "Direct target reconstruction plus conditional distortion observability from common information sets")
+    model = "Conventional calibrated prior P plus conservatively selected discrepancy correction; D=|z| observability uses the same information sets")
   run_id <- recovery_hash(provenance); out <- file.path("results/rq2/recovery", inputs$version, run_id); dir.create(out, recursive = TRUE, showWarnings = FALSE)
   recovery_atomic(c(provenance, list(run_id = run_id, workers = workers, started = Sys.time(), session = capture.output(sessionInfo()))), file.path(out, "provenance.rds"))
   message("Recoverability: extract current non-duration anchors")
@@ -811,7 +895,7 @@ recovery_run <- function(inputs) {
     meta <- distinct(select(g, all_of(keys)))
     bind_cols(meta, tibble(n_rows = nrow(g), n_eligible = sum(g$eligible), n_context_rows = sum(g$context_row_present & g$eligible),
       n_eligible_participants = n_distinct(g$participant_key[g$eligible]), A_raw_all_eligible = if (any(g$eligible)) mean(abs(g$z[g$eligible])) else NA_real_))
-  })) |> mutate(task_index = row_number()) |>
+  })) |> mutate(task_index = row_number(), learner = "xgboost") |>
     left_join(select(inputs$summary, dimension, comparison_pair_id, metric, A_frozen_RQ1 = A_mean_absolute),
       by = c("dimension", "comparison_pair_id", "metric"), relationship = "many-to-one")
   mismatch <- with(catalog, is.finite(A_raw_all_eligible) & (!is.finite(A_frozen_RQ1) | abs(A_raw_all_eligible - A_frozen_RQ1) > 1e-7 * (1 + abs(A_frozen_RQ1))))
@@ -824,13 +908,13 @@ recovery_run <- function(inputs) {
   input_paths <- vapply(seq_along(groups), function(i) {
     ip <- file.path(out, "inputs", sprintf("task_%04d.rds", i)); recovery_atomic(groups[[i]], ip); ip
   }, character(1))
-  catalog <- bind_rows(lapply(c("xgboost", "ridge"), function(learner) catalog |> mutate(base_task_index = task_index, learner = learner))) |> mutate(task_index = row_number())
   readr::write_csv(catalog, file.path(out, "task_catalog.csv"))
-  tasks <- lapply(seq_len(nrow(catalog)), function(i) list(index = i, input = input_paths[[catalog$base_task_index[i]]],
-    output = file.path(out, "checkpoints", sprintf("task_%04d.rds", i)), learner = catalog$learner[i],
-    seed = seed + catalog$base_task_index[i], xgb_grid = recovery_xgb_grid(), run_id = run_id, lambda = lambda, meta = catalog[i, ]))
+  tasks <- lapply(seq_len(nrow(catalog)), function(i) list(index = i, input = input_paths[[i]],
+    output = file.path(out, "checkpoints", sprintf("task_%04d.rds", i)),
+    seed = seed + i, xgb_grid = recovery_xgb_grid(), run_id = run_id, lambda = lambda,
+    min_relative_gain = min_gain, meta = catalog[i, ]))
   rm(x, groups); invisible(gc(FALSE))
-  message("Recoverability: ", length(tasks), " tasks; ", workers, " workers; direct Y_H reconstruction + D=|z| observability; ", out)
+  message("Recoverability: ", length(tasks), " tasks; ", workers, " workers; anchored adaptive recovery + D=|z| observability; ", out)
   refs <- ms_parallel_map(tasks, recovery_task, workers = workers, seed = seed, packages = c("dplyr", "tibble"), exports = recovery_worker_exports())
   state_rows <- list(); statuses <- list(); fold_rows <- list()
   for (r in refs) {
@@ -857,7 +941,7 @@ recovery_run <- function(inputs) {
   if (any(is.finite(states$loss))) recovery_summaries(filter(states, is.finite(loss)), out, floor)
   recovery_atomic(list(run_id = run_id, complete = !any(status$status == "failed"), statuses = status, heldout_errors = states, provenance = provenance),
     file.path(out, "recovery_manifest.rds"))
-  message("Recoverability outputs: ", out); if (any(status$status == "failed")) stop("Some recovery tasks failed; successful checkpoints retained")
+  message("Recoverability outputs: ", out); if (any(status$status == "failed")) stop("Some recoverability tasks failed; successful checkpoints retained")
   invisible(out)
 }
 
