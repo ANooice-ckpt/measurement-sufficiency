@@ -1,4 +1,4 @@
-# Canonical RQ2 recovery: conventional calibration followed by context-conditioned residual learning.
+# Canonical RQ2 recovery: conventional calibration followed by shared-prior residual learning.
 # Rscript scripts/12d_rq2_recovery.R --check-inputs
 # RQ2_RECOVERY_WORKERS=36 Rscript scripts/12d_rq2_recovery.R --run
 suppressPackageStartupMessages({ library(dplyr); library(tibble) })
@@ -34,16 +34,13 @@ recovery_context_predictors <- function() c(recovery_predictors(), recovery_temp
 recovery_layer_predictors <- function(state) {
   switch(state,
     calibration = character(),
+    prior_only = character(),
     signature = recovery_signature_predictors(),
     context_only = recovery_context_predictors(),
     context = c(recovery_signature_predictors(), recovery_context_predictors()),
     stop("Unknown recovery information layer"))
 }
-recovery_states <- function() c("raw", "calibration", "signature", "context_only", "context")
-recovery_interaction_columns <- function(predictors, circular) {
-  basis <- if (circular) c("low_sin", "low_cos") else "low_z"
-  unlist(lapply(predictors, function(p) paste0(basis, "__x__", p)), use.names = FALSE)
-}
+recovery_states <- function() c("raw", "calibration", "prior_only", "signature", "context_only", "context")
 
 # Compact configuration-local signature from the observed low configuration only.
 recovery_signature <- function(unit, core_version = NULL, requested = NULL) {
@@ -391,7 +388,7 @@ recovery_pairs <- function(inputs) {
 }
 
 # -----------------------------------------------------------------------------
-# Conventional calibration + context-conditioned residual learning
+# Conventional calibration + shared-prior residual learning
 # -----------------------------------------------------------------------------
 recovery_calibration <- function(tr, te, circular) {
   if (!circular) {
@@ -421,12 +418,12 @@ recovery_calibration <- function(tr, te, circular) {
     model = list(model_type = "circular_affine_calibration", coefficients = beta, columns = colnames(xtr), target = "sin_cos_Y_H_from_sin_cos_Y_L"))
 }
 
-# Auxiliary features enter twice: as main effects (context-dependent offsets) and
-# interacted with the observed low measurement (context-dependent transfer slope).
-# Crucially, the residual learner never receives a standalone flexible Y_L main effect.
-recovery_design <- function(tr, te, predictors, circular, screen = TRUE) {
-  allowed <- lapply(c("signature", "context_only", "context"), recovery_layer_predictors)
-  if (!any(vapply(allowed, identical, logical(1), predictors))) stop("Residual predictors must match a prespecified auxiliary information state")
+# Every residual branch receives the same calibrated prior P. Auxiliary branches
+# differ only by adding S, C, or S+C. No hand-built interaction terms are supplied;
+# XGBoost may learn interactions with P from the shared feature set itself.
+recovery_design <- function(tr, te, predictors, circular, prior_train, prior_test, screen = TRUE) {
+  allowed <- lapply(c("prior_only", "signature", "context_only", "context"), recovery_layer_predictors)
+  if (!any(vapply(allowed, identical, logical(1), predictors))) stop("Residual predictors must match an information state")
   a <- data.frame(row.names = seq_len(nrow(tr))); b <- data.frame(row.names = seq_len(nrow(te))); audit <- list()
   for (p in predictors) {
     good <- is.finite(tr[[p]]); med <- if (any(good)) median(tr[[p]][good]) else 0
@@ -434,34 +431,33 @@ recovery_design <- function(tr, te, predictors, circular, screen = TRUE) {
     a[[paste0(p, "_missing")]] <- as.numeric(!good); b[[paste0(p, "_missing")]] <- as.numeric(!is.finite(te[[p]]))
     audit[[p]] <- tibble(predictor = p, train_observed = sum(good), test_observed = sum(is.finite(te[[p]])), train_median = med)
   }
-  scaled <- rq2_model_helpers()$scale_train_test(a, b, names(a))
-  if (!screen) {
-    for (p in setdiff(names(a), scaled$keep)) { scaled$tr[[p]] <- 0; scaled$te[[p]] <- 0 }
-    scaled$keep <- names(a)
-  }
-  atr <- as.data.frame(scaled$tr[, scaled$keep, drop = FALSE]); ate <- as.data.frame(scaled$te[, scaled$keep, drop = FALSE])
-  if (circular) {
-    low_tr <- data.frame(low_sin = sin(tr$candidate_value * 2*pi/86400), low_cos = cos(tr$candidate_value * 2*pi/86400))
-    low_te <- data.frame(low_sin = sin(te$candidate_value * 2*pi/86400), low_cos = cos(te$candidate_value * 2*pi/86400))
-    low_meta <- list(type = "circular_sin_cos", center = NA_real_, scale = NA_real_)
-  } else {
-    center <- mean(tr$candidate_value); scl <- sd(tr$candidate_value)
-    if (!is.finite(scl) || scl <= sqrt(.Machine$double.eps)) scl <- 1
-    low_tr <- data.frame(low_z = (tr$candidate_value - center) / scl); low_te <- data.frame(low_z = (te$candidate_value - center) / scl)
-    low_meta <- list(type = "training_standardized_low", center = center, scale = scl)
-  }
-  interaction_cols <- character()
-  for (p in intersect(predictors, names(atr))) {
-    for (lb in names(low_tr)) {
-      nm <- paste0(lb, "__x__", p)
-      atr[[nm]] <- low_tr[[lb]] * atr[[p]]; ate[[nm]] <- low_te[[lb]] * ate[[p]]
-      interaction_cols <- c(interaction_cols, nm)
+  if (ncol(a)) {
+    scaled <- rq2_model_helpers()$scale_train_test(a, b, names(a))
+    if (!screen) {
+      for (p in setdiff(names(a), scaled$keep)) { scaled$tr[[p]] <- 0; scaled$te[[p]] <- 0 }
+      scaled$keep <- names(a)
     }
+    atr <- as.data.frame(scaled$tr[, scaled$keep, drop = FALSE]); ate <- as.data.frame(scaled$te[, scaled$keep, drop = FALSE])
+    centers <- if (length(scaled$keep)) vapply(a[scaled$keep], mean, numeric(1)) else numeric()
+    scales <- if (length(scaled$keep)) vapply(a[scaled$keep], sd, numeric(1)) else numeric()
+  } else {
+    atr <- data.frame(row.names = seq_len(nrow(tr))); ate <- data.frame(row.names = seq_len(nrow(te)))
+    centers <- numeric(); scales <- numeric()
   }
+  if (circular) {
+    prior_tr <- data.frame(prior_sin = sin(prior_train * 2*pi/86400), prior_cos = cos(prior_train * 2*pi/86400))
+    prior_te <- data.frame(prior_sin = sin(prior_test * 2*pi/86400), prior_cos = cos(prior_test * 2*pi/86400))
+    prior_meta <- list(type = "circular_calibrated_prior_sin_cos", center = NA_real_, scale = NA_real_)
+  } else {
+    center <- mean(prior_train); scl <- sd(prior_train)
+    if (!is.finite(scl) || scl <= sqrt(.Machine$double.eps)) scl <- 1
+    prior_tr <- data.frame(prior_z = (prior_train - center) / scl); prior_te <- data.frame(prior_z = (prior_test - center) / scl)
+    prior_meta <- list(type = "training_standardized_calibrated_prior", center = center, scale = scl)
+  }
+  atr <- cbind(prior_tr, atr); ate <- cbind(prior_te, ate)
   aa <- cbind(intercept = 1, as.matrix(atr)); bb <- cbind(intercept = 1, as.matrix(ate))
-  list(tr = aa, te = bb, kept = names(atr), interaction_columns = interaction_cols, low_basis = low_meta,
-    audit = bind_rows(audit), centers = if (length(scaled$keep)) vapply(a[scaled$keep], mean, numeric(1)) else numeric(),
-    scales = if (length(scaled$keep)) vapply(a[scaled$keep], sd, numeric(1)) else numeric())
+  list(tr = aa, te = bb, kept = names(atr), prior_columns = names(prior_tr), prior_basis = prior_meta,
+    audit = bind_rows(audit), centers = centers, scales = scales)
 }
 
 recovery_residual_target <- function(reference, baseline, circular) {
@@ -508,7 +504,8 @@ recovery_predict <- function(tr, te, predictors, circular, lambda, learner = "ri
                              seed = 20260912L, config = recovery_xgb_config(), calibration = NULL) {
   if (!learner %in% c("ridge", "xgboost")) stop("Unknown recovery learner")
   if (is.null(calibration)) calibration <- recovery_calibration(tr, te, circular)
-  d <- recovery_design(tr, te, predictors, circular, screen = learner == "ridge")
+  d <- recovery_design(tr, te, predictors, circular, calibration$train_prediction, calibration$prediction,
+    screen = learner == "ridge")
   y <- recovery_residual_target(tr$reference_value, calibration$train_prediction, circular); details <- list()
   if (learner == "ridge") {
     penalty <- diag(ncol(d$tr)); penalty[1, 1] <- 0
@@ -517,7 +514,8 @@ recovery_predict <- function(tr, te, predictors, circular, lambda, learner = "ri
   } else {
     split <- recovery_inner(tr, seed); v <- tr$participant_key %in% split$participant_key[split$inner_validation]
     inner_cal <- recovery_calibration(tr[!v, ], tr[v, ], circular)
-    inner <- recovery_design(tr[!v, ], tr[v, ], predictors, circular, screen = FALSE)
+    inner <- recovery_design(tr[!v, ], tr[v, ], predictors, circular,
+      inner_cal$train_prediction, inner_cal$prediction, screen = FALSE)
     inner_y <- recovery_residual_target(tr$reference_value[!v], inner_cal$train_prediction, circular)
     inner_y_val <- recovery_residual_target(tr$reference_value[v], inner_cal$prediction, circular)
     trim <- function(design) list(tr = design$tr[, -1, drop = FALSE], te = design$te[, -1, drop = FALSE])
@@ -525,15 +523,15 @@ recovery_predict <- function(tr, te, predictors, circular, lambda, learner = "ri
       list(tr = inner_y[, j], te = inner_y_val[, j]), trim(d), y[, j], config, seed))
     pr <- do.call(cbind, lapply(fits, `[[`, "prediction"))
     details <- list(target_terms = colnames(y), boosters = lapply(fits, `[[`, "model"), inner_participants = split,
-      inner_calibration = inner_cal$model, inner_low_basis = inner$low_basis, inner_centers = inner$centers,
+      inner_calibration = inner_cal$model, inner_prior_basis = inner$prior_basis, inner_centers = inner$centers,
       inner_scales = inner$scales, inner_imputation = inner$audit, inner_seed = seed, config = config)
   }
   applied <- recovery_apply_residual(calibration$prediction, pr, circular)
   if (any(!is.finite(applied$prediction))) stop("Non-finite held-out predictions")
   list(prediction = applied$prediction, correction = applied$correction, fallback = applied$fallback,
-    model = c(list(learner = learner, target = "context_conditioned_residual_after_conventional_calibration",
-      baseline = calibration$model, circular = circular, columns = colnames(d$tr), interaction_columns = d$interaction_columns,
-      low_basis = d$low_basis, centers = d$centers, scales = d$scales, context_imputation = d$audit), details))
+    model = c(list(learner = learner, target = "residual_after_conventional_calibration_with_shared_prior",
+      baseline = calibration$model, circular = circular, columns = colnames(d$tr), prior_columns = d$prior_columns,
+      prior_basis = d$prior_basis, centers = d$centers, scales = d$scales, context_imputation = d$audit), details))
 }
 
 recovery_fit <- function(task) {
@@ -549,7 +547,7 @@ recovery_fit <- function(task) {
     cal <- recovery_calibration(tr, te, circular); x$calibration[vi] <- cal$prediction; x$calibration_fallback[vi] <- cal$fallback
     models[[paste(f, "calibration", sep = "_")]] <- c(list(fold = f, state = "calibration", learner = "conventional",
       n_train = nrow(tr), n_test = nrow(te), n_train_participants = n_distinct(tr$participant_key)), cal$model)
-    for (state in c("signature", "context_only", "context")) {
+    for (state in c("prior_only", "signature", "context_only", "context")) {
       fit <- recovery_predict(tr, te, recovery_layer_predictors(state), circular, task$lambda,
         learner = task$learner, seed = task$seed + f, config = task$xgb_config, calibration = cal)
       x[[state]][vi] <- fit$prediction; x[[paste0(state, "_fallback")]][vi] <- fit$fallback
@@ -579,7 +577,7 @@ recovery_task <- function(task) {
 }
 
 recovery_worker_exports <- function() c("recovery_task", "recovery_fit", "recovery_predict", "recovery_calibration",
-  "recovery_design", "recovery_interaction_columns", "recovery_residual_target", "recovery_apply_residual", "recovery_delta",
+  "recovery_design", "recovery_residual_target", "recovery_apply_residual", "recovery_delta",
   "recovery_predictors", "recovery_atomic", "rq2_model_helpers", "recovery_inner", "recovery_boost", "recovery_xgb_config",
   "recovery_layer_predictors", "recovery_signature_predictors", "recovery_temporal_bases", "recovery_temporal_predictors",
   "recovery_context_predictors", "recovery_states", "recovery_dayparts", "rq2_context_external_predictors",
@@ -623,8 +621,9 @@ recovery_smoke <- function(inputs) {
         stopifnot(model$model_type %in% c("affine_calibration", "circular_affine_calibration", "circular_constant_offset"))
       } else {
         base <- recovery_layer_predictors(model$state)
-        allowed <- c("intercept", base, paste0(base, "_missing"), recovery_interaction_columns(base, model$circular))
-        stopifnot(all(model$columns %in% allowed), !any(model$columns %in% c("low", "low_z", "low_sin", "low_cos")))
+        prior <- if (model$circular) c("prior_sin", "prior_cos") else "prior_z"
+        allowed <- c("intercept", prior, base, paste0(base, "_missing"))
+        stopifnot(all(model$columns %in% allowed), all(prior %in% model$columns))
         if (model$learner == "xgboost") {
           heldout <- unique(obj$predictions$participant_key[obj$predictions$fold == model$fold]); stopifnot(!any(model$inner_participants$participant_key %in% heldout))
         }
@@ -635,7 +634,7 @@ recovery_smoke <- function(inputs) {
       geometry = obj$meta$metric_geometry, heldout_days = unname(counts["raw"]), states = length(counts), fitted_models = length(obj$models))
   }))
   stopifnot(identical(cache_md5, tools::md5sum(cache_path))); print(report)
-  message("PASS real smoke: ", nrow(report), " tasks; conventional calibration + YL-conditioned residual learning; ",
+  message("PASS real smoke: ", nrow(report), " tasks; conventional calibration + shared-prior residual learning; ",
     round(as.numeric(difftime(Sys.time(), started, units = "secs")), 1), " s"); invisible(report)
 }
 
@@ -653,20 +652,20 @@ recovery_run <- function(inputs) {
     "scripts/utils/parallel_runtime.R", "scripts/utils/analysis_design.R", "scripts/utils/artifact_validation.R",
     "scripts/12c_rq2_context_models.R", "scripts/utils/rq_context.R", "scripts/utils/melidos_io.R",
     "scripts/utils/core_context.R", "scripts/utils/core_artifacts.R", "external/LightLogR/R/normalise.R")
-  provenance <- list(recovery_version = "context_conditioned_residual_calibration",
+  provenance <- list(recovery_version = "shared_calibrated_prior_residual_learning",
     rq1_analysis_version = inputs$version, core_artifact_version = inputs$core, analysis_design_id = ms_analysis_design_id(),
     input_md5 = tools::md5sum(inputs$paths), code_md5 = tools::md5sum(code), seed = seed, folds = folds, lambda = lambda, G_floor = floor,
     predictors = recovery_predictors(), signature_predictors = recovery_signature_predictors(), temporal_predictors = recovery_temporal_predictors(),
     fitted_states = recovery_states(), calibration = "outer-training affine Y_H~Y_L; circular metrics use affine sin/cos mapping",
-    residual_estimand = "auxiliary main effects plus interactions with observed Y_L; no standalone flexible Y_L residual main effect",
-    factorial_context_state = "calibrated Y_L plus current daily/daypart context, with Y_L-conditioned context terms",
+    residual_estimand = "same residual learner and calibrated prior P in every flexible branch; S/C are the only added information",
+    factorial_context_state = "P-only, P+S, P+C, and P+S+C; no hand-built P-by-auxiliary interactions",
     temporal_source_manifest = inputs$temporal_sources, dayparts = recovery_dayparts(),
     learners = c(primary = "xgboost", sensitivity = "ridge"), xgb_config = recovery_xgb_config(),
-    inner_validation = "participant-grouped inner split; calibration and low-basis transforms refit inside inner training; residual early stopping on inner-held-out participants",
+    inner_validation = "participant-grouped inner split; affine calibration and prior basis refit inside inner training; residual early stopping on inner-held-out participants",
     R = R.version.string, packages = sapply(c("dplyr", "tibble", "readr", "data.table", "xgboost"), function(p) as.character(utils::packageVersion(p))),
     context_provenance_limit = "Context is built only from current weather/diary/context files; no target-state predictors",
     scale_role = "RQ1 SD used only for scoring",
-    model = "Conventional calibration prior plus auxiliary-conditioned residual transfer; factorial S/C branches; XGBoost primary, ridge sensitivity")
+    model = "Conventional affine prior plus common-capacity residual learner; compare P-only with P+S, P+C, and P+S+C")
   run_id <- recovery_hash(provenance); out <- file.path("results/rq2/recovery", inputs$version, run_id); dir.create(out, recursive = TRUE, showWarnings = FALSE)
   recovery_atomic(c(provenance, list(run_id = run_id, workers = workers, started = Sys.time(), session = capture.output(sessionInfo()))), file.path(out, "provenance.rds"))
   message("Recovery: extract current non-duration anchors")
@@ -704,7 +703,7 @@ recovery_run <- function(inputs) {
     output = file.path(out, "checkpoints", sprintf("task_%04d.rds", i)), learner = catalog$learner[i],
     seed = seed + catalog$base_task_index[i], xgb_config = recovery_xgb_config(), run_id = run_id, lambda = lambda, meta = catalog[i, ]))
   rm(x, groups); invisible(gc(FALSE))
-  message("Recovery: ", length(tasks), " tasks; ", workers, " workers; conventional calibration + YL-conditioned residual learning; ", out)
+  message("Recovery: ", length(tasks), " tasks; ", workers, " workers; affine calibration + shared-prior residual learning; ", out)
   refs <- ms_parallel_map(tasks, recovery_task, workers = workers, seed = seed, packages = c("dplyr", "tibble"), exports = recovery_worker_exports())
   state_rows <- list(); statuses <- list(); fold_rows <- list()
   for (r in refs) {
@@ -737,31 +736,39 @@ recovery_run <- function(inputs) {
 recovery_summaries <- function(states, out, floor) {
   raw <- states |> filter(state == "raw") |> select(task_index, A_raw = A)
   cal <- states |> filter(state == "calibration") |> select(task_index, A_calibration = A)
+  prior <- states |> filter(state == "prior_only") |> select(task_index, A_prior_only = A)
   sig <- states |> filter(state == "signature") |> select(task_index, A_signature = A)
   ctx0 <- states |> filter(state == "context_only") |> select(task_index, A_context_only = A)
   comparison <- states |> filter(state != "raw") |>
-    left_join(raw, by = "task_index") |> left_join(cal, by = "task_index") |> left_join(sig, by = "task_index") |> left_join(ctx0, by = "task_index") |>
+    left_join(raw, by = "task_index") |> left_join(cal, by = "task_index") |> left_join(prior, by = "task_index") |>
+    left_join(sig, by = "task_index") |> left_join(ctx0, by = "task_index") |>
     mutate(delta_A = A_raw - A, G = if_else(A_raw > floor, 1 - A / A_raw, NA_real_), G_denominator_small = A_raw <= floor,
-      signature_increment = if_else(state == "signature", A_calibration - A, NA_real_),
-      context_total_increment = if_else(state == "context_only", A_calibration - A, NA_real_),
+      prior_flexible_increment = if_else(state == "prior_only", A_calibration - A, NA_real_),
+      signature_increment = if_else(state == "signature", A_prior_only - A, NA_real_),
+      context_total_increment = if_else(state == "context_only", A_prior_only - A, NA_real_),
       context_increment = if_else(state == "context", A_signature - A, NA_real_),
       signature_after_context_increment = if_else(state == "context", A_context_only - A, NA_real_),
-      context_vs_calibration = if_else(state == "context", A_calibration - A, NA_real_),
-      context_overlap_or_interaction = if_else(state == "context", (A_calibration - A_context_only) - (A_signature - A), NA_real_))
+      practical_context_increment = if_else(state == "context_only", A_calibration - A, NA_real_),
+      practical_joint_increment = if_else(state == "context", A_calibration - A, NA_real_),
+      context_overlap_or_interaction = if_else(state == "context", (A_prior_only - A_context_only) - (A_signature - A), NA_real_))
   decomposition <- comparison |> filter(state == "context") |>
     transmute(task_index, learner, comparison_pair_id, metric, raw_loss = A_raw,
-      calibration_gain = A_raw - A_calibration, signature_gain = A_calibration - A_signature,
-      context_total_gain = A_calibration - A_context_only, context_unique_after_signature = A_signature - A,
-      signature_unique_after_context = A_context_only - A, context_shared_or_interaction = (A_calibration - A_context_only) - (A_signature - A),
-      self_recoverable_loss = A_raw - A_signature, context_recoverable_loss = A_signature - A,
-      full_auxiliary_gain = A_calibration - A,
-      context_shapley_gain = .5 * ((A_calibration - A_context_only) + (A_signature - A)),
-      signature_shapley_gain = .5 * ((A_calibration - A_signature) + (A_context_only - A)),
+      affine_calibration_loss = A_calibration, prior_only_loss = A_prior_only,
+      calibration_gain = A_raw - A_calibration, flexible_prior_gain = A_calibration - A_prior_only,
+      signature_gain = A_prior_only - A_signature, context_total_gain = A_prior_only - A_context_only,
+      context_unique_after_signature = A_signature - A, signature_unique_after_context = A_context_only - A,
+      context_shared_or_interaction = (A_prior_only - A_context_only) - (A_signature - A),
+      practical_context_gain = A_calibration - A_context_only, practical_joint_gain = A_calibration - A,
+      full_auxiliary_gain = A_prior_only - A,
+      context_shapley_gain = .5 * ((A_prior_only - A_context_only) + (A_signature - A)),
+      signature_shapley_gain = .5 * ((A_prior_only - A_signature) + (A_context_only - A)),
       context_share_of_auxiliary_gain = if_else(full_auxiliary_gain > floor, context_shapley_gain / full_auxiliary_gain, NA_real_),
       signature_share_of_auxiliary_gain = if_else(full_auxiliary_gain > floor, signature_shapley_gain / full_auxiliary_gain, NA_real_),
       unrecovered_residual = A,
-      reconstruction_error_signature_first = A_raw - ((A_raw - A_calibration) + (A_calibration - A_signature) + (A_signature - A) + A),
-      reconstruction_error_context_first = A_raw - ((A_raw - A_calibration) + (A_calibration - A_context_only) + (A_context_only - A) + A),
+      reconstruction_error_signature_first = A_raw - ((A_raw - A_calibration) + (A_calibration - A_prior_only) +
+        (A_prior_only - A_signature) + (A_signature - A) + A),
+      reconstruction_error_context_first = A_raw - ((A_raw - A_calibration) + (A_calibration - A_prior_only) +
+        (A_prior_only - A_context_only) + (A_context_only - A) + A),
       shapley_reconstruction_error = full_auxiliary_gain - (context_shapley_gain + signature_shapley_gain))
   readr::write_csv(decomposition, file.path(out, "loss_decomposition.csv"))
   comparison <- comparison |> group_by(learner, comparison_pair_id, state) |> group_modify(function(d, key) {
@@ -776,10 +783,12 @@ recovery_summaries <- function(states, out, floor) {
     fraction_improved = mean(delta_A > 0), median_delta_A = median(delta_A),
     median_G = if (any(is.finite(G))) median(G[is.finite(G)]) else NA_real_,
     fraction_context_better_than_signature = if (first(state) == "context") mean(context_increment > 0) else NA_real_,
-    fraction_context_only_better_than_calibration = if (first(state) == "context_only") mean(context_total_increment > 0) else NA_real_,
-    fraction_signature_better_than_calibration = if (first(state) == "signature") mean(signature_increment > 0) else NA_real_,
+    fraction_context_only_better_than_prior = if (first(state) == "context_only") mean(context_total_increment > 0) else NA_real_,
+    fraction_signature_better_than_prior = if (first(state) == "signature") mean(signature_increment > 0) else NA_real_,
+    fraction_prior_better_than_affine = if (first(state) == "prior_only") mean(prior_flexible_increment > 0) else NA_real_,
     median_context_increment = if (first(state) == "context") median(context_increment) else NA_real_,
     median_context_total_increment = if (first(state) == "context_only") median(context_total_increment) else NA_real_,
+    median_practical_context_increment = if (first(state) == "context_only") median(practical_context_increment) else NA_real_,
     raw_recovered_spearman = if (sd(A_raw) > 0 && sd(A) > 0) cor(A_raw, A, method = "spearman") else NA_real_,
     adjusted_delta_IQR = if (any(is.finite(delta_A_raw_adjusted))) IQR(delta_A_raw_adjusted, na.rm = TRUE) else NA_real_, .groups = "drop")
   readr::write_csv(overview, file.path(out, "recovery_overview.csv"))
