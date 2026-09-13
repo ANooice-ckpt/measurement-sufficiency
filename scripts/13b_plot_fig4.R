@@ -18,7 +18,7 @@ if (!nzchar(run_dir)) {
   candidates <- candidates[vapply(candidates, function(p) {
     z <- readRDS(p)
     isTRUE(z$complete) && identical(z$provenance$analysis_design_id, ms_analysis_design_id()) &&
-      identical(z$provenance$recovery_version, "rq2_recovery_v5_rich_temporal_context")
+      identical(z$provenance$recovery_version, "rq2_recovery_v6_contextual_residual_calibration")
   }, logical(1))]
   if (length(candidates) != 1L) stop("Set RQ2_RECOVERY_RUN_DIR: expected exactly one compatible completed run")
   run_dir <- dirname(candidates)
@@ -28,7 +28,7 @@ ms_plot_require_files(c(manifest_path, "results/rq1/rq1_pairwise_summary.csv"), 
 frozen <- readRDS(manifest_path); prov <- frozen$provenance
 if (!isTRUE(frozen$complete) || any(frozen$statuses$status == "failed")) stop("Incomplete recovery run")
 if (!identical(prov$analysis_design_id, ms_analysis_design_id()) ||
-    !identical(prov$recovery_version, "rq2_recovery_v5_rich_temporal_context") ||
+    !identical(prov$recovery_version, "rq2_recovery_v6_contextual_residual_calibration") ||
     length(prov$signature_predictors) != 16L || length(prov$predictors) != 18L || length(prov$temporal_predictors) != 32L)
   stop("Recovery version/design/information contract mismatch")
 CORE_VERSION <- ms_plot_assert_core(prov$core_artifact_version)
@@ -81,7 +81,7 @@ panel_header <- function(p, title, subtitle, header = .14) ggdraw() +
   draw_label(title, x = .012, y = .995, hjust = 0, vjust = 1, size = 7.4, fontface = "bold", fontfamily = MS_FONT) +
   draw_label(subtitle, x = .012, y = 1 - header * .50, hjust = 0, vjust = 1, size = 5.2, colour = "#626A70", fontfamily = MS_FONT)
 
-# Factorial branch gains share the calibrated YL baseline. Ratios of metric-equal
+# Factorial branch gains share the conventional-calibration baseline. Ratios of metric-equal
 # means avoid unstable per-metric ratios; signed gains are never truncated.
 gain_names <- c("signature_gain", "context_total_gain", "joint_gain", "context_gain")
 STAGE_LABELS <- c(signature_gain = "+ S", context_total_gain = "+ C", joint_gain = "+ S + C", context_gain = "C after S")
@@ -132,10 +132,10 @@ p_stage <- ggplot(contrast_summary |> filter(learner == "xgboost", stage != "C a
   facet_wrap(~stage, nrow = 1, scales = "free_x") +
   scale_colour_manual(values = c("+ S" = "#4D9085", "+ C" = "#C57A32", "+ S + C" = "#405F80")) +
   scale_x_continuous(breaks = scales::breaks_pretty(n = 3), labels = function(x) paste0(x, "%"), expand = expansion(mult = .16)) +
-  labs(x = "Reduction relative to YL-only loss", y = NULL) + theme_recovery() +
+  labs(x = "Reduction relative to post-calibration loss", y = NULL) + theme_recovery() +
   theme(panel.grid.major.y = element_blank(), panel.spacing.x = unit(2, "mm"), axis.text.x = element_text(size = 5.2))
 pa <- panel_header(p_stage, "a  Independent and joint information gains",
-  "XGBoost; all branches share YL-only baseline; separate x-scales", .15)
+  "Residual XGBoost; all branches share conventional-calibration baseline; separate x-scales", .15)
 
 # Compare order-independent information attribution on a common relative scale.
 attribution_points <- class_attribution_main |>
@@ -202,7 +202,7 @@ pc <- panel_header(p_composition, "c  Metric-level composition of full recovery"
   "Each bar partitions all metrics: usable S/C dominance, mixed attribution, or no gain", .11)
 
 # Practical action coordinates are frequencies rather than mean gains. The x-axis
-# is how often S+C improves over YL-only; the y-axis is how often context dominates
+# is how often S+C improves over conventional calibration; the y-axis is how often context dominates
 # among recovered metrics with a stable non-negative Shapley partition.
 action_summary <- wide |> filter(learner == "xgboost", metric_class %in% display_classes) |>
   group_by(comparison_pair_id, pair, metric_class) |>
@@ -264,14 +264,14 @@ legend <- ms_metric_legend(text_size = 5.8, point_size = 1.2)
 top <- plot_grid(pa, pb, nrow = 1, rel_widths = c(.61, .39))
 lower <- plot_grid(pc, pd, nrow = 1, rel_widths = c(.64, .36), align = "h", axis = "tb")
 foot <- ggdraw() + draw_label(paste0(
-  "a: 100 \u00d7 mean(branch gain) / mean(YL-only loss); denominators \u2264 ", format(ratio_floor, scientific = TRUE), " are unavailable.\n",
-  "b: axes = 100 \u00d7 mean(two-player Shapley gain) / mean(YL-only loss); diagonal = equal order-independent attribution.\n",
+  "a: 100 \u00d7 mean(branch gain) / mean(post-calibration loss); denominators \u2264 ", format(ratio_floor, scientific = TRUE), " are unavailable.\n",
+  "b: axes = 100 \u00d7 mean(two-player Shapley gain) / mean(post-calibration loss); diagonal = equal order-independent attribution.\n",
   "c: metric-level categories use full S+C gain and two-player Shapley components; mixed = positive S+C recovery with either attributed component < 0.\n",
-  "d: x = P(S+C improves YL-only); y = P(context Shapley > signature Shapley | positive S+C recovery and both Shapley components \u2265 0).\n",
+  "d: x = P(S+C improves conventional calibration); y = P(context Shapley > signature Shapley | positive S+C recovery and both Shapley components \u2265 0).\n",
   "d thresholds (50% recovery; 33/67% context dominance) are descriptive deployment heuristics, not inferential cutoffs; crosses at y=0 indicate no stable non-negative partition.\n",
   "Shapley values average the two S/C entry orders and exactly partition observed S+C recovery; they are model-dependent attribution, not causal effects or information-theoretic necessity.\n",
   "Class displays require \u22653 metrics; singleton exposure-history/spectrum summaries remain in the audit. b/d: filled circle = placement; triangle = optical; open circle = temporal.\n",
-  "YL = low metric; S = 16 signature features; C = 18 daily + 32 daypart features. All gains use identical participant-grouped held-out support; full signed estimates are retained in exported audits."),
+  "Calibration = conventional affine YH~YL mapping fitted on training participants only; S = 16 signature features; C = 18 daily + 32 daypart features. All gains use identical participant-grouped held-out support; full signed estimates are retained in exported audits."),
   x = .01, hjust = 0, size = 4.85, colour = "#626A70", fontfamily = MS_FONT)
 figure <- plot_grid(top, legend, lower, foot, ncol = 1, rel_heights = c(.34, .04, .52, .10))
 write_csv(contrast_summary, "results/rq2/fig4_recovery_relative_display.csv")
