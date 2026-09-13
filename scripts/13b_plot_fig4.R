@@ -35,7 +35,7 @@ N_DAYPART_CONTEXT <- if (is.null(prov$temporal_predictors)) NA_integer_ else len
 
 PAIR_ORDER <- c("chest_vs_eye", "wrist_vs_eye", "LIGHT_vs_MEDI", "20s_vs_10s", "30s_vs_10s", "40s_vs_10s", "60s_vs_10s", "120s_vs_10s")
 PAIR_LABELS <- c("Chest \u2192 eye", "Wrist \u2192 eye", "LIGHT \u2192 MEDI", "20 \u2192 10 s", "30 \u2192 10 s", "40 \u2192 10 s", "60 \u2192 10 s", "120 \u2192 10 s")
-STATES <- c("raw", "calibration", "signature", "context_only", "context")
+STATES <- c("raw", "calibration", "prior_only", "signature", "context_only", "context")
 errors <- as_tibble(frozen$heldout_errors)
 ms_plot_require_columns(errors, c("learner", "task_index", "comparison_pair_id", "metric", "metric_class", "state", "A", "n_test", "n_test_participants", "status", "support_id"), "Recovery errors")
 if (!setequal(unique(errors$state), STATES) || anyDuplicated(errors[c("learner", "task_index", "state")]))
@@ -51,10 +51,17 @@ if (!nrow(available) || any(!is.finite(available$A) | available$A < 0)) stop("In
 if (!"xgboost" %in% unique(available$learner)) stop("Primary XGBoost recovery results are absent")
 wide <- available |> select(learner, task_index, dimension, comparison_pair_id, metric, metric_class, support_id, state, A) |>
   pivot_wider(names_from = state, values_from = A) |>
-  mutate(calibration_gain = raw - calibration, signature_gain = calibration - signature,
-    context_gain = signature - context, context_total_gain = calibration - context_only,
-    joint_gain = calibration - context, signature_after_context_gain = context_only - context,
-    shared_or_interaction = (calibration - context_only) - (signature - context), total_gain = raw - context,
+  mutate(calibration_gain = raw - calibration,
+    prior_flexible_gain = calibration - prior_only,
+    signature_gain = prior_only - signature,
+    context_gain = signature - context,
+    context_total_gain = prior_only - context_only,
+    joint_gain = prior_only - context,
+    signature_after_context_gain = context_only - context,
+    shared_or_interaction = (prior_only - context_only) - (signature - context),
+    practical_context_gain = calibration - context_only,
+    practical_joint_gain = calibration - context,
+    total_gain = raw - context,
     context_shapley_gain = .5 * (context_total_gain + context_gain),
     signature_shapley_gain = .5 * (signature_gain + signature_after_context_gain),
     attribution_balance = context_shapley_gain - signature_shapley_gain,
@@ -75,13 +82,13 @@ panel_header <- function(p, title, subtitle, header = .14) ggdraw() +
   draw_label(title, x = .012, y = .995, hjust = 0, vjust = 1, size = 7.4, fontface = "bold", fontfamily = MS_FONT) +
   draw_label(subtitle, x = .012, y = 1 - header * .50, hjust = 0, vjust = 1, size = 5.2, colour = "#626A70", fontfamily = MS_FONT)
 
-# Factorial branch gains share the conventional-calibration baseline.
+# S/C gains are conditional on the same flexible P-only residual decoder.
 gain_names <- c("signature_gain", "context_total_gain", "joint_gain", "context_gain")
 STAGE_LABELS <- c(signature_gain = "+ S", context_total_gain = "+ C", joint_gain = "+ S + C", context_gain = "C after S")
 ratio_floor <- max(as.numeric(prov$G_floor), 1e-6)
 relative_gain <- function(gain, baseline) ifelse(is.finite(baseline) & baseline > ratio_floor, 100 * gain / baseline, NA_real_)
 stage_rows <- wide |> pivot_longer(all_of(gain_names), names_to = "stage", values_to = "gain") |>
-  mutate(baseline = calibration,
+  mutate(baseline = prior_only,
     stage = factor(stage, levels = gain_names, labels = unname(STAGE_LABELS)),
     metric_class = factor(metric_class, levels = MS_METRIC_CLASSES))
 contrast_summary <- stage_rows |> group_by(learner, pair, stage) |>
@@ -97,7 +104,7 @@ display_classes <- MS_METRIC_CLASSES[MS_METRIC_CLASSES %in% as.character(class_m
 class_attribution <- wide |>
   mutate(metric_class = factor(metric_class, levels = MS_METRIC_CLASSES)) |>
   group_by(learner, comparison_pair_id, pair, metric_class) |>
-  summarise(n_metrics = n(), mean_baseline = mean(calibration),
+  summarise(n_metrics = n(), mean_baseline = mean(prior_only),
     mean_signature_shapley_gain = mean(signature_shapley_gain),
     mean_context_shapley_gain = mean(context_shapley_gain),
     mean_full_auxiliary_gain = mean(joint_gain),
@@ -121,10 +128,10 @@ p_stage <- ggplot(contrast_summary |> filter(learner == "xgboost", stage != "C a
   facet_wrap(~stage, nrow = 1, scales = "free_x") +
   scale_colour_manual(values = c("+ S" = "#4D9085", "+ C" = "#C57A32", "+ S + C" = "#405F80")) +
   scale_x_continuous(breaks = scales::breaks_pretty(n = 3), labels = function(x) paste0(x, "%"), expand = expansion(mult = .16)) +
-  labs(x = "Reduction relative to post-calibration loss", y = NULL) + theme_recovery() +
+  labs(x = "Reduction relative to P-only residual loss", y = NULL) + theme_recovery() +
   theme(panel.grid.major.y = element_blank(), panel.spacing.x = unit(2, "mm"), axis.text.x = element_text(size = 5.2))
 pa <- panel_header(p_stage, "a  Independent and joint information gains",
-  "Context-conditioned residual XGBoost; all branches share conventional calibration", .15)
+  "Same residual XGBoost; all auxiliary branches share calibrated prior P", .15)
 
 attribution_points <- class_attribution_main |>
   mutate(dimension = case_when(comparison_pair_id %in% PAIR_ORDER[1:2] ~ "Placement",
@@ -146,7 +153,7 @@ p_context <- ggplot(attribution_points,
   scale_y_continuous(limits = attribution_limits, labels = function(x) paste0(x, "%"), breaks = scales::breaks_pretty(3)) +
   coord_fixed() + labs(x = "Signature-attributed gain", y = "Context-attributed gain") + theme_recovery()
 pb <- panel_header(p_context, "b  Order-independent attribution of recoverable information",
-  "Class \u00d7 contrast; above diagonal = context-dominant", .15)
+  "Conditional on calibrated prior P; above diagonal = context-dominant", .15)
 
 COMPONENT_LEVELS <- c("Context-dominant", "Signature-dominant", "Mixed / unstable", "No usable recovery")
 COMPONENT_COLORS <- c("Context-dominant" = "#C57A32", "Signature-dominant" = "#4D9085",
@@ -183,8 +190,8 @@ p_composition <- ggplot(composition, aes(fraction, pair_plot, fill = recovery_co
     strip.text = element_text(size = 6.2, face = "bold"), axis.text = element_text(size = 5.4),
     legend.position = "bottom", legend.text = element_text(size = 5.3), legend.key.width = unit(5.5, "mm"),
     legend.margin = margin(t = 1), panel.spacing = unit(2.3, "mm"), plot.margin = margin(3, 3, 3, 3))
-pc <- panel_header(p_composition, "c  Metric-level composition of full recovery",
-  "Each bar partitions all metrics: usable S/C dominance, mixed attribution, or no gain", .11)
+pc <- panel_header(p_composition, "c  Metric-level composition of auxiliary recovery",
+  "Each bar partitions recovery beyond P-only: S/C dominance, mixed attribution, or no gain", .11)
 
 action_summary <- wide |> filter(learner == "xgboost", metric_class %in% display_classes) |>
   group_by(comparison_pair_id, pair, metric_class) |>
@@ -236,25 +243,24 @@ p_action <- ggplot() +
   theme_recovery() +
   theme(panel.grid = element_blank(), axis.text = element_text(size = 5.2), axis.title = element_text(size = 5.5),
     plot.margin = margin(3, 4, 3, 4))
-pd <- panel_header(p_action, "d  Practical recovery action map",
-  "Frequency-based deployment view; shaded regions are descriptive heuristics", .11)
+pd <- panel_header(p_action, "d  Auxiliary recovery action map",
+  "Frequency-based view of recovery beyond the P-only residual decoder", .11)
 
 atlas_long <- class_summary
 legend <- ms_metric_legend(text_size = 5.8, point_size = 1.2)
 top <- plot_grid(pa, pb, nrow = 1, rel_widths = c(.61, .39))
 lower <- plot_grid(pc, pd, nrow = 1, rel_widths = c(.64, .36), align = "h", axis = "tb")
 foot <- ggdraw() + draw_label(paste0(
-  "a: 100 \u00d7 mean(branch gain) / mean(post-calibration loss); denominators \u2264 ", format(ratio_floor, scientific = TRUE), " are unavailable.\n",
-  "b: axes = 100 \u00d7 mean(two-player Shapley gain) / mean(post-calibration loss); diagonal = equal order-independent attribution.\n",
-  "c: metric-level categories use full S+C gain and two-player Shapley components; mixed = positive S+C recovery with either attributed component < 0.\n",
-  "d: x = P(S+C improves conventional calibration); y = P(context Shapley > signature Shapley | positive S+C recovery and both Shapley components \u2265 0).\n",
-  "d thresholds (50% recovery; 33/67% context dominance) are descriptive deployment heuristics, not inferential cutoffs; crosses at y=0 indicate no stable non-negative partition.\n",
-  "Shapley values average the two S/C entry orders and exactly partition observed S+C recovery; they are model-dependent attribution, not causal effects or information-theoretic necessity.\n",
-  "Residual learners use auxiliary main effects plus YL-conditioned auxiliary interactions; YL has no standalone flexible residual main effect.\n",
-  "Calibration = conventional affine YH~YL mapping fitted on training participants only; S = ", N_SIGNATURE,
-  " signature features; C = ", N_DAILY_CONTEXT, " daily + ", N_DAYPART_CONTEXT,
+  "a: 100 \u00d7 mean(branch gain) / mean(P-only residual loss); denominators \u2264 ", format(ratio_floor, scientific = TRUE), " are unavailable.\n",
+  "b: axes = 100 \u00d7 mean(two-player Shapley gain) / mean(P-only residual loss); Shapley attribution is conditional on P.\n",
+  "c: metric-level categories use S+C gain beyond P-only and two-player Shapley components; mixed = positive S+C recovery with either attributed component < 0.\n",
+  "d: x = P(S+C improves P-only residual decoding); y = P(context Shapley > signature Shapley | positive S+C recovery and both Shapley components \u2265 0).\n",
+  "d thresholds (50% recovery; 33/67% context dominance) are descriptive heuristics, not inferential cutoffs; crosses at y=0 indicate no stable non-negative partition.\n",
+  "P is the conventional affine calibration prior fitted on training participants; every flexible branch uses the same P and the same learner. No hand-built P\u00d7S/P\u00d7C interactions are supplied.\n",
+  "Practical gains from affine calibration to P+C/P+S+C are retained in the exported loss audit; main-panel auxiliary gains isolate information beyond the flexible P-only decoder.\n",
+  "S = ", N_SIGNATURE, " signature features; C = ", N_DAILY_CONTEXT, " daily + ", N_DAYPART_CONTEXT,
   " daypart features. All gains use identical participant-grouped held-out support; full signed estimates are retained in exported audits."),
-  x = .01, hjust = 0, size = 4.85, colour = "#626A70", fontfamily = MS_FONT)
+  x = .01, hjust = 0, size = 4.75, colour = "#626A70", fontfamily = MS_FONT)
 figure <- plot_grid(top, legend, lower, foot, ncol = 1, rel_heights = c(.34, .04, .52, .10))
 write_csv(contrast_summary, "results/rq2/fig4_recovery_relative_display.csv")
 
