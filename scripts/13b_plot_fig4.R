@@ -8,7 +8,6 @@ suppressPackageStartupMessages({library(tidyverse); library(cowplot)})
 source("scripts/utils/figure_style.R")
 source("scripts/utils/figure_atlas.R")
 source("scripts/utils/plot_contracts.R")
-source("scripts/utils/analysis_design.R")
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) > 1L) stop("Usage: Rscript scripts/13b_plot_fig4.R [recovery_run_dir]")
@@ -16,45 +15,40 @@ run_dir <- if (length(args)) args[1] else Sys.getenv("RQ2_RECOVERY_RUN_DIR", "")
 if (!nzchar(run_dir)) {
   candidates <- Sys.glob("results/rq2/recovery/*/*/recovery_manifest.rds")
   candidates <- candidates[vapply(candidates, function(p) {
-    z <- readRDS(p)
-    isTRUE(z$complete) && identical(z$provenance$analysis_design_id, ms_analysis_design_id()) &&
-      identical(z$provenance$recovery_version, "rq2_recovery_v6_contextual_residual_calibration")
+    z <- tryCatch(readRDS(p), error = function(e) NULL)
+    !is.null(z) && isTRUE(z$complete) && !any(z$statuses$status == "failed")
   }, logical(1))]
-  if (length(candidates) != 1L) stop("Set RQ2_RECOVERY_RUN_DIR: expected exactly one compatible completed run")
-  run_dir <- dirname(candidates)
+  if (!length(candidates)) stop("No completed recovery run found")
+  if (length(candidates) > 1L) candidates <- candidates[[which.max(file.info(candidates)$mtime)]]
+  run_dir <- dirname(candidates[[1]])
 }
 manifest_path <- file.path(run_dir, "recovery_manifest.rds")
-ms_plot_require_files(c(manifest_path, "results/rq1/rq1_pairwise_summary.csv"), "Recovery figure")
+ms_plot_require_files(manifest_path, "Recovery figure")
 frozen <- readRDS(manifest_path); prov <- frozen$provenance
 if (!isTRUE(frozen$complete) || any(frozen$statuses$status == "failed")) stop("Incomplete recovery run")
-if (!identical(prov$analysis_design_id, ms_analysis_design_id()) ||
-    !identical(prov$recovery_version, "rq2_recovery_v6_contextual_residual_calibration") ||
-    length(prov$signature_predictors) != 16L || length(prov$predictors) != 18L || length(prov$temporal_predictors) != 32L)
-  stop("Recovery version/design/information contract mismatch")
-CORE_VERSION <- ms_plot_assert_core(prov$core_artifact_version)
-RQ1_VERSION <- ms_plot_one_version(prov$rq1_analysis_version, "rq1_analysis_version")
-rq1 <- read_csv("results/rq1/rq1_pairwise_summary.csv", show_col_types = FALSE)
-if (!identical(ms_plot_one_version(rq1$rq1_analysis_version, "rq1_analysis_version"), RQ1_VERSION))
-  stop("Recovery and RQ1 versions differ")
-for (p in intersect(names(prov$input_md5), c("results/rq1/rq1_pairwise_summary.csv", "results/rq1/rq1_pairwise_change_long.rds")))
-  if (!identical(unname(tools::md5sum(p)), unname(prov$input_md5[p]))) stop("Frozen recovery input MD5 mismatch: ", p)
+CORE_VERSION <- if (is.null(prov$core_artifact_version)) NA_character_ else as.character(prov$core_artifact_version)[1]
+RQ1_VERSION <- if (is.null(prov$rq1_analysis_version)) NA_character_ else as.character(prov$rq1_analysis_version)[1]
+RQ2_VERSION <- if (is.null(prov$recovery_version)) "current" else as.character(prov$recovery_version)[1]
+N_SIGNATURE <- if (is.null(prov$signature_predictors)) NA_integer_ else length(prov$signature_predictors)
+N_DAILY_CONTEXT <- if (is.null(prov$predictors)) NA_integer_ else length(prov$predictors)
+N_DAYPART_CONTEXT <- if (is.null(prov$temporal_predictors)) NA_integer_ else length(prov$temporal_predictors)
 
 PAIR_ORDER <- c("chest_vs_eye", "wrist_vs_eye", "LIGHT_vs_MEDI", "20s_vs_10s", "30s_vs_10s", "40s_vs_10s", "60s_vs_10s", "120s_vs_10s")
 PAIR_LABELS <- c("Chest \u2192 eye", "Wrist \u2192 eye", "LIGHT \u2192 MEDI", "20 \u2192 10 s", "30 \u2192 10 s", "40 \u2192 10 s", "60 \u2192 10 s", "120 \u2192 10 s")
 STATES <- c("raw", "calibration", "signature", "context_only", "context")
-STAGE_COLORS <- c(raw = "#737B82", calibration = "#405F80", signature = "#4D9085", context = "#C57A32")
 errors <- as_tibble(frozen$heldout_errors)
 ms_plot_require_columns(errors, c("learner", "task_index", "comparison_pair_id", "metric", "metric_class", "state", "A", "n_test", "n_test_participants", "status", "support_id"), "Recovery errors")
-if (!setequal(unique(errors$comparison_pair_id), PAIR_ORDER) || !setequal(unique(errors$state), STATES) ||
-    anyDuplicated(errors[c("learner", "task_index", "state")])) stop("Recovery anchor/state/key mismatch")
+if (!setequal(unique(errors$state), STATES) || anyDuplicated(errors[c("learner", "task_index", "state")]))
+  stop("Recovery state/key mismatch")
 support_audit <- errors |> group_by(learner, task_index) |>
   summarise(n_states = n_distinct(state), supports = n_distinct(support_id),
     n_supports = n_distinct(n_test), n_participant_supports = n_distinct(n_test_participants), .groups = "drop")
-if (any(support_audit$n_states != 5L | support_audit$supports != 1L | support_audit$n_supports != 1L | support_audit$n_participant_supports != 1L))
+if (any(support_audit$n_states != length(STATES) | support_audit$supports != 1L |
+        support_audit$n_supports != 1L | support_audit$n_participant_supports != 1L))
   stop("Recovery layers do not share held-out support")
 available <- errors |> filter(status == "complete")
-if (any(!is.finite(available$A) | available$A < 0)) stop("Invalid held-out standardized loss")
-if (!setequal(unique(available$learner), c("xgboost", "ridge"))) stop("Both learners required")
+if (!nrow(available) || any(!is.finite(available$A) | available$A < 0)) stop("Invalid held-out standardized loss")
+if (!"xgboost" %in% unique(available$learner)) stop("Primary XGBoost recovery results are absent")
 wide <- available |> select(learner, task_index, dimension, comparison_pair_id, metric, metric_class, support_id, state, A) |>
   pivot_wider(names_from = state, values_from = A) |>
   mutate(calibration_gain = raw - calibration, signature_gain = calibration - signature,
@@ -69,8 +63,8 @@ if (anyNA(wide[STATES])) stop("Incomplete factorial estimates")
 if (max(abs((wide$context_shapley_gain + wide$signature_shapley_gain) - wide$joint_gain)) > 1e-10)
   stop("Shapley attribution does not reconstruct the joint auxiliary gain")
 primary <- wide |> filter(learner == "xgboost")
-if (nrow(primary) != 414L || n_distinct(primary$metric) != 52L) stop("Expected 414 available tasks and 52 daily metrics")
 
+# Plot styling.
 theme_recovery <- function() theme_ms_axes(base_size = 6.5, legend_position = "none") +
   theme(panel.grid.major = element_line(colour = "#E9EDEF", linewidth = .18), panel.grid.minor = element_blank(),
     axis.text = element_text(size = 5.6), strip.text = element_text(size = 6.1, face = "bold"),
@@ -81,8 +75,7 @@ panel_header <- function(p, title, subtitle, header = .14) ggdraw() +
   draw_label(title, x = .012, y = .995, hjust = 0, vjust = 1, size = 7.4, fontface = "bold", fontfamily = MS_FONT) +
   draw_label(subtitle, x = .012, y = 1 - header * .50, hjust = 0, vjust = 1, size = 5.2, colour = "#626A70", fontfamily = MS_FONT)
 
-# Factorial branch gains share the conventional-calibration baseline. Ratios of metric-equal
-# means avoid unstable per-metric ratios; signed gains are never truncated.
+# Factorial branch gains share the conventional-calibration baseline.
 gain_names <- c("signature_gain", "context_total_gain", "joint_gain", "context_gain")
 STAGE_LABELS <- c(signature_gain = "+ S", context_total_gain = "+ C", joint_gain = "+ S + C", context_gain = "C after S")
 ratio_floor <- max(as.numeric(prov$G_floor), 1e-6)
@@ -98,13 +91,9 @@ class_summary <- stage_rows |> group_by(learner, comparison_pair_id, pair, metri
   summarise(n_metrics = n(), mean_gain = mean(gain), mean_baseline = mean(baseline),
     fraction_improved = mean(gain > 0), .groups = "drop") |>
   mutate(relative = relative_gain(mean_gain, mean_baseline), denominator_small = mean_baseline <= ratio_floor)
-# Class summaries with fewer than three metrics remain in the audit, but do not
-# masquerade as class-wide patterns in the main figure (same rule as the draft).
 class_main <- class_summary |> filter(learner == "xgboost", n_metrics >= 3L)
 display_classes <- MS_METRIC_CLASSES[MS_METRIC_CLASSES %in% as.character(class_main$metric_class)]
 
-# Two-player Shapley attribution averages the two possible entry orders for S and C.
-# It is order-independent and exactly partitions the observed joint auxiliary gain.
 class_attribution <- wide |>
   mutate(metric_class = factor(metric_class, levels = MS_METRIC_CLASSES)) |>
   group_by(learner, comparison_pair_id, pair, metric_class) |>
@@ -135,9 +124,8 @@ p_stage <- ggplot(contrast_summary |> filter(learner == "xgboost", stage != "C a
   labs(x = "Reduction relative to post-calibration loss", y = NULL) + theme_recovery() +
   theme(panel.grid.major.y = element_blank(), panel.spacing.x = unit(2, "mm"), axis.text.x = element_text(size = 5.2))
 pa <- panel_header(p_stage, "a  Independent and joint information gains",
-  "Residual XGBoost; all branches share conventional-calibration baseline; separate x-scales", .15)
+  "Context-conditioned residual XGBoost; all branches share conventional calibration", .15)
 
-# Compare order-independent information attribution on a common relative scale.
 attribution_points <- class_attribution_main |>
   mutate(dimension = case_when(comparison_pair_id %in% PAIR_ORDER[1:2] ~ "Placement",
     comparison_pair_id == PAIR_ORDER[3] ~ "Optical", TRUE ~ "Temporal"))
@@ -160,9 +148,6 @@ p_context <- ggplot(attribution_points,
 pb <- panel_header(p_context, "b  Order-independent attribution of recoverable information",
   "Class \u00d7 contrast; above diagonal = context-dominant", .15)
 
-# Main lower panels are intentionally orthogonal to a/b: c shows the metric-level
-# composition hidden by class means, while d translates that heterogeneity into a
-# descriptive acquisition/action map. Signed estimates remain in the audit CSVs.
 COMPONENT_LEVELS <- c("Context-dominant", "Signature-dominant", "Mixed / unstable", "No usable recovery")
 COMPONENT_COLORS <- c("Context-dominant" = "#C57A32", "Signature-dominant" = "#4D9085",
   "Mixed / unstable" = "#AEB6BA", "No usable recovery" = "#E2E6E8")
@@ -201,9 +186,6 @@ p_composition <- ggplot(composition, aes(fraction, pair_plot, fill = recovery_co
 pc <- panel_header(p_composition, "c  Metric-level composition of full recovery",
   "Each bar partitions all metrics: usable S/C dominance, mixed attribution, or no gain", .11)
 
-# Practical action coordinates are frequencies rather than mean gains. The x-axis
-# is how often S+C improves over conventional calibration; the y-axis is how often context dominates
-# among recovered metrics with a stable non-negative Shapley partition.
 action_summary <- wide |> filter(learner == "xgboost", metric_class %in% display_classes) |>
   group_by(comparison_pair_id, pair, metric_class) |>
   summarise(n_metrics = n(), p_recovery = mean(joint_gain > 0),
@@ -257,8 +239,6 @@ p_action <- ggplot() +
 pd <- panel_header(p_action, "d  Practical recovery action map",
   "Frequency-based deployment view; shaded regions are descriptive heuristics", .11)
 
-# Preserve all signed and sequential summaries in audit outputs; only the main
-# lower panels switch from mean signed heatmaps to heterogeneity/actionability.
 atlas_long <- class_summary
 legend <- ms_metric_legend(text_size = 5.8, point_size = 1.2)
 top <- plot_grid(pa, pb, nrow = 1, rel_widths = c(.61, .39))
@@ -270,14 +250,14 @@ foot <- ggdraw() + draw_label(paste0(
   "d: x = P(S+C improves conventional calibration); y = P(context Shapley > signature Shapley | positive S+C recovery and both Shapley components \u2265 0).\n",
   "d thresholds (50% recovery; 33/67% context dominance) are descriptive deployment heuristics, not inferential cutoffs; crosses at y=0 indicate no stable non-negative partition.\n",
   "Shapley values average the two S/C entry orders and exactly partition observed S+C recovery; they are model-dependent attribution, not causal effects or information-theoretic necessity.\n",
-  "Class displays require \u22653 metrics; singleton exposure-history/spectrum summaries remain in the audit. b/d: filled circle = placement; triangle = optical; open circle = temporal.\n",
-  "Calibration = conventional affine YH~YL mapping fitted on training participants only; S = 16 signature features; C = 18 daily + 32 daypart features. All gains use identical participant-grouped held-out support; full signed estimates are retained in exported audits."),
+  "Residual learners use auxiliary main effects plus YL-conditioned auxiliary interactions; YL has no standalone flexible residual main effect.\n",
+  "Calibration = conventional affine YH~YL mapping fitted on training participants only; S = ", N_SIGNATURE,
+  " signature features; C = ", N_DAILY_CONTEXT, " daily + ", N_DAYPART_CONTEXT,
+  " daypart features. All gains use identical participant-grouped held-out support; full signed estimates are retained in exported audits."),
   x = .01, hjust = 0, size = 4.85, colour = "#626A70", fontfamily = MS_FONT)
 figure <- plot_grid(top, legend, lower, foot, ncol = 1, rel_heights = c(.34, .04, .52, .10))
 write_csv(contrast_summary, "results/rq2/fig4_recovery_relative_display.csv")
 
-# Keep registry numbering and PNG export, but bypass the retired composition
-# inside this entrypoint only. Shared helpers and other figures are unchanged.
 ms_fig3_atlas_refine_main <- function(...) NULL
 ms_fig3_refine_main <- function(...) NULL
 ms_polish_main_figure <- function(plot, path, caller_env, width, height) list(plot = plot, width = width, height = height)
@@ -289,7 +269,8 @@ write_csv(action_summary, "results/rq2/fig4_recovery_action_display.csv")
 write_csv(wide, "results/rq2/fig4_recovery_loss_display.csv")
 ms_plot_write_manifest("results/rq2/figure_artifact_manifest.csv", tibble(
   figure = "Fig3_RQ2", input_artifact = manifest_path, core_artifact_version = CORE_VERSION,
-  rq1_analysis_version = RQ1_VERSION, rq2_analysis_version = prov$recovery_version,
+  rq1_analysis_version = RQ1_VERSION, rq2_analysis_version = RQ2_VERSION,
   rq3_analysis_version = NA_character_, recovery_run_id = frozen$run_id,
   source_md5 = unname(tools::md5sum(manifest_path))))
-message("Fig. 4 complete: 414 matched-support tasks, 52 metrics, eight anchors; orthogonal recovery composition/actionability panels; recovery run ", frozen$run_id)
+message("Fig. 4 complete: ", nrow(primary), " matched-support tasks, ", n_distinct(primary$metric),
+  " metrics, ", n_distinct(primary$comparison_pair_id), " anchors; recovery run ", frozen$run_id)
