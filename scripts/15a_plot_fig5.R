@@ -1,4 +1,6 @@
 # Canonical RQ3 plotting source. All accepted display refinements are consolidated here.
+options(encoding = "UTF-8")
+if (.Platform$OS.type == "windows") invisible(suppressWarnings(Sys.setlocale("LC_CTYPE", "English_United States.utf8")))
 .ms_file <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 if (length(.ms_file)) {
   .ms_script <- normalizePath(sub("^--file=", "", .ms_file[[1]]), winslash = "/", mustWork = TRUE)
@@ -544,142 +546,12 @@ pair_e50 <- pair_ecdf |>
   ) |>
   filter(is.finite(epsilon50))
 
-# Add only a recovery overlay to panel c. The original RQ3 curves, axes and
-# panel layout remain unchanged. Recovery must come from a completed XGBoost run
-# built on the same frozen RQ1 version, and its raw A must reproduce the RQ3 A
-# for matched recovery-eligible metrics.
-resolve_recovery_run <- function() {
-  explicit <- Sys.getenv("RQ2_RECOVERY_RUN_DIR", "")
-  if (nzchar(explicit)) {
-    manifest_path <- file.path(explicit, "recovery_manifest.rds")
-    manifest <- if (file.exists(manifest_path)) tryCatch(readRDS(manifest_path), error = function(e) NULL) else NULL
-    if (!is.null(manifest) && isTRUE(manifest$complete) &&
-        identical(as.character(manifest$provenance$rq1_analysis_version), RQ1_VERSION)) {
-      return(normalizePath(explicit, winslash = "/", mustWork = TRUE))
-    }
-    warning("RQ2_RECOVERY_RUN_DIR is not a complete recovery run for the current RQ1 version; auto-discovering instead.",
-            call. = FALSE)
-  }
-  manifests <- Sys.glob(file.path("results", "rq2", "recovery", RQ1_VERSION, "*", "recovery_manifest.rds"))
-  if (!length(manifests)) return(NA_character_)
-  complete <- vapply(manifests, function(path) {
-    manifest <- tryCatch(readRDS(path), error = function(e) NULL)
-    !is.null(manifest) && isTRUE(manifest$complete) &&
-      identical(as.character(manifest$provenance$rq1_analysis_version), RQ1_VERSION)
-  }, logical(1))
-  manifests <- manifests[complete]
-  if (!length(manifests)) return(NA_character_)
-  dirname(manifests[[which.max(file.info(manifests)$mtime)]])
-}
-
-pair_recovered_ecdf <- tibble(
-  dimension = factor(character(), levels = c("Placement", "Optical representation")),
-  comparison_pair_id = character(), pair = character(),
-  epsilon = double(), fraction_metrics_substitutable = double()
-)
-pair_recovered_e50 <- tibble(
-  dimension = factor(character(), levels = c("Placement", "Optical representation")),
-  comparison_pair_id = character(), pair = character(), epsilon50 = double()
-)
-recovery_run_dir <- resolve_recovery_run()
+# Panel c displays frozen RQ3 substitutability only; retired recovery curves
+# and their filled markers are no longer overlaid or auto-discovered.
+recovery_overlay_used <- FALSE
 recovery_version <- NA_character_
-
-if (is.character(recovery_run_dir) && length(recovery_run_dir) == 1L && !is.na(recovery_run_dir)) {
-  recovery_manifest <- readRDS(file.path(recovery_run_dir, "recovery_manifest.rds"))
-  recovery_version <- as.character(recovery_manifest$provenance$recovery_version)
-  recovery_comparison <- readr::read_csv(
-    file.path(recovery_run_dir, "recovery_comparison.csv"),
-    show_col_types = FALSE, progress = FALSE
-  )
-  ms_plot_require_columns(
-    recovery_comparison,
-    c("learner", "dimension", "comparison_pair_id", "metric", "state", "A", "A_raw"),
-    "recovery_comparison.csv"
-  )
-
-  recovery_metric <- recovery_comparison |>
-    filter(
-      learner == "xgboost", state == "context",
-      dimension %in% c("placement", "optical"),
-      is.finite(A), is.finite(A_raw)
-    ) |>
-    transmute(
-      dimension, comparison_pair_id, metric,
-      A_raw_recovery = as.numeric(A_raw), A_recovered = as.numeric(A)
-    )
-  if (nrow(recovery_metric) != nrow(distinct(recovery_metric, dimension, comparison_pair_id, metric))) {
-    stop("Recovery overlay is not unique by dimension/comparison/metric", call. = FALSE)
-  }
-
-  rq3_pair_metric <- unordered |>
-    filter(dimension %in% c("placement", "optical"), is.finite(A), is.finite(epsilon_entry)) |>
-    transmute(
-      dimension, comparison_pair_id, metric,
-      pair = paste(config_a_label, "→", config_b_label),
-      A_rq3 = as.numeric(A)
-    )
-  expected <- rq3_pair_metric |>
-    count(dimension, comparison_pair_id, pair, name = "n_expected")
-  matched <- inner_join(
-    rq3_pair_metric, recovery_metric,
-    by = c("dimension", "comparison_pair_id", "metric")
-  )
-  raw_check <- matched |>
-    group_by(dimension, comparison_pair_id, pair) |>
-    summarise(
-      n_joined = n(),
-      raw_agrees = all(abs(A_raw_recovery - A_rq3) <= 1e-7 * (1 + abs(A_rq3))),
-      .groups = "drop"
-    )
-  valid_pairs <- raw_check |>
-    filter(n_joined > 0L, raw_agrees)
-
-  if (nrow(valid_pairs) < nrow(expected)) {
-    warning("Recovery overlay skipped for pair(s) without matched recovery metrics or with frozen-A disagreement.", call. = FALSE)
-  }
-  matched <- matched |>
-    semi_join(valid_pairs, by = c("dimension", "comparison_pair_id", "pair"))
-
-  if (nrow(matched)) {
-    raw_xmax <- rq3_pair_metric |>
-      group_by(dimension) |>
-      summarise(xmax = max(A_rq3, na.rm = TRUE), .groups = "drop")
-    pair_recovered_ecdf <- matched |>
-      group_by(dimension, comparison_pair_id, pair) |>
-      group_modify(function(g, key) {
-        xmax <- raw_xmax$xmax[match(key$dimension[[1]], raw_xmax$dimension)]
-        eps <- sort(unique(c(0, g$A_recovered[g$A_recovered <= xmax + NUMERIC_TOL], xmax)))
-        tibble(
-          epsilon = eps,
-          fraction_metrics_substitutable = vapply(
-            eps, function(e) mean(g$A_recovered <= e + NUMERIC_TOL), numeric(1)
-          )
-        )
-      }) |>
-      ungroup() |>
-      mutate(dimension = factor(
-        dimension, levels = c("placement", "optical"),
-        labels = c("Placement", "Optical representation")
-      ))
-
-    pair_recovered_e50 <- pair_recovered_ecdf |>
-      group_by(dimension, comparison_pair_id, pair) |>
-      summarise(
-        epsilon50 = if (any(fraction_metrics_substitutable >= .5)) {
-          min(epsilon[fraction_metrics_substitutable >= .5], na.rm = TRUE)
-        } else NA_real_,
-        .groups = "drop"
-      ) |>
-      filter(is.finite(epsilon50))
-  }
-}
-
-recovery_overlay_used <- nrow(pair_recovered_ecdf) > 0L
-p4c_subtitle <- if (recovery_overlay_used) {
-  "solid/open = raw curve/ε50; dashed/filled = after held-out XGBoost recovery on matched metrics; faint vertical guides = Fig. 5 tolerance slices"
-} else {
-  "open points = ε50; faint vertical guides = Fig. 5 tolerance slices"
-}
+recovery_run_dir <- NA_character_
+p4c_subtitle <- "open points = ε50; faint vertical guides = Fig. 6 tolerance slices"
 
 p4c <- ggplot(
   pair_ecdf,
@@ -692,23 +564,9 @@ p4c <- ggplot(
   geom_vline(xintercept = fig5_slice_guides, linewidth = .22, linetype = 3, color = "#C5C9CC") +
   geom_hline(yintercept = .5, linewidth = .24, linetype = 3, color = "#B4B8BB") +
   geom_step(linewidth = .76, alpha = .94, lineend = "butt", linejoin = "mitre") +
-  geom_step(
-    data = pair_recovered_ecdf,
-    aes(
-      epsilon, fraction_metrics_substitutable,
-      color = pair,
-      group = interaction(dimension, comparison_pair_id, drop = TRUE)
-    ),
-    inherit.aes = FALSE, linewidth = .62, alpha = .82, linetype = 2,
-    lineend = "butt", linejoin = "mitre"
-  ) +
   geom_point(
     data = pair_e50, aes(epsilon50, .5, color = pair),
     inherit.aes = FALSE, shape = 21, fill = "white", size = 1.35, stroke = .45
-  ) +
-  geom_point(
-    data = pair_recovered_e50, aes(epsilon50, .5, color = pair),
-    inherit.aes = FALSE, shape = 16, size = 1.05
   ) +
   facet_wrap(~dimension, nrow = 1, scales = "free_x") +
   scale_color_manual(values = pair_palette, breaks = pair_levels, name = NULL) +

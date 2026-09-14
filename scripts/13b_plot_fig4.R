@@ -103,7 +103,7 @@ figure<-plot_grid(plot_grid(pa,pb,nrow=1,rel_widths=c(.49,.51)),pc,foot,
   ncol=1,rel_heights=c(.40,.54,.06))
 ms_fig3_atlas_refine_main<-function(...)NULL;ms_fig3_refine_main<-function(...)NULL
 ms_polish_main_figure<-function(plot,path,caller_env,width,height)list(plot=plot,width=width,height=height)
-ms_plot_save(figure,"results/rq2/Fig4_RQ2.png",7.4,8.2)
+ms_plot_save(figure,"results/rq2/Fig4_RQ2.png",7.4,6.56)
 ms_plot_save(previous_figure,"results/rq2/FigS_RQ2_reliability_profiles.png",7.4,7.7)
 fwrite(cloud,"results/rq2/fig4_tolerance_scatter_display.csv")
 fwrite(spread,"results/rq2/fig4_tolerance_scatter_iqr.csv")
