@@ -47,38 +47,70 @@ site_reference <- tibble::tribble(
   "KNUST",    "Kumasi",    "Ghana",           6.67501,   -1.57264,    7.0,        8.8,       0.0
 )
 
+# Count every participant represented anywhere in the locally downloaded MeLiDos
+# source data. This deliberately does NOT condition on eye, chest, wrist, diary,
+# or any other modality: the site bubble is a study-sample descriptor, not an
+# analysis-specific complete-case count.
 read_site_counts <- function() {
-  inventory_path <- file.path("logs", "data_inventory.csv")
-
-  if (file.exists(inventory_path)) {
-    inv <- utils::read.csv(inventory_path, stringsAsFactors = FALSE, check.names = FALSE)
-    required <- c("site", "modality", "n_participants")
-    if (all(required %in% names(inv))) {
-      out <- inv |>
-        filter(modality == "light_glasses") |>
-        group_by(site) |>
-        summarise(participants = max(n_participants, na.rm = TRUE), .groups = "drop")
-      if (nrow(out) == length(melidos_sites()) && all(melidos_sites() %in% out$site)) {
-        message("Site sample sizes read from logs/data_inventory.csv")
-        return(out)
-      }
-    }
+  raw_dir <- file.path("data", "raw", "melidos")
+  if (!dir.exists(raw_dir)) {
+    stop("Missing ", raw_dir, ". Run scripts/01_download_melidos.R first.")
   }
 
-  message("Deriving site sample sizes from local light_glasses files")
   rows <- lapply(melidos_sites(), function(site) {
-    path <- raw_data_path(site, "light_glasses")
-    if (!file.exists(path)) {
-      stop(
-        "Missing ", path,
-        ". Run scripts/01_download_melidos.R (and optionally scripts/02_inventory.R) first."
-      )
+    paths <- list.files(
+      raw_dir,
+      pattern = paste0("^", site, "__.*[.]RData$"),
+      full.names = TRUE
+    )
+
+    if (!length(paths)) {
+      stop("No local MeLiDos source files found for site ", site, " in ", raw_dir)
     }
-    x <- load_raw_file(path, "light_glasses")
-    if (!"Id" %in% names(x)) stop("Missing Id column in ", path)
-    tibble(site = site, participants = dplyr::n_distinct(x$Id[!is.na(x$Id)]))
+
+    ids <- character()
+    files_with_ids <- 0L
+
+    for (path in paths) {
+      env <- new.env(parent = emptyenv())
+      ok <- tryCatch({
+        load(path, envir = env)
+        TRUE
+      }, error = function(e) FALSE)
+      if (!ok) next
+
+      object_names <- ls(env, all.names = TRUE)
+      for (object_name in object_names) {
+        obj <- env[[object_name]]
+        if (is.data.frame(obj) && "Id" %in% names(obj)) {
+          x <- as.character(obj$Id)
+          x <- x[!is.na(x) & nzchar(x)]
+          if (length(x)) {
+            ids <- union(ids, unique(x))
+            files_with_ids <- files_with_ids + 1L
+          }
+        }
+      }
+    }
+
+    if (!length(ids)) {
+      stop("No participant IDs could be recovered from any local source file for site ", site)
+    }
+
+    tibble(
+      site = site,
+      participants = length(ids),
+      source_files = length(paths),
+      files_with_ids = files_with_ids
+    )
   })
-  bind_rows(rows)
+
+  out <- bind_rows(rows)
+  message(
+    "Site sample sizes derived from the union of participant IDs across all local MeLiDos source files"
+  )
+  print(out, n = nrow(out))
+  out
 }
 
 melidos_sites_df <- site_reference |>
@@ -93,14 +125,19 @@ stopifnot(
 )
 
 n_total <- sum(melidos_sites_df$participants)
+if (n_total != 191L) {
+  warning(
+    "The union of participant IDs across all locally downloaded MeLiDos source files is ",
+    n_total, " rather than the reported full MeLiDos total of 191. ",
+    "This usually means the local download does not include every study-level source table. ",
+    "The map uses all participants currently represented anywhere in data/raw/melidos."
+  )
+}
 
 # -----------------------------------------------------------------------------
 # Natural Earth administrative basemap
 # -----------------------------------------------------------------------------
-# We cache one Natural Earth Admin-0 GeoJSON in external/. This gives actual
-# country boundaries rather than a coastline-only silhouette and avoids adding
-# another R mapping package to renv.
-#
+# Administrative boundaries: Natural Earth Admin-0, 1:50m.
 # If automatic download fails, download this file manually:
 # https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_admin_0_countries.geojson
 # and save it as:
@@ -131,9 +168,6 @@ if (!file.exists(MAP_FILE) || file.info(MAP_FILE)$size < 10000) {
   }
 }
 
-# Natural Earth contains antimeridian geometries that s2 may reject before the
-# map is cropped to the MeLiDos region. Use planar GEOS handling for this static
-# regional map, repair geometries, then crop away the dateline entirely.
 .old_s2 <- sf::sf_use_s2()
 sf::sf_use_s2(FALSE)
 on.exit(sf::sf_use_s2(.old_s2), add = TRUE)
@@ -164,7 +198,7 @@ world_view <- world_view |>
 
 summary_label <- paste0(
   "9 sites   ·   7 countries   ·   ",
-  scales::comma(n_total), " participants in local analysis files"
+  scales::comma(n_total), " participants"
 )
 
 p_sites <- ggplot() +
@@ -217,7 +251,10 @@ p_sites <- ggplot() +
     title = "MeLiDos field-study network",
     subtitle = "Nine study sites across seven countries",
     x = NULL, y = NULL,
-    caption = "Administrative boundaries: Natural Earth 1:50m. Point area represents participants in the local analysis files."
+    caption = paste0(
+      "Administrative boundaries: Natural Earth 1:50m. ",
+      "Point area represents the union of participants appearing in any locally downloaded MeLiDos source modality."
+    )
   ) +
   theme_ms(base_size = 8.0, legend_position = "bottom") +
   theme(
