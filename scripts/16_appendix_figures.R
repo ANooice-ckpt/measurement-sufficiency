@@ -34,9 +34,8 @@ dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 # Fig. S — MeLiDos field-study sites and sample distribution
 # -----------------------------------------------------------------------------
 
-# Label anchors are specified in lon/lat and then projected together with the
-# site coordinates. The European cluster is deliberately spread in four
-# directions to keep leader lines short and avoid label collisions.
+# Label anchors are specified in lon/lat. The European cluster is deliberately
+# spread in four directions to keep leader lines short and avoid collisions.
 site_reference <- tibble::tribble(
   ~site,      ~city,       ~country,        ~lat,      ~lon,      ~label_lon, ~label_lat, ~hjust,
   "RISE",     "Borås",     "Sweden",         57.71567,   12.89087,   22.0,       60.2,       0.0,
@@ -181,8 +180,8 @@ world <- suppressWarnings(sf::st_make_valid(world))
 world <- world[!sf::st_is_empty(world), , drop = FALSE]
 
 # Crop before projection so geometries around the antimeridian never enter the
-# plotting object. The resulting Atlantic-centred regional frame still retains
-# a recognisable world-map context around all study sites.
+# plotting object. The Atlantic-centred frame spans all study sites while keeping
+# the final map strictly rectangular.
 view_bbox <- sf::st_bbox(
   c(xmin = -95, ymin = -2, xmax = 40, ymax = 65),
   crs = sf::st_crs(4326)
@@ -201,17 +200,18 @@ study_country_names <- c(
 world_view <- world_view |>
   mutate(study_country = .data[[country_field]] %in% study_country_names)
 
-# Robinson projection, centred on the Atlantic, reduces the large empty ocean
-# block in the raw lon/lat view and gives the figure a less GIS-like appearance.
-robin_crs <- "+proj=robin +lon_0=-20 +datum=WGS84 +units=m +no_defs"
-world_robin <- suppressWarnings(sf::st_transform(world_view, robin_crs))
+# Use an equidistant cylindrical projection (Plate Carrée family), centred on the
+# Atlantic. Unlike Robinson, meridians and parallels remain straight, so the map
+# frame stays rectangular while retaining a conventional atlas appearance.
+map_crs <- "+proj=eqc +lat_ts=30 +lat_0=0 +lon_0=-20 +datum=WGS84 +units=m +no_defs"
+world_map <- suppressWarnings(sf::st_transform(world_view, map_crs))
 
 site_sf <- sf::st_as_sf(melidos_sites_df, coords = c("lon", "lat"), crs = 4326)
-site_sf <- sf::st_transform(site_sf, robin_crs)
+site_sf <- sf::st_transform(site_sf, map_crs)
 site_xy <- sf::st_coordinates(site_sf)
 
 label_sf <- sf::st_as_sf(melidos_sites_df, coords = c("label_lon", "label_lat"), crs = 4326)
-label_sf <- sf::st_transform(label_sf, robin_crs)
+label_sf <- sf::st_transform(label_sf, map_crs)
 label_xy <- sf::st_coordinates(label_sf)
 
 plot_sites <- melidos_sites_df |>
@@ -229,7 +229,7 @@ subtitle_text <- paste0(
 
 p_sites <- ggplot() +
   geom_sf(
-    data = world_robin,
+    data = world_map,
     aes(fill = study_country),
     colour = "#C5CACC", linewidth = .24
   ) +
@@ -260,7 +260,7 @@ p_sites <- ggplot() +
     breaks = scales::pretty_breaks(n = 4),
     name = "Participants"
   ) +
-  coord_sf(expand = FALSE, datum = NA) +
+  coord_sf(expand = FALSE, datum = NA, crs = sf::st_crs(map_crs)) +
   labs(
     title = "MeLiDos field-study network",
     subtitle = subtitle_text,
