@@ -3,7 +3,8 @@
 # Supplementary / appendix figures.
 # Run from the repository root:
 #   Rscript scripts/16_appendix_figures.R
-# Outputs are written directly to results/figures/.
+# Output:
+#   results/figures/FigS_MeLiDos_sites.png
 
 .ms_file <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 if (length(.ms_file)) {
@@ -46,8 +47,6 @@ site_reference <- tibble::tribble(
   "KNUST",    "Kumasi",    "Ghana",           6.67501,   -1.57264,    7.0,        8.8,       0.0
 )
 
-# Use the actual local MeLiDos files rather than hard-coding site sample sizes.
-# First reuse the inventory if it exists; otherwise derive counts from light_glasses.
 read_site_counts <- function() {
   inventory_path <- file.path("logs", "data_inventory.csv")
 
@@ -84,9 +83,7 @@ read_site_counts <- function() {
 
 melidos_sites_df <- site_reference |>
   left_join(read_site_counts(), by = "site") |>
-  mutate(
-    label = paste0(site, " · ", city, "\n", "n = ", participants)
-  )
+  mutate(label = paste0(site, " · ", city, "\n", "n = ", participants))
 
 stopifnot(
   nrow(melidos_sites_df) == 9L,
@@ -96,95 +93,64 @@ stopifnot(
 )
 
 n_total <- sum(melidos_sites_df$participants)
-if (n_total != 191L) {
-  warning(
-    "Local light_glasses files contain ", n_total,
-    " unique participants rather than the reported MeLiDos total of 191. ",
-    "The figure uses the local project data."
-  )
-}
 
 # -----------------------------------------------------------------------------
-# Natural Earth basemap
+# Natural Earth administrative basemap
 # -----------------------------------------------------------------------------
-# No extra mapping package is required. We try the official Natural Earth S3
-# archive first, then the GitHub GeoJSON mirror. A missing basemap is treated as
-# an error rather than silently producing a blank map.
+# We cache one Natural Earth Admin-0 GeoJSON in external/. This gives actual
+# country boundaries rather than a coastline-only silhouette and avoids adding
+# another R mapping package to renv.
+#
+# If automatic download fails, download this file manually:
+# https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_admin_0_countries.geojson
+# and save it as:
+# external/ne_50m_admin_0_countries.geojson
 
-download_binary <- function(url, destination) {
-  if (file.exists(destination)) unlink(destination)
+MAP_FILE <- file.path("external", "ne_50m_admin_0_countries.geojson")
+MAP_URL <- paste0(
+  "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/",
+  "master/geojson/ne_50m_admin_0_countries.geojson"
+)
 
+dir.create(dirname(MAP_FILE), recursive = TRUE, showWarnings = FALSE)
+
+if (!file.exists(MAP_FILE) || file.info(MAP_FILE)$size < 10000) {
+  message("Natural Earth basemap not found locally; downloading once to ", MAP_FILE)
   ok <- tryCatch({
-    suppressWarnings(utils::download.file(
-      url, destination, mode = "wb", quiet = TRUE, method = "libcurl"
-    ))
-    file.exists(destination) && is.finite(file.info(destination)$size) &&
-      file.info(destination)$size > 1000
+    utils::download.file(MAP_URL, MAP_FILE, mode = "wb", quiet = FALSE, method = "libcurl")
+    file.exists(MAP_FILE) && file.info(MAP_FILE)$size > 10000
   }, error = function(e) FALSE)
 
-  if (ok) return(TRUE)
-
-  curl_bin <- Sys.which("curl")
-  if (nzchar(curl_bin)) {
-    status <- tryCatch(
-      suppressWarnings(system2(
-        curl_bin,
-        c("-L", "--fail", "--silent", "--show-error", "-o",
-          shQuote(normalizePath(destination, winslash = "/", mustWork = FALSE)),
-          shQuote(url)),
-        stdout = FALSE, stderr = FALSE
-      )),
-      error = function(e) 1L
+  if (!ok) {
+    stop(
+      "Could not download the Natural Earth administrative basemap.\n",
+      "Please download:\n  ", MAP_URL, "\n",
+      "and save it as:\n  ", MAP_FILE, "\n",
+      "Then rerun: Rscript scripts/16_appendix_figures.R"
     )
-    if (identical(status, 0L) && file.exists(destination) && file.info(destination)$size > 1000) {
-      return(TRUE)
-    }
   }
-
-  FALSE
 }
 
-load_world_map <- function() {
-  td <- tempfile("natural_earth_")
-  dir.create(td, recursive = TRUE)
-  on.exit(unlink(td, recursive = TRUE, force = TRUE), add = TRUE)
+# Natural Earth contains antimeridian geometries that s2 may reject before the
+# map is cropped to the MeLiDos region. Use planar GEOS handling for this static
+# regional map, repair geometries, then crop away the dateline entirely.
+.old_s2 <- sf::sf_use_s2()
+sf::sf_use_s2(FALSE)
+on.exit(sf::sf_use_s2(.old_s2), add = TRUE)
 
-  zip_path <- file.path(td, "ne_110m_admin_0_countries.zip")
-  zip_url <- "https://naturalearth.s3.amazonaws.com/110m_cultural/ne_110m_admin_0_countries.zip"
-
-  if (download_binary(zip_url, zip_path)) {
-    unzip(zip_path, exdir = td)
-    shp <- list.files(td, pattern = "[.]shp$", full.names = TRUE)
-    if (length(shp)) {
-      world <- tryCatch(suppressWarnings(sf::st_read(shp[[1]], quiet = TRUE)), error = function(e) NULL)
-      if (!is.null(world) && nrow(world) > 0) return(world)
-    }
-  }
-
-  geojson_path <- file.path(td, "ne_110m_admin_0_countries.geojson")
-  geojson_url <- paste0(
-    "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/",
-    "master/geojson/ne_110m_admin_0_countries.geojson"
-  )
-
-  if (download_binary(geojson_url, geojson_path)) {
-    world <- tryCatch(
-      suppressWarnings(sf::st_read(geojson_path, quiet = TRUE)),
-      error = function(e) NULL
-    )
-    if (!is.null(world) && nrow(world) > 0) return(world)
-  }
-
-  stop(
-    "Natural Earth basemap could not be downloaded from either source. ",
-    "Check network access to naturalearth.s3.amazonaws.com or raw.githubusercontent.com."
-  )
-}
-
-world <- load_world_map()
+world <- suppressWarnings(sf::st_read(MAP_FILE, quiet = TRUE))
 world <- sf::st_transform(world, 4326)
+world <- suppressWarnings(sf::st_make_valid(world))
+world <- world[!sf::st_is_empty(world), , drop = FALSE]
 
-country_field <- intersect(c("ADMIN", "NAME_EN", "NAME", "SOVEREIGNT"), names(world))
+view_bbox <- sf::st_bbox(
+  c(xmin = -100, ymin = -5, xmax = 40, ymax = 65),
+  crs = sf::st_crs(4326)
+)
+world_view <- suppressWarnings(sf::st_crop(world, view_bbox))
+world_view <- world_view[!sf::st_is_empty(world_view), , drop = FALSE]
+
+country_field <- intersect(c("ADMIN", "NAME_EN", "NAME", "SOVEREIGNT"), names(world_view))
 if (!length(country_field)) stop("Could not identify a country-name field in Natural Earth data")
 country_field <- country_field[[1]]
 
@@ -193,36 +159,29 @@ study_country_names <- c(
   "Costa Rica", "Ghana"
 )
 
-world <- world |>
+world_view <- world_view |>
   mutate(study_country = .data[[country_field]] %in% study_country_names)
-
-# Restrict the geographic frame to the MeLiDos study region while retaining a
-# recognisable world-map context spanning Central America, Europe and West Africa.
-world_view <- suppressWarnings(sf::st_crop(
-  world,
-  xmin = -100, xmax = 40, ymin = -5, ymax = 65
-))
 
 summary_label <- paste0(
   "9 sites   ·   7 countries   ·   ",
-  scales::comma(n_total), " participants"
+  scales::comma(n_total), " participants in local analysis files"
 )
 
 p_sites <- ggplot() +
   geom_sf(
     data = world_view,
     aes(fill = study_country),
-    colour = "#CED3D6", linewidth = .22
+    colour = "#BFC5C8", linewidth = .28
   ) +
   scale_fill_manual(
-    values = c(`FALSE` = "#F4F4F1", `TRUE` = "#DCE8EF"),
+    values = c(`FALSE` = "#F3F3F0", `TRUE` = "#D7E5EE"),
     guide = "none"
   ) +
   geom_segment(
     data = melidos_sites_df,
     aes(x = lon, y = lat, xend = label_lon, yend = label_lat),
     inherit.aes = FALSE,
-    colour = "#8D969B", linewidth = .30, lineend = "round"
+    colour = "#899297", linewidth = .30, lineend = "round"
   ) +
   geom_point(
     data = melidos_sites_df,
@@ -234,13 +193,13 @@ p_sites <- ggplot() +
     data = melidos_sites_df,
     aes(label_lon, label_lat, label = label, hjust = hjust),
     inherit.aes = FALSE,
-    family = MS_FONT, size = 3.05, lineheight = .92, colour = "#202427"
+    family = MS_FONT, size = 3.0, lineheight = .92, colour = "#202427"
   ) +
   annotate(
     "label", x = -97, y = 63.0,
     label = summary_label,
     hjust = 0, vjust = 1,
-    family = MS_FONT, size = 3.30,
+    family = MS_FONT, size = 3.2,
     fill = scales::alpha("white", .94), colour = "#202427",
     label.size = 0, label.padding = grid::unit(2.0, "mm")
   ) +
@@ -252,24 +211,24 @@ p_sites <- ggplot() +
   coord_sf(
     xlim = c(-100, 40), ylim = c(-5, 65),
     expand = FALSE,
-    default_crs = sf::st_crs(4326), datum = sf::st_crs(4326)
+    default_crs = sf::st_crs(4326), datum = NA
   ) +
   labs(
     title = "MeLiDos field-study network",
-    subtitle = "Geographic coverage and site sample size",
+    subtitle = "Nine study sites across seven countries",
     x = NULL, y = NULL,
-    caption = "Point area represents the number of participants in the local MeLiDos light_glasses data."
+    caption = "Administrative boundaries: Natural Earth 1:50m. Point area represents participants in the local analysis files."
   ) +
   theme_ms(base_size = 8.0, legend_position = "bottom") +
   theme(
     panel.border = element_blank(),
-    panel.grid.major = element_line(colour = "#E5E8E9", linewidth = .22),
+    panel.grid.major = element_blank(),
     panel.grid.minor = element_blank(),
     axis.text = element_blank(),
     axis.ticks = element_blank(),
     plot.title = element_text(size = 11.0, face = "bold", margin = margin(b = 2)),
     plot.subtitle = element_text(size = 8.0, colour = "#5E6569", margin = margin(b = 5)),
-    plot.caption = element_text(size = 6.6, colour = "#6B7276", hjust = 0, margin = margin(t = 4)),
+    plot.caption = element_text(size = 6.5, colour = "#6B7276", hjust = 0, margin = margin(t = 4)),
     legend.title = element_text(size = 7.0),
     legend.text = element_text(size = 6.8),
     legend.key.width = grid::unit(5, "mm"),
@@ -282,11 +241,12 @@ p_sites <- ggplot() +
   ))
 
 png_path <- file.path(OUT_DIR, "FigS_MeLiDos_sites.png")
-pdf_path <- file.path(OUT_DIR, "FigS_MeLiDos_sites.pdf")
 
-ggsave(png_path, p_sites, width = 10.6, height = 6.1, dpi = MS_RASTER_DPI, bg = "white")
-ggsave(pdf_path, p_sites, width = 10.6, height = 6.1, bg = "white")
+ggsave(
+  png_path, p_sites,
+  width = 10.6, height = 6.1,
+  dpi = MS_RASTER_DPI, bg = "white"
+)
 
 message("Supplementary map written:")
 message("  ", png_path)
-message("  ", pdf_path)
