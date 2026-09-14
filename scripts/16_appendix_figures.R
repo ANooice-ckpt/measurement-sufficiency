@@ -219,13 +219,12 @@ panel_bg <- tibble::tribble(
   51,     97,     5,    49
 )
 
-# Placement: repeated upper-body icons; the marker is placed at the actual
-# eye/chest/wrist location rather than adjacent to a generic stick figure.
+# Placement: repeated upper-body icons with markers at the actual wearing sites.
 placement_people <- tibble(
   x = c(13, 26, 39),
   label = c("Eye", "Chest", "Wrist"),
-  sensor_x = c(13.55, 26.00, 42.30),
-  sensor_y = c(81.20, 74.70, 70.25)
+  sensor_x = c(13.35, 26.00, 42.30),
+  sensor_y = c(81.15, 74.70, 70.25)
 )
 
 human_segments <- dplyr::bind_rows(lapply(placement_people$x, function(x0) {
@@ -241,12 +240,12 @@ human_segments <- dplyr::bind_rows(lapply(placement_people$x, function(x0) {
 }))
 human_heads <- placement_people |> transmute(x = x, y = 81.0)
 
-# Optical representation: one source optical record branches to the two retained
-# representations. The small bar motif is deliberately schematic, not a claimed spectrum.
+# Optical representation: one source record branches visibly to two parallel
+# representations. The source motif is schematic rather than a claimed spectrum.
 optical_cards <- tibble::tribble(
   ~xmin, ~xmax, ~ymin, ~ymax, ~label, ~fill,
-  68.0, 79.0, 68.5, 79.0, "MEDI",  MS_PRIMARY,
-  84.0, 95.0, 68.5, 79.0, "LIGHT", MS_SECONDARY
+  69.5, 80.5, 75.0, 82.0, "MEDI",  MS_PRIMARY,
+  69.5, 80.5, 64.0, 71.0, "LIGHT", MS_SECONDARY
 )
 optical_bars <- tibble(
   xmin = c(55.0, 56.4, 57.8, 59.2, 60.6),
@@ -255,17 +254,21 @@ optical_bars <- tibble(
   ymax = c(73.2, 76.4, 78.3, 75.0, 72.1)
 )
 
-# Temporal resolution: exact points retained from the same 10-s source grid.
+# Temporal resolution: every row shows the same native 10-s grid in grey; blue
+# points are the exact source rows retained for that sampling state.
 temporal_steps <- c(10, 20, 30, 40, 60, 120)
 temporal_rows <- tibble(step = temporal_steps, y = seq(39.0, 18.5, length.out = 6))
+temporal_native_grid <- tidyr::expand_grid(step = temporal_steps, t = seq(0, 120, by = 10)) |>
+  left_join(temporal_rows, by = "step") |>
+  mutate(x = 15.0 + (t / 120) * 29.0)
 temporal_points <- bind_rows(lapply(seq_len(nrow(temporal_rows)), function(i) {
   step <- temporal_rows$step[[i]]
   times <- seq(0, 120, by = step)
   tibble(step = step, y = temporal_rows$y[[i]], x = 15.0 + (times / 120) * 29.0)
 }))
 
-# Monitoring duration: nested examples from a common start; all contiguous windows
-# are evaluated in the actual analysis.
+# Monitoring duration: rows illustrate nested windows from one start day only;
+# the analysis itself evaluates all contiguous windows of each duration.
 duration_rows <- tibble(duration = 1:6, y = seq(39.0, 18.5, length.out = 6))
 duration_boxes <- tidyr::expand_grid(duration = 1:6, day = 1:6) |>
   left_join(duration_rows, by = "duration") |>
@@ -296,7 +299,7 @@ p_config <- ggplot() +
   ) +
   geom_point(
     data = placement_people, aes(sensor_x, sensor_y), inherit.aes = FALSE,
-    shape = 21, size = 3.0, stroke = .5, fill = MS_PRIMARY, colour = "white"
+    shape = 21, size = 2.85, stroke = .48, fill = MS_PRIMARY, colour = "white"
   ) +
   geom_text(
     data = placement_people, aes(x, 61.4, label = label), inherit.aes = FALSE,
@@ -314,18 +317,18 @@ p_config <- ggplot() +
     data = optical_bars, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
     inherit.aes = FALSE, fill = "#7E878C", colour = NA
   ) +
-  annotate("text", x = 58.25, y = 65.2, label = "Source optical record",
-           family = MS_FONT, size = 2.6, colour = "#5F686D") +
-  annotate("segment", x = 63.0, y = 74.4, xend = 65.5, yend = 74.4,
+  annotate("text", x = 58.25, y = 65.0, label = "Source optical record",
+           family = MS_FONT, size = 2.55, colour = "#5F686D") +
+  annotate("segment", x = 63.0, y = 74.4, xend = 66.0, yend = 74.4,
            colour = "#929A9E", linewidth = .45) +
-  annotate("segment", x = 65.5, y = 74.4, xend = 65.5, yend = 76.4,
+  annotate("segment", x = 66.0, y = 74.4, xend = 66.0, yend = 78.5,
            colour = "#929A9E", linewidth = .45) +
-  annotate("segment", x = 65.5, y = 76.4, xend = 67.3, yend = 76.4,
+  annotate("segment", x = 66.0, y = 78.5, xend = 68.8, yend = 78.5,
            colour = "#929A9E", linewidth = .45,
            arrow = grid::arrow(length = grid::unit(1.5, "mm"), type = "closed")) +
-  annotate("segment", x = 65.5, y = 74.4, xend = 65.5, yend = 71.3,
+  annotate("segment", x = 66.0, y = 74.4, xend = 66.0, yend = 67.5,
            colour = "#929A9E", linewidth = .45) +
-  annotate("segment", x = 65.5, y = 71.3, xend = 83.3, yend = 71.3,
+  annotate("segment", x = 66.0, y = 67.5, xend = 68.8, yend = 67.5,
            colour = "#929A9E", linewidth = .45,
            arrow = grid::arrow(length = grid::unit(1.5, "mm"), type = "closed")) +
   geom_rect(
@@ -337,28 +340,34 @@ p_config <- ggplot() +
   geom_text(
     data = optical_cards,
     aes(x = (xmin + xmax) / 2, y = (ymin + ymax) / 2, label = label),
-    inherit.aes = FALSE, family = MS_FONT, fontface = "bold", size = 3.8, colour = "white"
+    inherit.aes = FALSE, family = MS_FONT, fontface = "bold", size = 3.65, colour = "white"
   ) +
-  annotate("text", x = 80, y = 62.2, label = "Two retained representations of the same source record",
-           family = MS_FONT, size = 2.55, colour = "#5F686D") +
+  annotate("text", x = 87.5, y = 73.0,
+           label = "Same source record\ntwo retained representations",
+           family = MS_FONT, size = 2.45, lineheight = 1.0, colour = "#5F686D") +
 
   # c Temporal resolution
   annotate("text", x = 5.1, y = 45.5, label = "c  Temporal resolution",
            hjust = 0, family = MS_FONT, fontface = "bold", size = 4.0, colour = "#202427") +
   geom_segment(
     data = temporal_rows, aes(x = 15.0, xend = 44.0, y = y, yend = y), inherit.aes = FALSE,
-    colour = "#D5D9DB", linewidth = .45
+    colour = "#D9DDDF", linewidth = .40
+  ) +
+  geom_point(
+    data = temporal_native_grid, aes(x, y), inherit.aes = FALSE,
+    shape = 21, size = 1.35, stroke = .25, fill = "#E2E5E6", colour = "white"
   ) +
   geom_point(
     data = temporal_points, aes(x, y), inherit.aes = FALSE,
-    shape = 21, size = 2.15, stroke = .35, fill = MS_PRIMARY, colour = "white"
+    shape = 21, size = 2.05, stroke = .35, fill = MS_PRIMARY, colour = "white"
   ) +
   geom_text(
     data = temporal_rows, aes(x = 12.0, y = y, label = paste0(step, " s")), inherit.aes = FALSE,
     hjust = 1, family = MS_FONT, size = 2.65, colour = "#30363A"
   ) +
-  annotate("text", x = 29.5, y = 11.3, label = "Exact source rows retained · no averaging",
-           family = MS_FONT, size = 2.55, colour = "#727A7E") +
+  annotate("text", x = 29.5, y = 11.3,
+           label = "Grey = native 10-s grid · blue = retained source rows · no averaging",
+           family = MS_FONT, size = 2.40, colour = "#727A7E") +
 
   # d Monitoring duration
   annotate("text", x = 53.1, y = 45.5, label = "d  Monitoring duration",
@@ -375,8 +384,9 @@ p_config <- ggplot() +
     data = duration_rows, aes(x = 59.5, y = y, label = paste0(duration, " d")), inherit.aes = FALSE,
     hjust = 1, family = MS_FONT, size = 2.65, colour = "#30363A"
   ) +
-  annotate("text", x = 76.7, y = 11.3, label = "Complete consecutive days · all contiguous windows",
-           family = MS_FONT, size = 2.48, colour = "#727A7E") +
+  annotate("text", x = 76.7, y = 11.3,
+           label = "Illustrated from one start day · analysis uses all contiguous windows",
+           family = MS_FONT, size = 2.38, colour = "#727A7E") +
 
   coord_cartesian(xlim = c(0, 100), ylim = c(0, 100), expand = FALSE, clip = "off") +
   labs(
@@ -411,24 +421,28 @@ concept_panels <- tibble::tribble(
   67,     97,    12,    88
 )
 
+# Values are purely schematic. One crossing is retained to make rank loss visible,
+# while all paired marks stay inside the panel.
 paired_example <- tibble(
   id = 1:7,
-  y_alt = c(35, 46, 52, 61, 68, 73, 80),
-  y_ref = c(39, 43, 57, 59, 72, 77, 83)
+  y_alt = c(18, 28, 36, 44, 51, 57, 62),
+  y_ref = c(22, 31, 41, 42, 55, 60, 64)
 )
 
 summary_cards <- tibble::tribble(
   ~xmin, ~xmax, ~ymin, ~ymax, ~title, ~subtitle,
   39.0, 62.0, 61.0, 78.0, "Magnitude", "A · how much values move",
-  39.0, 62.0, 40.0, 57.0, "Direction", "B/A · whether shifts align",
+  39.0, 62.0, 40.0, 57.0, "Directional coherence", "B/A · whether signed shifts align",
   39.0, 62.0, 19.0, 36.0, "Rank loss", "1 − ρ · whether ordering changes"
 )
 
+# The slight 40-s -> 30-s rebound is intentional: observed sufficiency does not
+# impose monotonicity. The 10-s endpoint remains boundary-unresolved.
 sufficiency_example <- tibble(
   state = factor(c("120 s", "60 s", "40 s", "30 s", "20 s", "10 s"),
                  levels = c("120 s", "60 s", "40 s", "30 s", "20 s", "10 s")),
   x = 1:6,
-  residual = c(.43, .33, .22, .24, .12, NA_real_),
+  residual = c(.43, .33, .22, .23, .12, NA_real_),
   status = c("above", "above", "sufficient", "sufficient", "sufficient", "unresolved")
 )
 
@@ -461,20 +475,20 @@ p_concept <- ggplot() +
            family = MS_FONT, size = 2.25, colour = "#687176") +
   geom_segment(
     data = paired_example,
-    aes(x = 13.2, y = y_alt - 25, xend = 23.8, yend = y_ref - 25),
+    aes(x = 13.2, y = y_alt, xend = 23.8, yend = y_ref),
     inherit.aes = FALSE, colour = "#B4BABD", linewidth = .45
   ) +
   geom_point(
-    data = paired_example, aes(x = 13.2, y = y_alt - 25), inherit.aes = FALSE,
+    data = paired_example, aes(x = 13.2, y = y_alt), inherit.aes = FALSE,
     size = 2.4, shape = 21, fill = MS_SECONDARY, colour = "white", stroke = .35
   ) +
   geom_point(
-    data = paired_example, aes(x = 23.8, y = y_ref - 25), inherit.aes = FALSE,
+    data = paired_example, aes(x = 23.8, y = y_ref), inherit.aes = FALSE,
     size = 2.4, shape = 21, fill = MS_PRIMARY, colour = "white", stroke = .35
   ) +
-  annotate("text", x = 18.5, y = 18.5,
-           label = "Each line is the same participant / support unit",
-           family = MS_FONT, size = 2.35, colour = "#727A7E") +
+  annotate("text", x = 18.5, y = 14.6,
+           label = "Each line = the same participant / support unit",
+           family = MS_FONT, size = 2.25, colour = "#727A7E") +
 
   # b Summaries
   annotate("text", x = 37.5, y = 83.5, label = "b  Summarize representation change",
@@ -485,11 +499,11 @@ p_concept <- ggplot() +
   ) +
   geom_text(
     data = summary_cards, aes(x = xmin + 1.8, y = ymax - 4.5, label = title),
-    inherit.aes = FALSE, hjust = 0, family = MS_FONT, fontface = "bold", size = 3.0, colour = "#202427"
+    inherit.aes = FALSE, hjust = 0, family = MS_FONT, fontface = "bold", size = 2.85, colour = "#202427"
   ) +
   geom_text(
     data = summary_cards, aes(x = xmin + 1.8, y = ymin + 4.5, label = subtitle),
-    inherit.aes = FALSE, hjust = 0, family = MS_FONT, size = 2.35, colour = "#687176"
+    inherit.aes = FALSE, hjust = 0, family = MS_FONT, size = 2.25, colour = "#687176"
   ) +
   annotate("segment", x = 42.0, y = 68.0, xend = 48.0, yend = 68.0,
            colour = MS_PRIMARY, linewidth = 1.0, lineend = "round") +
@@ -508,13 +522,23 @@ p_concept <- ggplot() +
            hjust = 0, family = MS_FONT, fontface = "bold", size = 3.8, colour = "#202427") +
   annotate("text", x = 82.0, y = 77.8, label = "Example ordered axis: temporal resolution",
            family = MS_FONT, size = 2.4, colour = "#687176") +
+  annotate("text", x = 69.7, y = 52.0, label = "Residual instability",
+           angle = 90, family = MS_FONT, size = 2.15, colour = "#687176") +
+
+  # Sufficient region is explicitly below the tolerance line. It spans only the
+  # resolved states that meet the criterion; the 10-s endpoint is not included.
+  annotate("rect", xmin = 80.2, xmax = 92.0, ymin = 34.2, ymax = 51.8,
+           fill = scales::alpha("#DCE8EF", .62), colour = NA) +
+  annotate("text", x = 86.1, y = 48.3, label = "resolved sufficient region",
+           family = MS_FONT, size = 2.05, colour = MS_PRIMARY) +
+
   annotate("segment", x = 72.0, y = 34.0, xend = 94.0, yend = 34.0,
            colour = "#BFC5C8", linewidth = .5) +
   annotate("segment", x = 72.0, y = 34.0, xend = 72.0, yend = 70.0,
            colour = "#BFC5C8", linewidth = .5) +
-  annotate("segment", x = 72.0, y = 51.0, xend = 94.0, yend = 51.0,
+  annotate("segment", x = 72.0, y = 52.0, xend = 94.0, yend = 52.0,
            colour = MS_SECONDARY, linewidth = .55, linetype = "22") +
-  annotate("text", x = 93.8, y = 52.6, label = "tolerance ε",
+  annotate("text", x = 93.8, y = 53.6, label = "tolerance ε",
            hjust = 1, family = MS_FONT, size = 2.25, colour = MS_SECONDARY) +
   geom_line(
     data = sufficiency_example |> filter(!is.na(residual)),
@@ -536,13 +560,14 @@ p_concept <- ggplot() +
     aes(x = 72 + (x - 1) * 4.4, y = 30.8, label = as.character(state)),
     inherit.aes = FALSE, family = MS_FONT, size = 2.05, colour = "#40474B"
   ) +
-  annotate("rect", xmin = 80.3, xmax = 91.8, ymin = 55.5, ymax = 59.5,
-           fill = scales::alpha("#DCE8EF", .75), colour = NA) +
-  annotate("text", x = 86.05, y = 57.5, label = "resolved sufficient region",
-           family = MS_FONT, size = 2.15, colour = MS_PRIMARY) +
-  annotate("text", x = 83.0, y = 18.5,
+  annotate("segment", x = 72.0, y = 27.2, xend = 93.4, yend = 27.2,
+           colour = "#9AA1A5", linewidth = .45,
+           arrow = grid::arrow(length = grid::unit(1.45, "mm"), type = "closed")) +
+  annotate("text", x = 82.7, y = 24.7, label = "higher measurement burden",
+           family = MS_FONT, size = 2.05, colour = "#687176") +
+  annotate("text", x = 83.0, y = 17.2,
            label = "Sufficient when no observed higher-requirement state\ncan change the representation beyond ε",
-           family = MS_FONT, size = 2.3, lineheight = 1.0, colour = "#5F686D") +
+           family = MS_FONT, size = 2.25, lineheight = 1.0, colour = "#5F686D") +
 
   coord_cartesian(xlim = c(0, 100), ylim = c(0, 100), expand = FALSE, clip = "off") +
   labs(
