@@ -193,9 +193,9 @@ observation rather than two unrelated timing coefficients.
   tasks;
 - Fig. 3b: conditional distortion geometry across transition-local exposure-state
   tertiles, retaining both magnitude `A` and directional coherence `B/A`;
-- Fig. 3c: participant-grouped out-of-sample contextual predictability from the
-  joint model, together with the fraction of metrics having positive held-out
-  CV R².
+- Fig. 3c: cross-axis non-additivity, showing magnitude Q and coherence R/Q.
+  The former contextual CV panel is retained in
+  `FigS_RQ2_context_predictability.png`; Fig.4 owns the main predictive-value narrative.
 
 The complete conditional geometry atlas, transition state-spread diagnostic and
 incremental grouped-CV information diagnostic remain secondary outputs.
@@ -206,19 +206,22 @@ incremental grouped-CV information diagnostic remain secondary outputs.
 `results/rq2/rq2_conditional_reliability.rds` manifest. `13b_plot_fig4.R` reads
 this frozen artifact only. Its three panels present:
 
-- Fig.4a: observed distortion in training-defined lower/middle/higher context-risk
-  groups among held-out participants, relative to unstratified distortion;
+- Fig.4a: pooled lower/middle/higher contextual risk-group distortion ratios,
+  shown as connected dots (dumbbells).
 - Fig.4b: context's Brier-score value over configuration means and its increment
-  beyond candidate measurements, with participant bootstrap intervals and two
-  repeated participant partitions;
-- Fig.4c: observed and predicted tolerance-exceedance curves in the same lower
-  and higher context groups, at all six prespecified tolerance slices.
+  beyond candidate measurements, with participant bootstrap intervals and repeated splits.
+- Fig.4c: lower- versus higher-context observed exceedance probability scatterplots
+  at all six frozen tolerances. Dots are metric–contrast pairs; dimension-specific
+  diamonds and horizontal/vertical bars show marginal medians and IQRs. The
+  identity line indicates equal risk. IQRs describe heterogeneity, not uncertainty.
+
+Fig.3 is rendered at 7.4 × 6.88 inches (20% shorter than the earlier 8.6-inch version).
 
 The 52 daily targets and eight anchor contrasts retain metric-specific supports.
 There is no outcome matching. The figures do not claim universal sufficiency,
 real-time adaptive acquisition, or an irreducible reconstruction error floor.
 Supplementary outputs show site-mean and model-capacity controls and metric-level
-heterogeneity. Cross-axis non-additivity remains in the unchanged Fig.3 supporting
+heterogeneity. Cross-axis non-additivity remains in the renumbered Fig.3c supporting
 panel and frozen gamma outputs. See `RQ2_CONDITIONAL_RELIABILITY.md` for the active
 analysis and `RQ2_INFORMATION_EXPERIMENTS.md` for the experiment/failed-route log.
 

@@ -49,7 +49,7 @@ all primary participant-bootstrap intervals were above zero, and the direction
 was consistent across three participant partitions. Context also outperformed
 site-mean predictions. Mean distortion in lower-context-risk groups was 17–29%
 below the corresponding unstratified mean, whereas higher-risk groups were
-14–37% above it (Fig.4a).
+14–37% above it (Fig.4a). Metric–contrast heterogeneity is shown in Fig.4c.
 
 These differences translated into distinct tolerance-exceedance profiles. At a
 tolerance of 0.2 standardized units, lower- and higher-risk groups had observed
@@ -84,13 +84,18 @@ sufficiency are complementary estimands, not interchangeable criteria.
 ## Figure 4 caption
 
 **Context-conditioned measurement reliability.** (a) Actual held-out mean absolute
-distortion in lower, middle and higher contextual risk groups, relative to the
-unstratified mean. Groups use training-only predicted-risk cutpoints. (b) Brier
-score improvement from context relative to training configuration means and its
-increment beyond candidate measurements. Bars show 95% paired participant
-bootstrap intervals for the primary partition; smaller marks show two additional
-participant partitions. (c) Observed and predicted tolerance-exceedance profiles
-in the same lower- and higher-risk groups. Summaries weight representations
-equally and retain metric-specific supports. Risk groups do not certify universal
-sufficiency. Metric heterogeneity, site-mean and decoder-capacity controls are
-reported in supplementary figures.
+ distortion in lower, middle and higher contextual risk groups, relative to the
+ unstratified mean. Groups use training-only predicted-risk cutpoints. (b) Brier
+ score improvement from context relative to training configuration means and its
+ increment beyond candidate measurements. Bars show 95% paired participant
+ bootstrap intervals; smaller marks show two additional participant partitions.
+ (c) Observed tolerance-exceedance probability in lower-risk (horizontal) versus
+ higher-risk (vertical) contexts at all six prespecified tolerances. Each point
+ represents one metric–contrast pair. Points above the identity line indicate
+ successful risk ordering; points below it indicate reversed ordering. Colours
+ identify configuration dimensions. Diamonds show dimension-specific marginal
+ medians; horizontal and vertical bars show the respective interquartile ranges
+ across metric–contrast pairs, not confidence intervals or a joint probability region.
+ All 414 available pairs enter each slice: 104 placement, 50 optical and 260 temporal.
+ Panels a–b weight metrics equally within contrasts. Risk groups do not certify
+ RQ3 sufficiency. Predicted/observed curves and nuisance controls remain supplementary.

@@ -13,9 +13,9 @@ theme_risk<-function()theme_ms_axes(base_size=7,legend_position="bottom")+
   theme(panel.grid.minor=element_blank(),panel.grid.major=element_line(colour="#E7EBED",linewidth=.2),
     strip.text=element_text(size=6.5,face="bold"),axis.text=element_text(size=6),
     legend.title=element_blank(),legend.text=element_text(size=6),plot.margin=margin(4,5,4,4))
-header<-function(p,title,subtitle,h=.14)ggdraw()+draw_plot(p,0,0,1,1-h)+
-  draw_label(title,x=.015,y=.995,hjust=0,vjust=1,size=8.4,fontface="bold",fontfamily=MS_FONT)+
-  draw_label(subtitle,x=.015,y=1-h*.48,hjust=0,vjust=1,size=6,colour="#656D72",fontfamily=MS_FONT)
+header<-function(p,title,subtitle,h=.14,left=0)ggdraw()+draw_plot(p,left,0,1-left,1-h)+
+  draw_label(title,x=if(left>0).00735 else .015,y=.995,hjust=0,vjust=1,size=8.4,fontface="bold",fontfamily=MS_FONT)+
+  draw_label(subtitle,x=if(left>0).00735 else .015,y=1-h*.48,hjust=0,vjust=1,size=6,colour="#656D72",fontfamily=MS_FONT)
 
 # Training-only context-risk cutpoints define the held-out groups.
 mp<-as.data.table(z$metric_profiles)[target=="mean_risk"]
@@ -31,6 +31,7 @@ pa<-ggplot(display,aes(ratio,pair,colour=context_group,group=pair))+
   geom_line(colour="#BBC3C7",linewidth=.5)+geom_point(size=2.25)+
   scale_colour_manual(values=group_colors,breaks=c("Lower","Middle","Higher"),labels=c("Lower risk","Middle","Higher risk"))+
   labs(x="Observed distortion / unstratified distortion",y=NULL)+theme_risk()
+pa_body<-pa
 pa<-header(pa,"a  Context separates reliability regimes","New participants; training-only risk groups")
 
 ci<-as.data.table(z$information_value)[contrast%in%c("context_skill","context_increment")]
@@ -46,7 +47,9 @@ pb<-ggplot(ci,aes(estimate,pair,colour=kind,group=kind))+
   geom_point(data=reps[repeat_id!=1],aes(shape=factor(repeat_id)),size=1.3,position=pd,alpha=.6,show.legend=FALSE)+
   scale_colour_manual(values=c("#2F5D7E","#B16C42"))+
   labs(x="Held-out Brier score improvement (%)",y=NULL)+theme_risk()+guides(colour=guide_legend(ncol=1))
-pb<-header(pb,"b  Information value depends on what is known","All tolerance slices; bootstrap bars and repeat splits")
+top_aligned<-align_plots(pa_body,pb,align="h",axis="tb")
+pa<-header(top_aligned[[1]],"a  Context separates reliability regimes","New participants; training-only risk groups")
+pb<-header(top_aligned[[2]],"b  Information value depends on what is known","All tolerance slices; bootstrap bars and repeat splits")
 
 prof<-as.data.table(z$context_profiles)[startsWith(target,"exceed_") & context_group%in%c("Lower","Higher")]
 prof[,`:=`(epsilon=as.numeric(sub("exceed_","",target)),pair=factor(comparison_pair_id,levels=ORDER,labels=LABELS))]
@@ -63,10 +66,47 @@ pc<-header(pc,"c  A given tolerance implies different reliability across context
 foot<-ggdraw()+draw_label(
   "52 daily targets; eight contrasts; unavailable targets excluded. Summaries weight metrics equally.\nContext: 18 daily + 32 daypart fields. Measurement: candidate target + 16 observed-configuration signatures.\nContext groups do not redefine the cohort or certify RQ3 sufficiency. No universal tolerance is imposed.",
   x=.012,hjust=0,size=5.6,colour="#626A70",fontfamily=MS_FONT)
-figure<-plot_grid(plot_grid(pa,pb,nrow=1,rel_widths=c(.49,.51)),pc,foot,ncol=1,rel_heights=c(.47,.45,.08))
+# Preserve the earlier pooled view; the main figure exposes all analytical units.
+previous_figure<-plot_grid(plot_grid(pa,pb,nrow=1,rel_widths=c(.49,.51)),pc,foot,ncol=1,rel_heights=c(.47,.45,.08))
+# Each point is one metric/contrast; facets retain every prespecified tolerance.
+# The identity line makes successful and reversed risk ordering immediately visible.
+tail<-as.data.table(z$metric_profiles)[startsWith(target,"exceed_") & context_group %in% c("Lower","Higher")]
+cloud<-dcast(tail,task_index+metric+dimension+comparison_pair_id+target~context_group,value.var="observed")
+cloud[,`:=`(epsilon=as.numeric(sub("exceed_","",target)),
+  axis=factor(dimension,levels=c("placement","optical","temporal"),labels=c("Placement","Optical","Temporal")))]
+cloud[,slice:=factor(epsilon,levels=sort(unique(epsilon)),labels=paste0("ε = ",sort(unique(epsilon))))]
+spread<-cloud[,.(x=median(Lower),y=median(Higher),
+  xlo=quantile(Lower,.25),xhi=quantile(Lower,.75),
+  ylo=quantile(Higher,.25),yhi=quantile(Higher,.75)),by=.(slice,axis)]
+pc<-ggplot(cloud,aes(Lower,Higher,colour=axis))+
+  geom_abline(slope=1,intercept=0,colour="#899499",linetype=2,linewidth=.35)+
+  geom_point(size=.5,alpha=.22)+
+  geom_segment(data=spread,aes(x=xlo,xend=xhi,y=y,yend=y),inherit.aes=FALSE,colour="white",linewidth=1.6)+
+  geom_segment(data=spread,aes(x=x,xend=x,y=ylo,yend=yhi),inherit.aes=FALSE,colour="white",linewidth=1.6)+
+  geom_segment(data=spread,aes(x=xlo,xend=xhi,y=y,yend=y,colour=axis),inherit.aes=FALSE,linewidth=.65)+
+  geom_segment(data=spread,aes(x=x,xend=x,y=ylo,yend=yhi,colour=axis),inherit.aes=FALSE,linewidth=.65)+
+  geom_point(data=spread,aes(x,y,fill=axis),shape=23,size=2.2,colour="white",stroke=.4)+
+  facet_wrap(~slice,ncol=3)+coord_cartesian(xlim=c(0,1),ylim=c(0,1))+
+  scale_colour_manual(values=c(Placement="#2F5D7E",Optical="#B16C42",Temporal="#52958B"))+
+  scale_fill_manual(values=c(Placement="#2F5D7E",Optical="#B16C42",Temporal="#52958B"),guide="none")+
+  scale_x_continuous(breaks=c(0,.5,1),labels=c("0","50","100"))+
+  scale_y_continuous(breaks=c(0,.5,1),labels=c("0","50","100"))+
+  labs(x="Exceedance probability in lower-risk context (%)",
+    y="Exceedance probability in higher-risk context (%)")+theme_risk()+
+  guides(colour=guide_legend(override.aes=list(alpha=1,size=2)))
+pc<-header(pc,"c  Context changes tolerance-exceedance risk",
+  "Above diagonal: higher risk as predicted · dots: metric–contrast pairs · diamonds / bars: median / IQR",.10,left=.047)
+foot<-ggdraw()+draw_label(
+  "52 daily targets; eight contrasts; participant-grouped out-of-sample evaluation. a–b: equal metric weights.\nRisk groups use training-only cutpoints. c: IQRs describe heterogeneity, not confidence intervals.\nDaily exceedance risk informs context of use; RQ3 retains its separate observed-stability criterion.",
+  x=.012,hjust=0,size=5.4,colour="#626A70",fontfamily=MS_FONT)
+figure<-plot_grid(plot_grid(pa,pb,nrow=1,rel_widths=c(.49,.51)),pc,foot,
+  ncol=1,rel_heights=c(.40,.54,.06))
 ms_fig3_atlas_refine_main<-function(...)NULL;ms_fig3_refine_main<-function(...)NULL
 ms_polish_main_figure<-function(plot,path,caller_env,width,height)list(plot=plot,width=width,height=height)
-ms_plot_save(figure,"results/rq2/Fig4_RQ2.png",7.4,7.7)
+ms_plot_save(figure,"results/rq2/Fig4_RQ2.png",7.4,8.2)
+ms_plot_save(previous_figure,"results/rq2/FigS_RQ2_reliability_profiles.png",7.4,7.7)
+fwrite(cloud,"results/rq2/fig4_tolerance_scatter_display.csv")
+fwrite(spread,"results/rq2/fig4_tolerance_scatter_iqr.csv")
 
 # Strong nuisance controls and metric-level detail are retained as supplements.
 sens<-as.data.table(z$information_value)

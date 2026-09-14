@@ -1084,8 +1084,8 @@ theme_dense <- function() theme_ms_axes(base_size = 6, legend_position = "none")
     strip.text = element_text(size = 6, face = "bold"), axis.text = element_text(size = 5.4),
     plot.title = element_text(size = 7, face = "bold"), plot.subtitle = element_text(size = 5.2),
     plot.margin = margin(3, 4, 3, 4))
-section <- function(plot, title, subtitle, header = .15) ggdraw() +
-  draw_plot(plot, 0, 0, 1, 1 - header) +
+section <- function(plot, title, subtitle, header = .15, bottom = 0) ggdraw() +
+  draw_plot(plot, 0, bottom, 1, 1 - header - bottom) +
   draw_label(title, x = .012, y = .995, hjust = 0, vjust = 1, size = 7.4, fontface = "bold", fontfamily = MS_FONT) +
   draw_label(subtitle, x = .012, y = 1 - header * .48, hjust = 0, vjust = 1,
     size = 5.1, colour = "#666A6D", fontfamily = MS_FONT)
@@ -1176,24 +1176,27 @@ gamma_panel <- function(field) {
     theme(panel.grid = element_blank(), axis.line = element_blank(), axis.ticks = element_blank(),
       axis.text.y = element_text(size = 5.4), strip.text = element_text(size = 5),
       panel.spacing.x = unit(1.4, "mm"), legend.position = "right", legend.title = element_text(size = 4.9),
-      legend.text = element_text(size = 4.7), legend.key.height = unit(5, "mm"), legend.key.width = unit(2, "mm"))
+      legend.text = element_text(size = 4.7), legend.key.height = unit(4, "mm"), legend.key.width = unit(2, "mm"))
 }
 gamma_body <- plot_grid(gamma_panel("Q"), gamma_panel("C"), ncol = 1, align = "v", axis = "lr")
-p2d <- section(gamma_body, "d  Where do configuration effects interact?",
-  "Class medians: magnitude (top), coherence (bottom); crosses = unavailable", .15)
-right_column <- plot_grid(p2b, p2c, p2d, ncol = 1, rel_heights = c(.40, .24, .36))
+p2d <- section(gamma_body, "c  Where do configuration effects interact?",
+  "Class medians: magnitude (top), coherence (bottom); crosses = unavailable", .15, bottom = .065)
+right_column <- plot_grid(p2b, p2d, ncol = 1, rel_heights = c(.53, .47))
 main_body <- plot_grid(p2a, right_column, ncol = 2, rel_widths = c(.49, .51))
 legends <- plot_grid(predictor_legend, dimension_legend, ms_metric_legend(text_size = 5.3),
   ncol = 1, rel_heights = c(1, 1, 1))
 foot <- ggdraw() + draw_label(paste0(
-  "State-conditioned explanation includes high-information exposure state; it is excluded from recovery in Fig. 4.\n",
-  "d: placement \u00d7 optical steps 1/2 = chest/wrist; temporal steps 1\u20135 = 120\u219260, 60\u219240, 40\u219230, 30\u219220, 20\u219210 s.\n",
+  "State-conditioned explanation includes high-information exposure state; it is excluded from reliability prediction in Fig. 4.\n",
+  "c: placement \u00d7 optical steps 1/2 = chest/wrist; temporal steps 1\u20135 = 120\u219260, 60\u219240, 40\u219230, 30\u219220, 20\u219210 s.\n",
   "Display summaries weight metrics equally. IQRs describe metric heterogeneity, not confidence intervals."),
   x = .015, hjust = 0, size = 5.1, colour = "#626A70", fontfamily = MS_FONT)
 p2 <- plot_grid(main_body, legends, foot, ncol = 1, rel_heights = c(1, .07, .06))
 ms_fig2_refine_main <- function(...) NULL
 ms_polish_main_figure <- function(plot, path, caller_env, width, height) list(plot = plot, width = width, height = height)
-ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.png"), 7.40, 8.60)
+ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.png"), 7.40, 6.88)
+ms_plot_save(section(p_cv, "Which information predicts distortion?",
+  "Participant-grouped CV; descriptive context includes reference exposure state", .16),
+  file.path(OUT_DIR, "FigS_RQ2_context_predictability.png"), 7.4, 3.0)
 write_csv(cv_display, file.path(OUT_DIR, "fig3_context_cv_complete.csv"))
 write_csv(gamma_display, file.path(OUT_DIR, "fig3_nonadditivity_display.csv"))
 
@@ -1271,4 +1274,4 @@ ms_plot_write_manifest(
   )
 )
 
-message("Fig. 3 complete: contextual effects, state modulation, full held-out predictability and cross-dimensional non-additivity.")
+message("Fig. 3 complete: contextual effects, state modulation and non-additivity; held-out predictability retained as a supplement.")
