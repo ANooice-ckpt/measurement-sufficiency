@@ -72,9 +72,10 @@ Rscript scripts/11_plot_fig1.R
 RQ1_INFERENCE_BOOT=1000 Rscript scripts/10b_rq1_inferential_preservation.R
 Rscript scripts/11b_plot_fig2.R
 
-# RQ2: exposure-state conditionality, layered context models and circular-aware gamma -> Figs. 3-4
+# RQ2: contextual structure -> Fig.3; conditional reliability -> Fig.4
 RQ2_WORKERS=12 RQ2_CV_FOLDS=5 RQ2_RUN_MODELS=1 Rscript scripts/12_rq2_analysis.R
 Rscript scripts/13a_plot_fig3.R
+RQ2_RELIABILITY_WORKERS=12 Rscript scripts/12d_rq2_recovery.R --run
 Rscript scripts/13b_plot_fig4.R
 
 # RQ3: observed residual instability, sufficiency and Pareto occupancy -> Figs. 5-6

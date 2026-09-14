@@ -144,6 +144,9 @@ LOG="results/logs/downstream_v5.log"
   echo "===== FIGURE 3 ====="
   Rscript scripts/13a_plot_fig3.R
 
+  echo "===== RQ2 CONDITIONAL RELIABILITY ====="
+  Rscript scripts/12d_rq2_recovery.R --run
+
   echo "===== FIGURE 4 ====="
   Rscript scripts/13b_plot_fig4.R
 

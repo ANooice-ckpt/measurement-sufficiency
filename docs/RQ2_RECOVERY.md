@@ -1,3 +1,7 @@
+> Historical design record. This is not the active Fig.4 contract. See
+> [RQ2_CONDITIONAL_RELIABILITY.md](RQ2_CONDITIONAL_RELIABILITY.md). Commands and
+> retired script names below describe earlier experiments, not current runners.
+
 # Independent RQ2 recovery prototype
 
 `scripts/12d_rq2_recovery.R` is an opt-in downstream analysis. It never sources

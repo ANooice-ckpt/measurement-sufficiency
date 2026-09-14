@@ -200,20 +200,27 @@ observation rather than two unrelated timing coefficients.
 The complete conditional geometry atlas, transition state-spread diagnostic and
 incremental grouped-CV information diagnostic remain secondary outputs.
 
-## Figure 4 — RQ2 cross-dimensional non-additivity
+## Figure 4 — RQ2 context-conditioned measurement reliability
 
-`13b_plot_fig4.R` presents:
+`12d_rq2_recovery.R --run` writes the versioned
+`results/rq2/rq2_conditional_reliability.rds` manifest. `13b_plot_fig4.R` reads
+this frozen artifact only. Its three panels present:
 
-- Fig. 4a: class-level distributions of metric-level non-additivity magnitude,
-  using the display projection `Q_mp = median_t(Q_mpt)`;
-- Fig. 4b: the ordered-transition backbone with overall and metric-class
-  median/IQR overlays, retaining transition-level `Q = mean(|gamma|)`;
-- Fig. 4c: the distribution of directional coherence
-  `C = median_t(R_mpt / Q_mpt)` across dimension pairs.
+- Fig.4a: observed distortion in training-defined lower/middle/higher context-risk
+  groups among held-out participants, relative to unstratified distortion;
+- Fig.4b: context's Brier-score value over configuration means and its increment
+  beyond candidate measurements, with participant bootstrap intervals and two
+  repeated participant partitions;
+- Fig.4c: observed and predicted tolerance-exceedance curves in the same lower
+  and higher context groups, at all six prespecified tolerance slices.
 
-The complete transition-level gamma atlas and model-validation diagnostics are
-secondary outputs. Duration does not enter the primary RQ2 gamma interaction set;
-it enters multidimensional stability directly in RQ3.
+The 52 daily targets and eight anchor contrasts retain metric-specific supports.
+There is no outcome matching. The figures do not claim universal sufficiency,
+real-time adaptive acquisition, or an irreducible reconstruction error floor.
+Supplementary outputs show site-mean and model-capacity controls and metric-level
+heterogeneity. Cross-axis non-additivity remains in the unchanged Fig.3 supporting
+panel and frozen gamma outputs. See `RQ2_CONDITIONAL_RELIABILITY.md` for the active
+analysis and `RQ2_INFORMATION_EXPERIMENTS.md` for the experiment/failed-route log.
 
 ## Figure 5 — RQ3 single-dimension sufficiency
 
@@ -259,6 +266,7 @@ Fig. 1 from frozen RQ1
 → Fig. 2
 → RQ2 analysis
 → Fig. 3
+→ RQ2 conditional reliability
 → Fig. 4
 → RQ3 analysis
 → Fig. 5

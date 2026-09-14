@@ -69,6 +69,36 @@ For actual four-cell cross-dimensional contrasts:
 
 linear metrics use ordinary second differences. Circular metrics use a circular-aware first difference and a circular-aware second difference. Summaries are R = mean(gamma), Q = mean(abs(gamma)), with Q >= |R|. Primary dimension pairs are placement x optical, placement x temporal and optical x temporal; duration enters multidimensional stability directly in RQ3.
 
+### RQ2 downstream conditional reliability
+
+`12d_rq2_recovery.R --run` evaluates Pr(D > epsilon | information), where
+D = abs(z), with held-out Brier loss. Mean D defines context-risk profiles on
+the same frozen RQ1 scale. Prespecified tolerance slices are 0.05, 0.1, 0.2,
+0.3, 0.5 and 1 standardized units, not universal sufficiency cutoffs.
+
+This extension uses the 52 daily representations and eight single-axis daily
+anchors, without outcome matching. Sixteen candidate-only hourly signatures
+and 18 daily plus 32 daypart context fields use one dictionary for all tasks.
+Unavailable LIGHT metrics remain unavailable. High-information exposure state,
+participant identity, site and date are excluded from predictor matrices; an
+explicit site-mean control is evaluated separately.
+
+Uniform additive spline ridge uses training-only imputation, knots and scaling.
+A ten-effective-df measurement fit is preserved when an orthogonalized ten-df
+context block is added; a twenty-df measurement-only fit controls decoder capacity.
+Exceedance probabilities are projected to be nonincreasing across tolerance.
+Three site-stratified participant-grouped five-fold partitions assess validation
+stability. Paired participant bootstrap intervals, stratified by site, condition
+on primary fitted predictions and are not model-refitting intervals.
+
+Risk groups use outer-training predicted mean-risk tertile cutpoints, applied
+to held-out participants unchanged at every tolerance. Group coverage and
+metric-level heterogeneity stay explicit. Context value before conditioning on
+measured exposure and its increment beyond measurement are separate results.
+Full-day context supports retrospective reliability assessment, not a real-time
+adaptive-logging claim. These daily anchor probabilities do not replace RQ3's
+all-higher observed mean-change criterion or identify an irreducible error floor.
+
 ## 7. RQ3 observed stability and sufficiency
 
 For an ordered state c:

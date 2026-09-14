@@ -1,6 +1,7 @@
-# Canonical RQ2 information recoverability: reconstruct target representations and diagnose remaining distortion.
+# Canonical RQ2 conditional reliability. Historical recovery helpers below are
+# retained for audit/reproduction; --run now uses the risk/Brier analysis.
 # Rscript scripts/12d_rq2_recovery.R --check-inputs
-# RQ2_RECOVERY_WORKERS=36 Rscript scripts/12d_rq2_recovery.R --run
+# RQ2_RELIABILITY_WORKERS=12 Rscript scripts/12d_rq2_recovery.R --run
 suppressPackageStartupMessages({ library(dplyr); library(tibble) })
 source("scripts/utils/rq1_inference.R")
 source("scripts/utils/rq2_context_features.R")
@@ -316,7 +317,6 @@ recovery_inputs <- function() {
   extra_paths <- c(unit_context = file.path(core_root, "unit_context.csv.gz"), temporal_context = "results/rq2/recovery_inputs/context_dayparts.rds")
   weather_path <- file.path(core_root, "weather_1min.csv.gz")
   problems <- paste0("Missing input: ", paths[!file.exists(paths)]); problems <- problems[nzchar(problems) & problems != "Missing input: "]
-  if (!requireNamespace("xgboost", quietly = TRUE)) problems <- c(problems, "Missing required R package: xgboost")
   missing_extra <- c(extra_paths["unit_context"], weather_path)[!file.exists(c(extra_paths["unit_context"], weather_path))]
   if (length(missing_extra)) problems <- c(problems, paste0("Missing input: ", missing_extra))
   if (any(!file.exists(paths))) return(list(problems = problems, paths = paths))
@@ -947,11 +947,17 @@ recovery_run <- function(inputs) {
 
 if (sys.nframe() == 0L) {
   args <- commandArgs(trailingOnly = TRUE); command <- if (length(args)) args[[1]] else ""
-  allowed <- c("--check-inputs", "--build-context", "--smoke-test", "--run")
-  if (!command %in% allowed || length(args) != 1L) stop("Use --check-inputs, --build-context, --smoke-test, or --run")
+  allowed <- c("--check-inputs", "--build-context", "--smoke-test", "--run", "--legacy-run", "--summarize")
+  if (!command %in% allowed || length(args) != 1L) stop("Use --run, --summarize, --check-inputs, --build-context, --smoke-test, or --legacy-run")
+  if(command%in%c("--run","--summarize")) {
+    suppressPackageStartupMessages(library(data.table))
+    source("scripts/utils/rq2_conditional_reliability.R")
+    if(command=="--run")reliability_run() else reliability_finalize()
+  } else {
   inputs <- recovery_inputs(); if (length(inputs$problems)) stop(paste(c(inputs$problems, "Supply the current input artifacts."), collapse = "\n"))
   if (command == "--check-inputs") message("Current paths and context schemas validated; daypart cache ready.")
   else if (command == "--build-context") message("Rich daypart context ready; reused=", inputs$temporal_reused)
   else if (command == "--smoke-test") recovery_smoke(inputs)
   else recovery_run(inputs)
+  }
 }

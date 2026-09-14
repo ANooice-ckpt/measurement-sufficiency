@@ -1,3 +1,7 @@
+> Historical design record. This is not the active Fig.4 contract. See
+> [RQ2_CONDITIONAL_RELIABILITY.md](RQ2_CONDITIONAL_RELIABILITY.md). Commands and
+> retired script names below describe earlier experiments, not current runners.
+
 # RQ2 recovery as a nested information-ablation experiment
 
 This note describes the post-hoc information-ablation helpers now integrated in
