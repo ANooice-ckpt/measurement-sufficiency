@@ -3,7 +3,7 @@
 # Supplementary / appendix figures.
 # Run from the repository root:
 #   Rscript scripts/16_appendix_figures.R
-# Outputs are written directly to figures/.
+# Outputs are written directly to results/figures/.
 
 .ms_file <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 if (length(.ms_file)) {
@@ -24,125 +24,241 @@ suppressPackageStartupMessages({
 })
 
 source("scripts/utils/figure_style.R")
+source("scripts/utils/melidos_io.R")
 
-OUT_DIR <- "figures"
+OUT_DIR <- file.path("results", "figures")
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
 # -----------------------------------------------------------------------------
 # Fig. S — MeLiDos field-study sites and sample distribution
 # -----------------------------------------------------------------------------
-# Site coordinates follow melidosData. Participant and participant-day totals
-# follow the current MeLiDos multi-country descriptive table (191 participants,
-# 1,480 participant-days across nine sites).
 
-melidos_sites <- tibble::tribble(
-  ~site,      ~city,       ~country,        ~lat,      ~lon,      ~participants, ~participant_days, ~label_lon, ~label_lat, ~hjust,
-  "RISE",     "Borås",     "Sweden",         57.71567,   12.89087, 17,            137,               21.0,       60.0,       0.0,
-  "THUAS",    "Delft",     "Netherlands",    52.01160,    4.35710, 20,            125,               -8.0,       55.1,       0.0,
-  "BAUA",     "Dortmund",  "Germany",        51.49820,    7.41671, 24,            176,               16.0,       54.0,       0.0,
-  "MPI",      "Tübingen",  "Germany",        48.52160,    9.05760, 26,            208,               -8.0,       46.8,       0.0,
-  "TUM",      "Munich",    "Germany",        48.13330,   11.56670, 10,             80,               18.0,       47.3,       0.0,
-  "FUSPCEU",  "Madrid",    "Spain",          40.41650,   -3.70256, 23,            182,              -15.0,       38.0,       0.0,
-  "IZTECH",   "Izmir",     "Türkiye",        38.32000,   26.63000, 17,            140,               17.5,       33.8,       0.0,
-  "UCR",      "San José",  "Costa Rica",      9.93720,  -84.05090, 39,            312,              -74.0,       13.0,       0.0,
-  "KNUST",    "Kumasi",    "Ghana",           6.67501,   -1.57264, 15,            120,                7.0,        8.7,       0.0
-) |>
+site_reference <- tibble::tribble(
+  ~site,      ~city,       ~country,        ~lat,      ~lon,      ~label_lon, ~label_lat, ~hjust,
+  "RISE",     "Borås",     "Sweden",         57.71567,   12.89087,   20.0,       60.0,       0.0,
+  "THUAS",    "Delft",     "Netherlands",    52.01160,    4.35710,  -12.0,       55.7,       0.0,
+  "BAUA",     "Dortmund",  "Germany",        51.49820,    7.41671,   17.0,       54.5,       0.0,
+  "MPI",      "Tübingen",  "Germany",        48.52160,    9.05760,  -10.0,       46.0,       0.0,
+  "TUM",      "Munich",    "Germany",        48.13330,   11.56670,   18.5,       46.7,       0.0,
+  "FUSPCEU",  "Madrid",    "Spain",          40.41650,   -3.70256,  -17.0,       37.8,       0.0,
+  "IZTECH",   "Izmir",     "Türkiye",        38.32000,   26.63000,   18.0,       33.8,       0.0,
+  "UCR",      "San José",  "Costa Rica",      9.93720,  -84.05090,  -73.0,       12.8,       0.0,
+  "KNUST",    "Kumasi",    "Ghana",           6.67501,   -1.57264,    7.0,        8.8,       0.0
+)
+
+# Use the actual local MeLiDos files rather than hard-coding site sample sizes.
+# First reuse the inventory if it exists; otherwise derive counts from light_glasses.
+read_site_counts <- function() {
+  inventory_path <- file.path("logs", "data_inventory.csv")
+
+  if (file.exists(inventory_path)) {
+    inv <- utils::read.csv(inventory_path, stringsAsFactors = FALSE, check.names = FALSE)
+    required <- c("site", "modality", "n_participants")
+    if (all(required %in% names(inv))) {
+      out <- inv |>
+        filter(modality == "light_glasses") |>
+        group_by(site) |>
+        summarise(participants = max(n_participants, na.rm = TRUE), .groups = "drop")
+      if (nrow(out) == length(melidos_sites()) && all(melidos_sites() %in% out$site)) {
+        message("Site sample sizes read from logs/data_inventory.csv")
+        return(out)
+      }
+    }
+  }
+
+  message("Deriving site sample sizes from local light_glasses files")
+  rows <- lapply(melidos_sites(), function(site) {
+    path <- raw_data_path(site, "light_glasses")
+    if (!file.exists(path)) {
+      stop(
+        "Missing ", path,
+        ". Run scripts/01_download_melidos.R (and optionally scripts/02_inventory.R) first."
+      )
+    }
+    x <- load_raw_file(path, "light_glasses")
+    if (!"Id" %in% names(x)) stop("Missing Id column in ", path)
+    tibble(site = site, participants = dplyr::n_distinct(x$Id[!is.na(x$Id)]))
+  })
+  bind_rows(rows)
+}
+
+melidos_sites_df <- site_reference |>
+  left_join(read_site_counts(), by = "site") |>
   mutate(
-    label = paste0(site, " · ", city, "\n",
-                   "n = ", participants, " · ", participant_days, " participant-days")
+    label = paste0(site, " · ", city, "\n", "n = ", participants)
   )
 
 stopifnot(
-  nrow(melidos_sites) == 9L,
-  dplyr::n_distinct(melidos_sites$country) == 7L,
-  sum(melidos_sites$participants) == 191L,
-  sum(melidos_sites$participant_days) == 1480L
+  nrow(melidos_sites_df) == 9L,
+  dplyr::n_distinct(melidos_sites_df$country) == 7L,
+  all(is.finite(melidos_sites_df$participants)),
+  all(melidos_sites_df$participants > 0)
 )
 
+n_total <- sum(melidos_sites_df$participants)
+if (n_total != 191L) {
+  warning(
+    "Local light_glasses files contain ", n_total,
+    " unique participants rather than the reported MeLiDos total of 191. ",
+    "The figure uses the local project data."
+  )
+}
+
+# -----------------------------------------------------------------------------
+# Natural Earth basemap
+# -----------------------------------------------------------------------------
+# No extra mapping package is required. We try the official Natural Earth S3
+# archive first, then the GitHub GeoJSON mirror. A missing basemap is treated as
+# an error rather than silently producing a blank map.
+
+download_binary <- function(url, destination) {
+  if (file.exists(destination)) unlink(destination)
+
+  ok <- tryCatch({
+    suppressWarnings(utils::download.file(
+      url, destination, mode = "wb", quiet = TRUE, method = "libcurl"
+    ))
+    file.exists(destination) && is.finite(file.info(destination)$size) &&
+      file.info(destination)$size > 1000
+  }, error = function(e) FALSE)
+
+  if (ok) return(TRUE)
+
+  curl_bin <- Sys.which("curl")
+  if (nzchar(curl_bin)) {
+    status <- tryCatch(
+      suppressWarnings(system2(
+        curl_bin,
+        c("-L", "--fail", "--silent", "--show-error", "-o",
+          shQuote(normalizePath(destination, winslash = "/", mustWork = FALSE)),
+          shQuote(url)),
+        stdout = FALSE, stderr = FALSE
+      )),
+      error = function(e) 1L
+    )
+    if (identical(status, 0L) && file.exists(destination) && file.info(destination)$size > 1000) {
+      return(TRUE)
+    }
+  }
+
+  FALSE
+}
+
 load_world_map <- function() {
-  # Avoid adding mapping packages to the project environment. The existing sf
-  # dependency reads the public Natural Earth 110 m GeoJSON into a temporary file.
-  url <- paste0(
+  td <- tempfile("natural_earth_")
+  dir.create(td, recursive = TRUE)
+  on.exit(unlink(td, recursive = TRUE, force = TRUE), add = TRUE)
+
+  zip_path <- file.path(td, "ne_110m_admin_0_countries.zip")
+  zip_url <- "https://naturalearth.s3.amazonaws.com/110m_cultural/ne_110m_admin_0_countries.zip"
+
+  if (download_binary(zip_url, zip_path)) {
+    unzip(zip_path, exdir = td)
+    shp <- list.files(td, pattern = "[.]shp$", full.names = TRUE)
+    if (length(shp)) {
+      world <- tryCatch(suppressWarnings(sf::st_read(shp[[1]], quiet = TRUE)), error = function(e) NULL)
+      if (!is.null(world) && nrow(world) > 0) return(world)
+    }
+  }
+
+  geojson_path <- file.path(td, "ne_110m_admin_0_countries.geojson")
+  geojson_url <- paste0(
     "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/",
     "master/geojson/ne_110m_admin_0_countries.geojson"
   )
-  tmp <- tempfile(fileext = ".geojson")
-  on.exit(unlink(tmp), add = TRUE)
 
-  ok <- tryCatch({
-    suppressWarnings(utils::download.file(url, tmp, mode = "wb", quiet = TRUE))
-    file.exists(tmp) && file.info(tmp)$size > 1000
-  }, error = function(e) FALSE)
-
-  if (!ok) {
-    warning("Natural Earth basemap could not be downloaded; drawing the site network without land polygons.")
-    return(NULL)
+  if (download_binary(geojson_url, geojson_path)) {
+    world <- tryCatch(
+      suppressWarnings(sf::st_read(geojson_path, quiet = TRUE)),
+      error = function(e) NULL
+    )
+    if (!is.null(world) && nrow(world) > 0) return(world)
   }
 
-  suppressWarnings(sf::st_read(tmp, quiet = TRUE))
+  stop(
+    "Natural Earth basemap could not be downloaded from either source. ",
+    "Check network access to naturalearth.s3.amazonaws.com or raw.githubusercontent.com."
+  )
 }
 
 world <- load_world_map()
+world <- sf::st_transform(world, 4326)
 
-if (!is.null(world)) {
-  country_field <- intersect(c("ADMIN", "NAME_EN", "NAME", "SOVEREIGNT"), names(world))[[1]]
-  study_names <- c("Sweden", "Netherlands", "Germany", "Spain", "Turkey", "Türkiye", "Costa Rica", "Ghana")
-  world <- world |>
-    mutate(study_country = .data[[country_field]] %in% study_names)
-}
+country_field <- intersect(c("ADMIN", "NAME_EN", "NAME", "SOVEREIGNT"), names(world))
+if (!length(country_field)) stop("Could not identify a country-name field in Natural Earth data")
+country_field <- country_field[[1]]
 
-map_base <- ggplot()
-if (!is.null(world)) {
-  map_base <- map_base +
-    geom_sf(
-      data = world,
-      aes(fill = study_country),
-      colour = "#D5D9DB", linewidth = .18
-    ) +
-    scale_fill_manual(
-      values = c(`FALSE` = "#F5F5F2", `TRUE` = "#DCE8EF"),
-      guide = "none"
-    )
-}
+study_country_names <- c(
+  "Sweden", "Netherlands", "Germany", "Spain", "Turkey", "Türkiye",
+  "Costa Rica", "Ghana"
+)
 
-p_sites <- map_base +
+world <- world |>
+  mutate(study_country = .data[[country_field]] %in% study_country_names)
+
+# Restrict the geographic frame to the MeLiDos study region while retaining a
+# recognisable world-map context spanning Central America, Europe and West Africa.
+world_view <- suppressWarnings(sf::st_crop(
+  world,
+  xmin = -100, xmax = 40, ymin = -5, ymax = 65
+))
+
+summary_label <- paste0(
+  "9 sites   ·   7 countries   ·   ",
+  scales::comma(n_total), " participants"
+)
+
+p_sites <- ggplot() +
+  geom_sf(
+    data = world_view,
+    aes(fill = study_country),
+    colour = "#CED3D6", linewidth = .22
+  ) +
+  scale_fill_manual(
+    values = c(`FALSE` = "#F4F4F1", `TRUE` = "#DCE8EF"),
+    guide = "none"
+  ) +
   geom_segment(
-    data = melidos_sites,
+    data = melidos_sites_df,
     aes(x = lon, y = lat, xend = label_lon, yend = label_lat),
-    colour = "#9AA1A5", linewidth = .28, lineend = "round"
+    inherit.aes = FALSE,
+    colour = "#8D969B", linewidth = .30, lineend = "round"
   ) +
   geom_point(
-    data = melidos_sites,
+    data = melidos_sites_df,
     aes(lon, lat, size = participants),
-    shape = 21, fill = MS_PRIMARY, colour = "white", stroke = .55
+    inherit.aes = FALSE,
+    shape = 21, fill = MS_PRIMARY, colour = "white", stroke = .58
   ) +
   geom_text(
-    data = melidos_sites,
+    data = melidos_sites_df,
     aes(label_lon, label_lat, label = label, hjust = hjust),
-    family = MS_FONT, size = 3.05, lineheight = .92, colour = "#232629"
+    inherit.aes = FALSE,
+    family = MS_FONT, size = 3.05, lineheight = .92, colour = "#202427"
   ) +
   annotate(
-    "label", x = -91, y = 61.0,
-    label = "9 sites   ·   7 countries   ·   191 participants   ·   1,480 participant-days",
-    hjust = 0, vjust = 1, family = MS_FONT, size = 3.25,
-    fill = scales::alpha("white", .94), colour = "#232629",
+    "label", x = -97, y = 63.0,
+    label = summary_label,
+    hjust = 0, vjust = 1,
+    family = MS_FONT, size = 3.30,
+    fill = scales::alpha("white", .94), colour = "#202427",
     label.size = 0, label.padding = grid::unit(2.0, "mm")
   ) +
   scale_size_area(
-    max_size = 8.2,
-    limits = c(10, 40),
-    breaks = c(10, 20, 30, 40),
+    max_size = 8.4,
+    breaks = scales::pretty_breaks(n = 4),
     name = "Participants"
   ) +
   coord_sf(
-    xlim = c(-94, 34), ylim = c(0, 64),
-    expand = FALSE, default_crs = sf::st_crs(4326), datum = sf::st_crs(4326)
+    xlim = c(-100, 40), ylim = c(-5, 65),
+    expand = FALSE,
+    default_crs = sf::st_crs(4326), datum = sf::st_crs(4326)
   ) +
   labs(
     title = "MeLiDos field-study network",
-    subtitle = "Site sample size and geographic coverage",
+    subtitle = "Geographic coverage and site sample size",
     x = NULL, y = NULL,
-    caption = "Point area represents participants; labels also report participant-days."
+    caption = "Point area represents the number of participants in the local MeLiDos light_glasses data."
   ) +
   theme_ms(base_size = 8.0, legend_position = "bottom") +
   theme(
@@ -168,8 +284,8 @@ p_sites <- map_base +
 png_path <- file.path(OUT_DIR, "FigS_MeLiDos_sites.png")
 pdf_path <- file.path(OUT_DIR, "FigS_MeLiDos_sites.pdf")
 
-ggsave(png_path, p_sites, width = 10.4, height = 6.0, dpi = MS_RASTER_DPI, bg = "white")
-ggsave(pdf_path, p_sites, width = 10.4, height = 6.0, bg = "white")
+ggsave(png_path, p_sites, width = 10.6, height = 6.1, dpi = MS_RASTER_DPI, bg = "white")
+ggsave(pdf_path, p_sites, width = 10.6, height = 6.1, bg = "white")
 
 message("Supplementary map written:")
 message("  ", png_path)
