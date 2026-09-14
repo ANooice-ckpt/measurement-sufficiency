@@ -3,8 +3,9 @@
 # Supplementary / appendix figures.
 # Run from the repository root:
 #   Rscript scripts/16_appendix_figures.R
-# Output:
+# Outputs:
 #   results/figures/FigS_MeLiDos_sites.png
+#   results/figures/FigS_measurement_configuration.png
 
 .ms_file <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 if (length(.ms_file)) {
@@ -305,3 +306,227 @@ ggsave(
 
 message("Supplementary map written:")
 message("  ", png_path)
+
+# -----------------------------------------------------------------------------
+# Fig. S — Measurement configuration space
+# -----------------------------------------------------------------------------
+# One compact schematic summarizes the four independent configuration facets:
+# placement, optical representation, temporal resolution, and monitoring duration.
+# The temporal panel explicitly shows sparse systematic row retention from the
+# native 10-s source grid rather than averaging/interpolation.
+
+# Panel backgrounds and dividers.
+panel_bg <- tibble::tribble(
+  ~xmin, ~xmax, ~ymin, ~ymax,
+   3,     49,    53,    94,
+  51,     97,    53,    94,
+   3,     49,     5,    49,
+  51,     97,     5,    49
+)
+
+# Placement: three minimal human figures with the active sensor location marked.
+placement_people <- tibble(
+  x = c(13, 26, 39),
+  label = c("Eye", "Chest", "Wrist"),
+  sensor_x = c(13.55, 26.00, 41.10),
+  sensor_y = c(78.95, 74.55, 73.40)
+)
+
+human_segments <- dplyr::bind_rows(lapply(placement_people$x, function(x0) {
+  tibble::tribble(
+    ~x, ~y, ~xend, ~yend,
+    x0, 77.8, x0, 69.8,
+    x0, 75.6, x0 - 2.1, 72.9,
+    x0, 75.6, x0 + 2.1, 72.9,
+    x0, 69.8, x0 - 1.8, 65.5,
+    x0, 69.8, x0 + 1.8, 65.5
+  )
+}))
+
+human_heads <- placement_people |>
+  transmute(x = x, y = 81.1)
+
+# Optical representation: deliberately abstract cards, avoiding a false spectral
+# shape while making the two retained representations visually explicit.
+optical_cards <- tibble::tribble(
+  ~xmin, ~xmax, ~ymin, ~ymax, ~label, ~fill,
+  66.0, 78.0, 68.5, 79.5, "MEDI",  MS_PRIMARY,
+  82.0, 94.0, 68.5, 79.5, "LIGHT", MS_SECONDARY
+)
+
+# Temporal resolution: each row retains exact points from the same 10-s source grid.
+temporal_steps <- c(10, 20, 30, 40, 60, 120)
+temporal_rows <- tibble(
+  step = temporal_steps,
+  y = seq(39.0, 18.5, length.out = length(temporal_steps))
+)
+temporal_points <- dplyr::bind_rows(lapply(seq_len(nrow(temporal_rows)), function(i) {
+  step <- temporal_rows$step[[i]]
+  times <- seq(0, 120, by = step)
+  tibble(
+    step = step,
+    y = temporal_rows$y[[i]],
+    t = times,
+    x = 15.0 + (times / 120) * 29.0
+  )
+}))
+
+# Monitoring duration: six nested examples from a common start day. The note in
+# the panel clarifies that the analysis evaluates all contiguous windows.
+duration_rows <- tibble(
+  duration = 1:6,
+  y = seq(39.0, 18.5, length.out = 6)
+)
+duration_boxes <- tidyr::expand_grid(
+  duration = 1:6,
+  day = 1:6
+) |>
+  left_join(duration_rows, by = "duration") |>
+  mutate(
+    xmin = 63.0 + (day - 1) * 4.55,
+    xmax = xmin + 3.75,
+    ymin = y - 1.25,
+    ymax = y + 1.25,
+    active = day <= duration
+  )
+
+p_config <- ggplot() +
+  geom_rect(
+    data = panel_bg,
+    aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+    inherit.aes = FALSE,
+    fill = "#FAFAF8", colour = "#E0E3E4", linewidth = 0.32
+  ) +
+
+  # a Placement
+  annotate("text", x = 5.1, y = 90.8, label = "a  Placement",
+           hjust = 0, family = MS_FONT, fontface = "bold", size = 4.0, colour = "#202427") +
+  geom_segment(
+    data = human_segments,
+    aes(x = x, y = y, xend = xend, yend = yend),
+    inherit.aes = FALSE, colour = "#747C80", linewidth = 0.82, lineend = "round"
+  ) +
+  geom_point(
+    data = human_heads,
+    aes(x, y), inherit.aes = FALSE,
+    shape = 21, size = 5.7, stroke = 0.72, fill = "white", colour = "#747C80"
+  ) +
+  geom_point(
+    data = placement_people,
+    aes(sensor_x, sensor_y), inherit.aes = FALSE,
+    shape = 21, size = 3.25, stroke = 0.55, fill = MS_PRIMARY, colour = "white"
+  ) +
+  geom_text(
+    data = placement_people,
+    aes(x, 61.4, label = label), inherit.aes = FALSE,
+    family = MS_FONT, size = 3.15, colour = "#30363A"
+  ) +
+  annotate("text", x = 26, y = 56.2, label = "Eye  ·  chest  ·  wrist",
+           family = MS_FONT, size = 2.55, colour = "#727A7E") +
+
+  # b Optical representation
+  annotate("text", x = 53.1, y = 90.8, label = "b  Optical representation",
+           hjust = 0, family = MS_FONT, fontface = "bold", size = 4.0, colour = "#202427") +
+  annotate("point", x = 57.5, y = 74.0, shape = 21, size = 8.8,
+           stroke = 0.5, fill = "#F3D56D", colour = "#D4B74C") +
+  annotate("segment", x = 57.5, y = 80.8, xend = 57.5, yend = 84.0,
+           colour = "#C5A43B", linewidth = 0.55) +
+  annotate("segment", x = 51.8, y = 74.0, xend = 54.2, yend = 74.0,
+           colour = "#C5A43B", linewidth = 0.55) +
+  annotate("segment", x = 60.8, y = 74.0, xend = 63.2, yend = 74.0,
+           colour = "#C5A43B", linewidth = 0.55) +
+  annotate("segment", x = 53.6, y = 78.1, xend = 55.2, yend = 79.7,
+           colour = "#C5A43B", linewidth = 0.55) +
+  annotate("segment", x = 59.8, y = 68.3, xend = 61.4, yend = 66.7,
+           colour = "#C5A43B", linewidth = 0.55) +
+  annotate("segment", x = 60.8, y = 74.0, xend = 65.0, yend = 74.0,
+           colour = "#91999D", linewidth = 0.45,
+           arrow = grid::arrow(length = grid::unit(1.7, "mm"), type = "closed")) +
+  geom_rect(
+    data = optical_cards,
+    aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = fill),
+    inherit.aes = FALSE, colour = "white", linewidth = 0.7
+  ) +
+  scale_fill_identity() +
+  geom_text(
+    data = optical_cards,
+    aes(x = (xmin + xmax) / 2, y = (ymin + ymax) / 2, label = label),
+    inherit.aes = FALSE,
+    family = MS_FONT, fontface = "bold", size = 4.0, colour = "white"
+  ) +
+  annotate("text", x = 80, y = 62.2,
+           label = "Two retained optical representations",
+           family = MS_FONT, size = 2.75, colour = "#5F686D") +
+
+  # c Temporal resolution
+  annotate("text", x = 5.1, y = 45.5, label = "c  Temporal resolution",
+           hjust = 0, family = MS_FONT, fontface = "bold", size = 4.0, colour = "#202427") +
+  geom_segment(
+    data = temporal_rows,
+    aes(x = 15.0, xend = 44.0, y = y, yend = y),
+    inherit.aes = FALSE, colour = "#D5D9DB", linewidth = 0.45
+  ) +
+  geom_point(
+    data = temporal_points,
+    aes(x, y), inherit.aes = FALSE,
+    shape = 21, size = 2.15, stroke = 0.35, fill = MS_PRIMARY, colour = "white"
+  ) +
+  geom_text(
+    data = temporal_rows,
+    aes(x = 12.0, y = y, label = paste0(step, " s")),
+    inherit.aes = FALSE, hjust = 1,
+    family = MS_FONT, size = 2.65, colour = "#30363A"
+  ) +
+  annotate("text", x = 29.5, y = 11.3,
+           label = "Exact source rows retained · no averaging",
+           family = MS_FONT, size = 2.55, colour = "#727A7E") +
+
+  # d Monitoring duration
+  annotate("text", x = 53.1, y = 45.5, label = "d  Monitoring duration",
+           hjust = 0, family = MS_FONT, fontface = "bold", size = 4.0, colour = "#202427") +
+  geom_rect(
+    data = duration_boxes,
+    aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+    inherit.aes = FALSE,
+    fill = "white", colour = "#C9CED1", linewidth = 0.38
+  ) +
+  geom_rect(
+    data = duration_boxes |> filter(active),
+    aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+    inherit.aes = FALSE,
+    fill = MS_PRIMARY, colour = "white", linewidth = 0.35
+  ) +
+  geom_text(
+    data = duration_rows,
+    aes(x = 59.5, y = y, label = paste0(duration, " d")),
+    inherit.aes = FALSE, hjust = 1,
+    family = MS_FONT, size = 2.65, colour = "#30363A"
+  ) +
+  annotate("text", x = 76.7, y = 11.3,
+           label = "Complete consecutive days · all contiguous windows",
+           family = MS_FONT, size = 2.48, colour = "#727A7E") +
+
+  coord_cartesian(xlim = c(0, 100), ylim = c(0, 100), expand = FALSE, clip = "off") +
+  labs(
+    title = "Measurement configuration space",
+    subtitle = "Each evaluated configuration combines one state from four independent facets",
+    caption = "High-information anchors are eye placement, MEDI and 10-s sampling; monitoring duration is evaluated over 1–6 complete consecutive days."
+  ) +
+  theme_void(base_family = MS_FONT) +
+  theme(
+    plot.title = element_text(size = 11.0, face = "bold", colour = "#202427", margin = margin(b = 1.5)),
+    plot.subtitle = element_text(size = 8.0, colour = "#5F686D", margin = margin(b = 6)),
+    plot.caption = element_text(size = 6.4, colour = "#70787C", hjust = 0, margin = margin(t = 4)),
+    plot.margin = margin(6, 7, 5, 7)
+  )
+
+config_path <- file.path(OUT_DIR, "FigS_measurement_configuration.png")
+
+ggsave(
+  config_path, p_config,
+  width = 10.4, height = 6.3,
+  dpi = MS_RASTER_DPI, bg = "white"
+)
+
+message("Measurement configuration schematic written:")
+message("  ", config_path)
