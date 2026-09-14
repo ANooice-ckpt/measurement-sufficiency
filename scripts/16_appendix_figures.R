@@ -44,7 +44,7 @@ site_reference <- tibble::tribble(
   "MPI",      "Tübingen",  "Germany",        48.52160,    9.05760,  -11.5,       46.7,       0.0,
   "TUM",      "Munich",    "Germany",        48.13330,   11.56670,   24.5,       46.2,       0.0,
   "FUSPCEU",  "Madrid",    "Spain",          40.41650,   -3.70256,  -16.5,       38.0,       0.0,
-  "IZTECH",   "Izmir",     "Türkiye",        38.32000,   26.63000,   34.0,       34.2,       0.0,
+  "IZTECH",   "Izmir",     "Türkiye",        38.32000,   26.63000,   36.0,       34.2,       1.0,
   "UCR",      "San José",  "Costa Rica",      9.93720,  -84.05090,  -69.5,       14.0,       0.0,
   "KNUST",    "Kumasi",    "Ghana",           6.67501,   -1.57264,   10.0,        9.8,       0.0
 )
@@ -181,9 +181,10 @@ world <- world[!sf::st_is_empty(world), , drop = FALSE]
 
 # Crop before projection so geometries around the antimeridian never enter the
 # plotting object. The Atlantic-centred frame spans all study sites while keeping
-# the final map strictly rectangular.
+# the final map strictly rectangular. A small eastern margin keeps the Izmir
+# annotation comfortably inside the map rather than flush with the clipping edge.
 view_bbox <- sf::st_bbox(
-  c(xmin = -95, ymin = -2, xmax = 40, ymax = 65),
+  c(xmin = -95, ymin = -2, xmax = 45, ymax = 65),
   crs = sf::st_crs(4326)
 )
 world_view <- suppressWarnings(sf::st_crop(world, view_bbox))
