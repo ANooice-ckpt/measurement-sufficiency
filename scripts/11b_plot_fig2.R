@@ -1,3 +1,5 @@
+options(encoding = "UTF-8")
+if (.Platform$OS.type == "windows") invisible(suppressWarnings(Sys.setlocale("LC_CTYPE", "English_United States.utf8")))
 .ms_file <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 if (length(.ms_file)) {
   .ms_script <- normalizePath(sub("^--file=", "", .ms_file[[1]]), winslash = "/", mustWork = TRUE)
@@ -282,6 +284,11 @@ p2c <- ggplot(contrast_plot, aes(rq1_distortion_A, inference_deviation, color = 
     plot.subtitle = element_text(size = 4.35, color = "#666A6D"),
     plot.margin = margin(2, 3, 2, 3)
   )
+
+# Match the outer plotting boundaries despite the two-line left x-axis title.
+p2a <- p2a + theme(plot.margin = margin(2, 3, 0, 3),
+                  plot.subtitle = element_text(margin = margin(b = 9)))
+p2c <- p2c + theme(plot.margin = margin(2, 3, 6, 3))
 
 metric_legend <- ms_metric_legend(text_size = 5.35, point_size = 1.55, key_width_mm = 3.5)
 right <- cowplot::plot_grid(

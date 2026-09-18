@@ -49,8 +49,8 @@ ms_polish_ggplot <- function(plot,
       legend.box.margin = ggplot2::margin(0, 0, 0, 0),
       legend.spacing.x = grid::unit(1.2, "mm"),
       legend.spacing.y = grid::unit(.5, "mm"),
-      legend.title = ggplot2::element_text(size = 4.05, lineheight = .95),
-      legend.text = ggplot2::element_text(size = 3.90)
+      legend.title = ggplot2::element_text(size = 4.8, lineheight = 1),
+      legend.text = ggplot2::element_text(size = 4.7)
     )
   }
   out
@@ -88,7 +88,7 @@ ms_polish_panel_frame <- function(plot, title, subtitle = "",
     )
   if (has_subtitle) {
     out <- out + cowplot::draw_label(
-      subtitle, x = title_x, y = .955, hjust = 0, vjust = 1,
+      subtitle, x = title_x, y = .925, hjust = 0, vjust = 1,
       fontfamily = MS_FONT, size = subtitle_size,
       colour = MS_PANEL_SUBTITLE_COLOUR
     )
@@ -115,7 +115,7 @@ ms_polish_fig1 <- function(plot, env, width, height) {
     p1a_core,
     "a  Absolute and relational preservation",
     assoc_text,
-    title_size = 6.35, subtitle_size = 3.60, body_height = .89
+    title_size = 7.0, subtitle_size = 4.0, body_height = .87
   )
 
   p1b_body <- if (!is.null(p1b_shape_legend)) {
@@ -127,7 +127,7 @@ ms_polish_fig1 <- function(plot, env, width, height) {
     p1b_core
   }
   p1b_axis <- cowplot::ggdraw() +
-    cowplot::draw_plot(p1b_body, x = .055, y = 0, width = .945, height = .972) +
+    cowplot::draw_plot(p1b_body, x = .055, y = 0, width = .945, height = 1) +
     cowplot::draw_label(
       "Absolute distortion, A", x = .012, y = .49, angle = 90,
       hjust = .5, vjust = .5, size = 5.65,
@@ -135,12 +135,13 @@ ms_polish_fig1 <- function(plot, env, width, height) {
     )
   p1b <- ms_polish_panel_frame(
     p1b_axis, "b  Magnitude and directional coherence",
-    title_size = 6.35, body_height = .915
+    title_size = 7.0, body_height = .955
   )
 
   p1c <- ms_polish_panel_frame(
-    right_core, "c  Where ordered-axis distortion accrues",
-    title_size = 6.35, body_height = .915
+    cowplot::plot_grid(right_core, NULL, ncol = 1, rel_heights = c(.925, .075)),
+    "c  Where ordered-axis distortion accrues",
+    title_size = 7.0, body_height = .955
   )
 
   bottom <- cowplot::plot_grid(
@@ -236,11 +237,11 @@ ms_polish_fig4 <- function(plot, env, width, height) {
     return(list(plot = plot, width = width, height = height))
   }
 
-  p4a <- ms_polish_ggplot(p4a, title_size = 6.25, subtitle_size = 4.10,
+  p4a <- ms_polish_ggplot(p4a, title_size = 7.0, subtitle_size = 4.6,
                           margin = ggplot2::margin(2, 3, 1, 3), legend_compact = TRUE)
-  p4b <- ms_polish_ggplot(p4b, title_size = 6.25, subtitle_size = 4.10,
+  p4b <- ms_polish_ggplot(p4b, title_size = 7.0, subtitle_size = 4.6,
                           margin = ggplot2::margin(1, 3, 2, 3))
-  p4c <- ms_polish_ggplot(p4c, title_size = 6.25, subtitle_size = 4.10,
+  p4c <- ms_polish_ggplot(p4c, title_size = 7.0, subtitle_size = 4.6,
                           margin = ggplot2::margin(1, 3, 2, 3), legend_compact = TRUE)
 
   bottom <- cowplot::plot_grid(

@@ -1,3 +1,5 @@
+options(encoding = "UTF-8")
+if (.Platform$OS.type == "windows") invisible(suppressWarnings(Sys.setlocale("LC_CTYPE", "English_United States.utf8")))
 # Canonical RQ3 plotting source. All accepted display refinements are consolidated here.
 .ms_file <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 if (length(.ms_file)) {

@@ -12,10 +12,14 @@ pair_factor<-function(x)factor(x,levels=rev(ORDER),labels=rev(LABELS))
 theme_risk<-function()theme_ms_axes(base_size=7,legend_position="bottom")+
   theme(panel.grid.minor=element_blank(),panel.grid.major=element_line(colour="#E7EBED",linewidth=.2),
     strip.text=element_text(size=6.5,face="bold"),axis.text=element_text(size=6),
-    legend.title=element_blank(),legend.text=element_text(size=6),plot.margin=margin(4,5,4,4))
+    legend.title=element_blank(),legend.text=element_text(size=6),
+    legend.margin=margin(0,0,0,0),legend.box.margin=margin(0,0,0,0),
+    legend.box.spacing=unit(1,"mm"),legend.key.height=unit(3,"mm"),
+    legend.key.width=unit(4,"mm"),legend.spacing.x=unit(1,"mm"),
+    plot.margin=margin(4,5,2,4))
 header<-function(p,title,subtitle,h=.14,left=0)ggdraw()+draw_plot(p,left,0,1-left,1-h)+
-  draw_label(title,x=if(left>0).00735 else .015,y=.995,hjust=0,vjust=1,size=8.4,fontface="bold",fontfamily=MS_FONT)+
-  draw_label(subtitle,x=if(left>0).00735 else .015,y=1-h*.48,hjust=0,vjust=1,size=6,colour="#656D72",fontfamily=MS_FONT)
+  draw_label(title,x=if(left>0).00735 else .015,y=.995,hjust=0,vjust=1,size=7.4,fontface="bold",fontfamily=MS_FONT)+
+  draw_label(subtitle,x=if(left>0).00735 else .015,y=1-h*.48,hjust=0,vjust=1,size=5.2,colour="#656D72",fontfamily=MS_FONT)
 
 # Training-only context-risk cutpoints define the held-out groups.
 mp<-as.data.table(z$metric_profiles)[target=="mean_risk"]
@@ -45,8 +49,9 @@ pb<-ggplot(ci,aes(estimate,pair,colour=kind,group=kind))+
   geom_vline(xintercept=0,colour="#7D858A",linetype=2,linewidth=.35)+
   geom_errorbar(aes(xmin=lo,xmax=hi),orientation="y",width=.12,position=pd,linewidth=.5)+geom_point(size=2,position=pd)+
   geom_point(data=reps[repeat_id!=1],aes(shape=factor(repeat_id)),size=1.3,position=pd,alpha=.6,show.legend=FALSE)+
-  scale_colour_manual(values=c("#2F5D7E","#B16C42"))+
-  labs(x="Held-out Brier score improvement (%)",y=NULL)+theme_risk()+guides(colour=guide_legend(ncol=1))
+  scale_colour_manual(values=c("#2F5D7E","#B16C42"),
+    labels=c("Context vs mean","Context beyond measurement"))+
+  labs(x="Held-out Brier score improvement (%)",y=NULL)+theme_risk()+guides(colour=guide_legend(nrow=1))
 top_aligned<-align_plots(pa_body,pb,align="h",axis="tb")
 pa<-header(top_aligned[[1]],"a  Context separates reliability regimes","New participants; training-only risk groups")
 pb<-header(top_aligned[[2]],"b  Information value depends on what is known","All tolerance slices; bootstrap bars and repeat splits")
@@ -100,7 +105,7 @@ foot<-ggdraw()+draw_label(
   "52 daily targets; eight contrasts; participant-grouped out-of-sample evaluation. a–b: equal metric weights.\nRisk groups use training-only cutpoints. c: IQRs describe heterogeneity, not confidence intervals.\nDaily exceedance risk informs context of use; RQ3 retains its separate observed-stability criterion.",
   x=.012,hjust=0,size=5.4,colour="#626A70",fontfamily=MS_FONT)
 figure<-plot_grid(plot_grid(pa,pb,nrow=1,rel_widths=c(.49,.51)),pc,foot,
-  ncol=1,rel_heights=c(.40,.54,.06))
+  ncol=1,rel_heights=c(.35,.59,.06))
 ms_fig3_atlas_refine_main<-function(...)NULL;ms_fig3_refine_main<-function(...)NULL
 ms_polish_main_figure<-function(plot,path,caller_env,width,height)list(plot=plot,width=width,height=height)
 ms_plot_save(figure,"results/rq2/Fig4_RQ2.png",7.4,6.56)

@@ -92,7 +92,8 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
   if (any(vapply(objects, is.null, logical(1)))) return(NULL)
 
   p_labels <- objects$p_labels
-  p_strength <- objects$p_strength
+  # Narrow strength column: avoid a terminal tick label intruding into signed effects.
+  p_strength <- objects$p_strength + ggplot2::theme(axis.text.x = ggplot2::element_text(size = 3.1))
   predictor_legend <- objects$predictor_legend
   dimension_legend <- objects$dimension_legend
   coef_summary_all_plot <- objects$coef_summary_all_plot

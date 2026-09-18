@@ -578,7 +578,7 @@ p4c <- ggplot(
   ) +
   scale_y_continuous(limits = c(0, 1), labels = scales::label_percent(accuracy = 25)) +
   labs(
-    title = "c  Target-aligned alternatives become substitutable as tolerance relaxes",
+    title = "c  Substitutability increases as tolerance relaxes",
     subtitle = p4c_subtitle,
     x = "tolerance ε", y = "fraction of metrics substitutable"
   ) +

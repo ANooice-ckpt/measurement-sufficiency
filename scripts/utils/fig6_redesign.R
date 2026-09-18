@@ -1,7 +1,7 @@
 # Fig. 6 display only. Inputs are the unchanged, mature Fig. 6 display grids.
 # No new pooling, sufficiency classification, Pareto calculation or fitting.
 ms_fig6_redesign <- function(entry, pareto, classes, resolution_labels, days) {
-  ink <- "#233B48"
+  ink <- "#30363B"
   muted <- "#657078"
   unresolved <- "#E1E5E7"
   base <- theme_minimal(base_size = 7, base_family = MS_FONT) +
@@ -102,9 +102,9 @@ ms_fig6_redesign <- function(entry, pareto, classes, resolution_labels, days) {
   header <- function(title, subtitle) {
     cowplot::ggdraw() +
       cowplot::draw_label(title, x = .005, y = .94, hjust = 0, vjust = 1,
-                          size = 9, fontfamily = MS_FONT, fontface = "bold", colour = ink) +
+                          size = 7.4, fontfamily = MS_FONT, fontface = "bold", colour = ink) +
       cowplot::draw_label(subtitle, x = .005, y = .36, hjust = 0, vjust = 1,
-                          size = 6.5, fontfamily = MS_FONT, colour = muted)
+                          size = 5.2, fontfamily = MS_FONT, colour = muted)
   }
   headers <- cowplot::plot_grid(
     header("a  Joint stability landscape", "Lower entry tolerance = greater stability"),
@@ -116,9 +116,9 @@ ms_fig6_redesign <- function(entry, pareto, classes, resolution_labels, days) {
                      "Shared tolerance = 0.50; faint lines retain the four intermediate sampling intervals")
   note <- cowplot::ggdraw() + cowplot::draw_label(
     "Class heading: share of resolved cells with at least 50% of metrics sufficient.  U: 10 s / 6 d has no higher observed state.",
-    x = .005, y = .8, hjust = 0, vjust = 1, fontfamily = MS_FONT, size = 6, colour = muted)
+    x = .005, y = .8, hjust = 0, vjust = 1, fontfamily = MS_FONT, size = 5.2, colour = muted)
   body <- cowplot::plot_grid(headers, top, c_header, class_grob, note, ncol = 1,
-                               rel_heights = c(.10, .51, .10, .32, .04))
+                               rel_heights = c(.085, .525, .085, .335, .04))
   final <- cowplot::ggdraw() + cowplot::draw_plot(body, x = .012, y = .008, width = .976, height = .980)
   list(plot = final, a = a, b = b, c = c)
 }

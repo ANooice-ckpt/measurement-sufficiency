@@ -1,3 +1,5 @@
+options(encoding = "UTF-8")
+if (.Platform$OS.type == "windows") invisible(suppressWarnings(Sys.setlocale("LC_CTYPE", "English_United States.utf8")))
 .ms_file <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 if (length(.ms_file)) {
   .ms_script <- normalizePath(sub("^--file=", "", .ms_file[[1]]), winslash = "/", mustWork = TRUE)
