@@ -8,7 +8,7 @@ if (!exists("rq1_pairwise_load", mode = "function")) {
 }
 
 rq1_inference_version <- function(rq1_version) {
-  paste0("rq1_inference_v3_domains_anchor8__", rq1_version)
+  paste0("rq1_inference_v5_composition_anchor8__", rq1_version)
 }
 
 rq1_inference_anchor_map <- function() {
@@ -362,6 +362,134 @@ rq1_inference_quadnorm <- function(v, covariance) {
   sqrt(max(0, q))
 }
 
+# Additive squared-error decomposition in the actual exposure design space.
+# The stable term includes a common offset; it is not a between-person variance.
+rq1_distortion_components <- function(xr, xc, participant, site) {
+  blocks <- lapply(split(seq_len(nrow(xr)), participant), function(idx) {
+    e <- xc[idx,,drop=FALSE] - xr[idx,,drop=FALSE]
+    stable <- colMeans(e)
+    within <- sweep(e, 2L, stable)
+    tibble::tibble(participant = participant[idx[1]], site = site[idx[1]],
+      n_days = length(idx), between_ss = length(idx) * sum(stable^2),
+      within_ss = sum(within^2), total_ss = sum(e^2))
+  })
+  blocks <- dplyr::bind_rows(blocks)
+  if (any(abs(blocks$total_ss - blocks$between_ss - blocks$within_ss) >
+          1e-10 * pmax(1, blocks$total_ss))) stop("Distortion decomposition identity failed")
+  n <- sum(blocks$n_days)
+  total <- sum(blocks$total_ss) / n
+  between <- sum(blocks$between_ss) / n
+  within <- sum(blocks$within_ss) / n
+  list(summary = tibble::tibble(distortion_total_ms = total,
+    distortion_between_ms = between, distortion_within_ms = within,
+    D_T = sqrt(total), f_W = if (total > 1e-15) within / total else NA_real_,
+    distortion_within_rms = sqrt(within),
+    distortion_within_fraction = if (total > 1e-15) within / total else NA_real_),
+    blocks = blocks)
+}
+
+# Descriptive nested model, separately for every domain and exposure geometry.
+# The added predictor is within share, per primary-task SD, conditional on
+# log1p(matched-support total RMS). Frozen A is a
+# covariate, never replaced by outcome-matched distortion. No model selection.
+rq1_component_regression <- function(g, within = g$f_W,
+                                     deviation = g$inference_deviation, x_scale = NULL) {
+  x <- within; y <- log1p(deviation)
+  if (is.null(x_scale)) x_scale <- stats::sd(x)
+  empty <- list(beta = NA_real_, delta_r2 = NA_real_, x_scale = x_scale)
+  if (nrow(g) < 10L || !is.finite(x_scale) || x_scale < 1e-12) return(empty)
+  if (any(!is.finite(c(x,y,g$D_T,g$rq1_distortion_A)))) return(empty)
+  dat <- data.frame(A = log1p(g$rq1_distortion_A), total = log1p(g$D_T),
+    contrast = factor(g$candidate_config), outcome = factor(g$outcome))
+  terms <- c("A", "total", if (nlevels(dat$contrast) > 1L) "contrast",
+             if (nlevels(dat$outcome) > 1L) "outcome")
+  Z <- stats::model.matrix(stats::reformulate(terms), dat)
+  if (nrow(g) <= ncol(Z) + 2L || any(!is.finite(c(x, y, Z)))) return(empty)
+  rx <- stats::lm.fit(Z, x / x_scale)$residuals
+  ry <- stats::lm.fit(Z, y)$residuals
+  den <- sum(rx^2); tss <- sum((y - mean(y))^2)
+  if (den < 1e-12 || tss < 1e-12) return(empty)
+  beta <- sum(rx * ry) / den
+  list(beta = beta, delta_r2 = (sum(ry^2) - sum((ry - beta * rx)^2)) / tss,
+       x_scale = x_scale)
+}
+
+rq1_component_link <- function(summary, blocks, B, seed = 20260919L) {
+  keys <- c("candidate_config", "metric", "outcome")
+  g <- summary |>
+    dplyr::filter(status == "estimated", is.finite(inference_deviation),
+      is.finite(rq1_distortion_A), is.finite(D_T), is.finite(f_W)) |>
+    dplyr::mutate(component_task = dplyr::row_number())
+  if (!nrow(g)) return(list(
+    summary=summary |> dplyr::distinct(outcome_domain,metric_geometry) |>
+      dplyr::mutate(n_tasks=0L,n_metrics=0L,within_share_sd=NA_real_,beta_within=NA_real_,
+        beta_lower=NA_real_,beta_upper=NA_real_,incremental_r2=NA_real_,
+        incremental_r2_lower=NA_real_,incremental_r2_upper=NA_real_,bootstrap_requested=B,
+        bootstrap_valid=0L,status="not_estimable"),
+    bootstrap=tibble::tibble(outcome_domain=character(),metric_geometry=character(),
+      replicate=integer(),beta_within=double(),incremental_r2=double()),
+    correlations=tibble::tibble(outcome_domain=character(),metric_geometry=character(),
+      comparison_pair_id=character(),n_tasks=integer(),rho_A=double(),rho_within=double())))
+  blocks <- blocks |> dplyr::inner_join(g |> dplyr::select(dplyr::all_of(keys), component_task),
+                                       by = keys, relationship = "many-to-one")
+  people <- blocks |> dplyr::distinct(participant, site) |> dplyr::arrange(site, participant)
+  # One shared participant draw across ALL metrics, contrasts and outcomes.
+  # Task-specific supports are retained by assigning zero rows outside that task.
+  set.seed(seed)
+  W <- matrix(0L, nrow(people), B)
+  for (idx in split(seq_len(nrow(people)), people$site)) {
+    for (b in seq_len(B)) W[idx,b] <- tabulate(idx[sample.int(length(idx), length(idx), TRUE)],
+                                             nbins = nrow(people))[idx]
+  }
+  within_draw <- total_draw <- deviation_draw <- matrix(NA_real_, nrow(g), B)
+  for (z in split(blocks, blocks$component_task)) {
+    k <- z$component_task[1]
+    w <- W[match(z$participant, people$participant),,drop=FALSE]
+    if (!B) next
+    denom <- as.vector(z$n_days %*% w)
+    total_ss <- as.vector(z$total_ss %*% w)
+    total_draw[k,] <- sqrt(total_ss / denom)
+    within_draw[k,] <- ifelse(total_ss / denom > 1e-15,
+                              as.vector(z$within_ss %*% w) / total_ss, NA_real_)
+    sr <- Map(function(xx,xy) list(xx=xx,xy=xy), z$reference_xx, z$reference_xy)
+    sc <- Map(function(xx,xy) list(xx=xx,xy=xy), z$candidate_xx, z$candidate_xy)
+    rb <- rq1_inference_solve_draws(sr,w); cb <- rq1_inference_solve_draws(sc,w)
+    # Reference uncertainty and exposure scaling are frozen at the primary fit.
+    deviation_draw[k,] <- vapply(seq_len(B), function(b)
+      rq1_inference_quadnorm(cb[,b]-rb[,b], z$reference_covariance[[1]]), numeric(1))
+  }
+  models <- list(); draws <- list(); i <- 0L
+  for (ix in split(seq_len(nrow(g)), interaction(g$outcome_domain, g$metric_geometry, drop=TRUE))) {
+    i <- i+1L; z <- g[ix,]
+    point <- rq1_component_regression(z)
+    boot <- lapply(seq_len(B), function(b) {
+      # Do not change the target task set when a sparse resample is singular.
+      zb <- z; zb$D_T <- total_draw[ix,b]
+      rq1_component_regression(zb, within_draw[ix,b], deviation_draw[ix,b], point$x_scale)
+    })
+    beta <- vapply(boot, `[[`, numeric(1), "beta")
+    delta <- vapply(boot, `[[`, numeric(1), "delta_r2")
+    ok <- is.finite(beta) & is.finite(delta)
+    reliable <- sum(ok) >= max(20L, ceiling(.8*B))
+    ci <- function(x) if (reliable) as.numeric(stats::quantile(x[ok],c(.025,.975))) else c(NA_real_,NA_real_)
+    bc <- ci(beta); dc <- ci(delta)
+    models[[i]] <- tibble::tibble(outcome_domain=z$outcome_domain[1], metric_geometry=z$metric_geometry[1],
+      n_tasks=nrow(z), n_metrics=dplyr::n_distinct(z$metric),
+      within_share_sd=point$x_scale, beta_within=point$beta, beta_lower=bc[1], beta_upper=bc[2],
+      incremental_r2=point$delta_r2, incremental_r2_lower=dc[1], incremental_r2_upper=dc[2],
+      bootstrap_requested=B, bootstrap_valid=sum(ok),
+      status=if (!is.finite(point$beta)) "not_estimable" else if (reliable) "estimated" else "bootstrap_unreliable")
+    draws[[i]] <- tibble::tibble(outcome_domain=z$outcome_domain[1], metric_geometry=z$metric_geometry[1],
+      replicate=seq_len(B), beta_within=beta, incremental_r2=delta)
+  }
+  correlations <- g |> dplyr::group_by(outcome_domain, metric_geometry, comparison_pair_id) |>
+    dplyr::summarise(n_tasks=dplyr::n(),
+      rho_A=suppressWarnings(stats::cor(rq1_distortion_A,inference_deviation,method="spearman")),
+      rho_within=suppressWarnings(stats::cor(distortion_within_rms,inference_deviation,method="spearman")),
+      .groups="drop")
+  list(summary=dplyr::bind_rows(models), bootstrap=dplyr::bind_rows(draws), correlations=correlations)
+}
+
 rq1_inference_fit <- function(g, B = 1000L, seed = 20260911L) {
   circular <- identical(g$metric_geometry[[1]], "circular_time")
   terms <- if (circular) c("sin_time", "cos_time") else "reference_SD"
@@ -383,6 +511,10 @@ rq1_inference_fit <- function(g, B = 1000L, seed = 20260911L) {
     bootstrap_requested = B, bootstrap_valid = 0L, status = "insufficient_repeated_support"
   )
   support <- good |> dplyr::select(site, Id, Date)
+  components <- tibble::tibble(distortion_total_ms=NA_real_, distortion_between_ms=NA_real_,
+    distortion_within_ms=NA_real_, D_T=NA_real_, f_W=NA_real_,
+    distortion_within_rms=NA_real_, distortion_within_fraction=NA_real_)
+  component_blocks <- tibble::tibble()
   finish <- function(summary, draws = tibble::tibble(),
                      reference_strength = NA_real_, candidate_strength = NA_real_,
                      inference_deviation = NA_real_, covariance_rcond = NA_real_,
@@ -402,7 +534,8 @@ rq1_inference_fit <- function(g, B = 1000L, seed = 20260911L) {
       bootstrap_requested = B, bootstrap_valid_joint = bootstrap_valid_joint,
       status = paste(sort(unique(summary$status)), collapse = ";")
     )
-    list(summary = summary, task_summary = task, support = support, bootstrap = draws)
+    list(summary = summary, task_summary = dplyr::bind_cols(task, components),
+         support = support, bootstrap = draws, component_blocks = component_blocks)
   }
   if (all(!is.na(g$pair_reason))) {
     base$status <- "measurement_unavailable"; return(finish(base))
@@ -436,12 +569,21 @@ rq1_inference_fit <- function(g, B = 1000L, seed = 20260911L) {
   base$reference_scale <- scale
   base$distortion_A <- mean(abs(delta / scale))
   base$distortion_B <- mean(delta / scale)
+  decomposition <- rq1_distortion_components(xr,xc,good$participant,good$site)
+  components <- decomposition$summary
   y <- good$outcome_value
   if (sum((y - ave(y, good$participant))^2) < 1e-12) {
     base$status <- "no_within_participant_outcome_variation"; return(finish(base))
   }
   sr <- rq1_inference_stats(xr, y, good$participant)
   sc <- rq1_inference_stats(xc, y, good$participant)
+  component_blocks <- decomposition$blocks
+  block_order <- match(component_blocks$participant, names(sr))
+  component_blocks$reference_xx <- lapply(sr[block_order], `[[`, "xx")
+  component_blocks$reference_xy <- lapply(sr[block_order], `[[`, "xy")
+  component_blocks$candidate_xx <- lapply(sc[block_order], `[[`, "xx")
+  component_blocks$candidate_xy <- lapply(sc[block_order], `[[`, "xy")
+  component_blocks$reference_covariance <- rep(list(matrix(NA_real_,length(terms),length(terms))),nrow(component_blocks))
   weights <- rep(1L, length(sr))
   br <- rq1_inference_solve(sr, weights)
   bc <- rq1_inference_solve(sc, weights)
@@ -498,6 +640,7 @@ rq1_inference_fit <- function(g, B = 1000L, seed = 20260911L) {
       reference_strength <- rq1_inference_quadnorm(br, covariance)
       candidate_strength <- rq1_inference_quadnorm(bc, covariance)
       inference_deviation <- rq1_inference_quadnorm(bc - br, covariance)
+      component_blocks$reference_covariance <- rep(list(covariance),nrow(component_blocks))
     }
   }
   finish(base, draws, reference_strength, candidate_strength, inference_deviation,

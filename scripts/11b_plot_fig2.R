@@ -34,7 +34,7 @@ INFERENCE_RDS <- file.path("results", "rq1", "inference", contract$artifact_file
 RQ1_SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
 OUT_DIR <- file.path("results", "rq1", "figures")
 FIG2_WIDTH_IN <- 8.2
-FIG2_HEIGHT_IN <- 6.2
+FIG2_HEIGHT_IN <- 7.2
 ms_plot_require_files(c(INFERENCE_RDS, RQ1_SUMMARY_CSV), "Fig. 2 plotting inputs")
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
@@ -47,7 +47,7 @@ CORE_VERSION <- ms_plot_assert_core(a$core_artifact_version)
 RQ1_VERSION <- ms_plot_one_version(a$rq1_analysis_version, "rq1_analysis_version")
 INFERENCE_VERSION <- ms_plot_one_version(a$rq1_inference_version, "rq1_inference_version")
 ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
-ms_plot_assert_prefix(INFERENCE_VERSION, "rq1_inference_v3_domains_anchor8__", "rq1_inference_version")
+ms_plot_assert_prefix(INFERENCE_VERSION, "rq1_inference_v5_composition_anchor8__", "rq1_inference_version")
 
 rq1_summary <- readr::read_csv(RQ1_SUMMARY_CSV, show_col_types = FALSE, progress = FALSE)
 ms_plot_assert_core(rq1_summary$core_artifact_version, CORE_VERSION)
@@ -66,7 +66,8 @@ ms_plot_require_columns(
 ms_plot_require_columns(
   contrast,
   c("candidate_config", "contrast_label", "contrast_order", "dimension", "metric", "metric_class",
-    "outcome", "outcome_domain", "inference_deviation", "rq1_distortion_A", "status"),
+    "outcome", "outcome_domain", "inference_deviation", "rq1_distortion_A", "status",
+    "distortion_between_ms", "distortion_within_ms", "distortion_within_fraction", "D_T", "f_W"),
   "inferential preservation summary"
 )
 if (nrow(anchor_map) != contract$anchor_count || n_distinct(anchor_map$candidate_config) != contract$anchor_count) {
@@ -285,7 +286,83 @@ p2c <- ggplot(contrast_plot, aes(rq1_distortion_A, inference_deviation, color = 
     plot.margin = margin(2, 3, 2, 3)
   )
 
-# Match the outer plotting boundaries despite the two-line left x-axis title.
+# Preserve the former reference landscape and pooled link as supplementary plots.
+p2_reference <- p2a
+p2_pooled <- p2c
+component_plot <- contrast_plot |>
+  filter(is.finite(distortion_within_fraction)) |>
+  mutate(geometry_label = if_else(metric_geometry == "linear", "Linear", "Circular sin/cos"),
+         display_row = 9 - as.integer(contrast_label))
+component_summary <- component_plot |>
+  group_by(geometry_label, display_row) |>
+  summarise(q25=quantile(distortion_within_fraction,.25),
+            centre=median(distortion_within_fraction),q75=quantile(distortion_within_fraction,.75),
+            .groups="drop")
+p2a <- ggplot(component_plot,aes(distortion_within_fraction,display_row)) +
+  geom_vline(xintercept=.5,colour="#C8CFD3",linewidth=.25,linetype=2) +
+  geom_point(aes(colour=metric_class),
+    position=position_jitter(width=0,height=.11,seed=213),size=.65,alpha=.30) +
+  geom_linerange(data=component_summary,aes(y=display_row,xmin=q25,xmax=q75),inherit.aes=FALSE,orientation="y",
+    colour="#354953",linewidth=.5) +
+  geom_point(data=component_summary,aes(x=centre),shape=21,fill="white",size=1.5,stroke=.4) +
+  facet_wrap(~geometry_label,nrow=1) +
+  scale_color_ms_metric(guide="none") +
+  scale_x_continuous(limits=c(0,1),breaks=c(0,.5,1),labels=scales::label_percent()) +
+  scale_y_continuous(breaks=8:1,labels=unname(contrast_short),limits=c(.55,8.5)) +
+  labs(title="Within-person composition",
+    subtitle="Complement: stable participant offset",
+    x=expression(f[W]~"(within-person share)"),y=NULL) +
+  theme_ms_axes(base_size=5.9,legend_position="none",plot_title_size=6.8) +
+  theme(panel.grid.major.y=element_blank(),strip.text=element_text(size=5),
+        axis.text=element_text(size=4.8),plot.subtitle=element_text(size=4.35,colour="#666A6D"))
+
+total_summary <- component_plot |>
+  group_by(geometry_label,display_row) |>
+  summarise(q25=quantile(D_T,.25),centre=median(D_T),q75=quantile(D_T,.75),.groups="drop")
+p2_total <- ggplot(component_plot,aes(D_T,display_row)) +
+  geom_point(aes(colour=metric_class),
+    position=position_jitter(width=0,height=.11,seed=213),size=.65,alpha=.30) +
+  geom_linerange(data=total_summary,aes(y=display_row,xmin=q25,xmax=q75),
+    inherit.aes=FALSE,orientation="y",colour="#354953",linewidth=.5) +
+  geom_point(data=total_summary,aes(x=centre),shape=21,fill="white",size=1.5,stroke=.4) +
+  facet_wrap(~geometry_label,nrow=1,scales="free_x") +
+  scale_color_ms_metric(guide="none") +
+  scale_x_continuous(trans=scales::pseudo_log_trans(sigma=.1),breaks=c(0,.1,.5,1,2,5,10)) +
+  scale_y_continuous(breaks=8:1,labels=unname(contrast_short),limits=c(.55,8.5)) +
+  labs(title="a  Distortion magnitude and composition",
+    subtitle="Same matched participant-days; dots: tasks; bars: IQR\nLinear: reference-SD units; circular: sin/cos units",
+    x=expression(D[T]~"(total RMS; pseudo-log scale)"),y=NULL) +
+  theme_ms_axes(base_size=6.3,legend_position="none",plot_title_size=7) +
+  theme(panel.grid.major.y=element_blank(),strip.text=element_text(size=5.5),
+    axis.text=element_text(size=5.2),plot.subtitle=element_text(size=4.8,colour="#666A6D"))
+p2a <- cowplot::plot_grid(p2_total,p2a,ncol=1,rel_heights=c(1.06,1),align="v",axis="lr")
+
+# Read the frozen conditional comparison; never fit it in the figure script.
+component_link <- tibble::as_tibble(a$component_link$summary)
+ms_plot_require_columns(component_link,c("outcome_domain","metric_geometry","beta_within",
+  "beta_lower","beta_upper","incremental_r2","n_tasks","status","rq1_inference_version"),"component-link summary")
+ms_assert_version(component_link,"rq1_inference_version",INFERENCE_VERSION)
+component_link <- component_link |>
+  mutate(outcome_domain=factor(outcome_domain,levels=rev(DOMAIN_LEVELS)),
+         geometry_label=if_else(metric_geometry=="linear","Linear","Circular sin/cos"))
+p2c <- ggplot(component_link,aes(beta_within,outcome_domain)) +
+  geom_vline(xintercept=0,colour="#9BA6AD",linewidth=.3,linetype=2) +
+  geom_linerange(aes(xmin=beta_lower,xmax=beta_upper),orientation="y",linewidth=.5,
+                 colour="#354953",na.rm=TRUE) +
+  geom_point(aes(shape=status),fill="white",colour="#354953",size=2,stroke=.5,na.rm=TRUE) +
+  scale_shape_manual(values=c(estimated=21,bootstrap_unreliable=4,not_estimable=4),guide="none") +
+  geom_text(data=filter(component_link,!is.finite(beta_within)),
+            aes(x=0,label="Not estimable"),size=1.8,colour="#666A6D") +
+  facet_wrap(~geometry_label,nrow=1) +
+  labs(title="c  Composition effect at controlled total distortion",
+    subtitle=paste0("Adjusted for matched total RMS, frozen A, contrast and outcome\n",
+      "Bars: conditional 95% intervals; crosses: unreliable bootstrap"),
+    x="Change in log(1 + deviation) per SD of within share",y=NULL) +
+  theme_ms_axes(base_size=5.9,legend_position="none",plot_title_size=6.8) +
+  theme(axis.text=element_text(size=4.8),axis.title=element_text(size=4.7),
+        strip.text=element_text(size=5),plot.subtitle=element_text(size=4.35,colour="#666A6D"))
+
+# Retain the established tall-left / two-right panel composition.
 p2a <- p2a + theme(plot.margin = margin(2, 3, 0, 3),
                   plot.subtitle = element_text(margin = margin(b = 9)))
 p2c <- p2c + theme(plot.margin = margin(2, 3, 6, 3))
@@ -296,7 +373,7 @@ right <- cowplot::plot_grid(
   align = "v", axis = "lr", greedy = FALSE
 )
 body <- cowplot::plot_grid(
-  p2a, right, ncol = 2, rel_widths = c(.36, .64)
+  p2a, right, ncol = 2, rel_widths = c(.43, .57)
 )
 fig2 <- cowplot::plot_grid(
   metric_legend, body, ncol = 1, rel_heights = c(.035, 1),
@@ -322,6 +399,20 @@ readr::write_csv(
 )
 
 ms_plot_save(fig2, file.path(OUT_DIR, "Fig2_RQ1_inferential_preservation.png"), FIG2_WIDTH_IN, FIG2_HEIGHT_IN)
+ms_plot_save(p2_reference + labs(title="Reference association distributions"),
+  file.path(OUT_DIR,"FigS_RQ1_reference_associations.png"),4.2,6.2)
+ms_plot_save(p2_pooled + labs(title="Pooled distortion-displacement relationship (descriptive)"),
+  file.path(OUT_DIR,"FigS_RQ1_pooled_distortion_link.png"),7.4,3.8)
+link_by_contrast <- tibble::as_tibble(a$component_link$correlations) |>
+  left_join(anchor_map |> select(comparison_pair_id,contrast_label,contrast_order),by="comparison_pair_id") |>
+  mutate(contrast_label=factor(contrast_label,levels=rev(anchor_map$contrast_label[order(anchor_map$contrast_order)])))
+link_by_contrast_plot <- ggplot(link_by_contrast,aes(rho_A,contrast_label)) +
+  geom_vline(xintercept=0,colour="#C8CFD3",linewidth=.3) + geom_point(size=1.4,colour="#354953") +
+  facet_grid(metric_geometry~outcome_domain) + scale_x_continuous(limits=c(-1,1)) +
+  labs(x="Within-contrast Spearman correlation: frozen A vs displacement",y=NULL,
+       title="Pooled association need not hold within each measurement contrast") +
+  theme_ms_axes(base_size=6,legend_position="none")
+ms_plot_save(link_by_contrast_plot,file.path(OUT_DIR,"FigS_RQ1_contrast_distortion_link.png"),7.4,5.5)
 ms_plot_write_manifest(
   file.path(OUT_DIR, "figure_artifact_manifest.csv"),
   tibble(
@@ -337,4 +428,4 @@ ms_plot_write_manifest(
     rq3_analysis_version = NA_character_
   )
 )
-message("Fig. 2 complete: three-domain reference landscape, inferential degradation, and RQ1 distortion-to-inference propagation.")
+message("Fig. 2 complete: distortion composition, inferential displacement and frozen conditional component explanation.")

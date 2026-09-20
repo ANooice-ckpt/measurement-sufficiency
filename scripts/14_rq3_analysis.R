@@ -6,6 +6,7 @@ source("scripts/utils/artifact_validation.R")
 source("scripts/utils/parallel_runtime.R")
 source("scripts/utils/duration_artifacts.R")
 source("scripts/utils/rq1_pairwise_artifacts.R")
+source("scripts/utils/rq3_support.R")
 
 # Corrected RQ3 implementation.
 # - single-dimension R_obs is defined on configuration TYPES from the frozen
@@ -50,7 +51,7 @@ CORE_VERSION <- unique(na.omit(c(pairwise_artifact$core_artifact_version, pair_s
 if (length(CORE_VERSION) != 1L) stop("Core version mismatch")
 CORE_VERSION <- CORE_VERSION[[1]]
 ms_assert_version(duration_artifact, "core_artifact_version", CORE_VERSION)
-RQ3_VERSION <- paste0("rq3_v5_type_level_nested_pareto_fixed__", RQ1_VERSION, "__", ANALYSIS_DESIGN_ID)
+RQ3_VERSION <- paste0("rq3_v8_axis_composition__", RQ1_VERSION, "__", ANALYSIS_DESIGN_ID)
 NUMERIC_TOL <- 1e-12
 DUAL <- c("MDER", "nvRD")
 
@@ -66,10 +67,6 @@ aggregate_scale <- function(x, geometry) {
   if (identical(geometry, "circular_time")) sd(circular_delta(x, circular_mean(x))) else sd(x)
 }
 temporal_label <- ms_temporal_label
-metric_support_filter <- function(df) {
-  df |> filter((metric %in% DUAL & str_detect(support_id, "_full$")) |
-                (!metric %in% DUAL & !str_detect(support_id, "_full$")))
-}
 
 # -----------------------------------------------------------------------------
 # Single-dimension observed residual instability on configuration TYPES.
@@ -207,8 +204,7 @@ readr::write_csv(convergence, file.path(OUT, "rq3_convergence_profile.csv"), na 
 # -----------------------------------------------------------------------------
 read_duration_primary <- function(path) {
   readRDS(path) |>
-    filter(resolution_s %in% PRIMARY_TEMPORAL_S) |>
-    metric_support_filter() |>
+    filter(resolution_s %in% PRIMARY_TEMPORAL_S, n_days %in% PRIMARY_DURATION_DAYS) |>
     select(support_id, site, Id, placement, optical, resolution_s, window_id, n_days,
            window_start, window_end, metric, metric_class, metric_geometry, value, available)
 }
@@ -222,6 +218,7 @@ for (i in seq_along(duration_part_paths)) {
     filter(placement == "eye", optical == "MEDI", resolution_s == 10L, n_days == max(PRIMARY_DURATION_DAYS), available, is.finite(value)) |>
     select(support_id, metric, metric_geometry, value)
   state_parts[[i]] <- z |>
+    rq3_support_filter() |>
     filter(available, is.finite(value)) |>
     distinct(support_id, placement, optical, resolution_s, n_days, metric, metric_class, metric_geometry)
   rm(z); invisible(gc(FALSE))
@@ -239,7 +236,7 @@ rm(anchor_parts, state_parts)
 invisible(gc())
 
 build_joint_part <- function(path) {
-  z <- read_duration_primary(path)
+  z <- rq3_support_filter(read_duration_primary(path))
   groups <- z |> group_by(support_id, site, Id, placement, optical, metric) |> group_split(.keep = TRUE)
   partial <- bind_rows(lapply(groups, function(g) {
     if (nrow(g) < 2L) return(tibble())
@@ -285,7 +282,7 @@ ord <- order(cost, decreasing = TRUE, na.last = TRUE)
 partials_scheduled <- ms_parallel_map(
   duration_part_paths[ord], build_joint_part, workers = RQ3_PART_WORKERS,
   packages = "tidyverse",
-  exports = c("build_joint_part", "read_duration_primary", "metric_support_filter", "PRIMARY_TEMPORAL_S",
+  exports = c("build_joint_part", "read_duration_primary", "rq3_support_filter", "PRIMARY_TEMPORAL_S", "PRIMARY_DURATION_DAYS",
               "DUAL", "joint_anchor", "circular_delta")
 )
 partials <- partials_scheduled[order(ord)]
@@ -301,6 +298,9 @@ invisible(gc())
 if (nrow(joint_pair_summary) && any(joint_pair_summary$A + NUMERIC_TOL < abs(joint_pair_summary$B))) {
   stop("RQ3 joint A >= |B| invariant failed")
 }
+joint_pair_summary <- joint_pair_summary |>
+  mutate(core_artifact_version = CORE_VERSION, rq1_analysis_version = RQ1_VERSION,
+         rq3_analysis_version = RQ3_VERSION)
 readr::write_csv(joint_pair_summary, file.path(OUT, "rq3_joint_pair_summary.csv"), na = "")
 saveRDS(joint_pair_summary, file.path(OUT, "rq3_joint_stability.rds"), compress = "xz")
 
@@ -335,6 +335,8 @@ writeLines(c(
   "Joint temporal-duration pairs are actual nested-window comparisons; equal duration implies the same observed dates.",
   "Joint A/B and R_obs are aggregated by generic (resolution, duration) configuration type within fixed support x placement x optical facets.",
   "Pareto dominance treats coarser temporal resolution and shorter monitoring duration as lower burden inside the sufficient region.",
+  "Composition failure: max(temporal-only R, duration-only R) <= epsilon < joint R on the same starting state and scale.",
+  "Both single-axis refinements must be observed. Counts retain pair-specific maximal supports; failure is not proof of non-additivity.",
   paste0("Joint duration-part workers: ", RQ3_PART_WORKERS)
 ), file.path(OUT, "RQ3_RUN_REPORT.md"))
 message("RQ3 complete: ", RQ3_VERSION)

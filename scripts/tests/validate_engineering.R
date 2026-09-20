@@ -229,6 +229,36 @@ singular <- g; singular$candidate_value <- 1
 stopifnot(rq1_inference_fit(singular, B = 0L)$summary$status == "singular_within_participant_exposure")
 flat <- g; flat$outcome_value <- as.numeric(factor(flat$Id))
 stopifnot(rq1_inference_fit(flat, B = 0L)$summary$status == "no_within_participant_outcome_variation")
+
+# Squared distortion separates stable offsets from interday perturbations, with
+# row weights even when participants contribute unequal numbers of matched days.
+dc <- rq1_distortion_components(matrix(0,5,1),matrix(c(1,3,4,4,4),5,1),
+                                c("a","a","b","b","b"),rep("S",5))
+stopifnot(abs(dc$summary$distortion_total_ms-58/5)<1e-12,
+          abs(dc$summary$distortion_between_ms-56/5)<1e-12,
+          abs(dc$summary$distortion_within_ms-2/5)<1e-12)
+sf <- rq1_inference_fit(shifted,B=0L)
+stopifnot(sf$task_summary$distortion_between_ms>0,
+          sf$task_summary$distortion_within_ms<1e-20,
+          is.na(fit$task_summary$distortion_within_fraction))
+oscillating <- g
+oscillating$candidate_value <- g$reference_value + rep(c(-2,-1,0,1,2),12)
+wf <- rq1_inference_fit(oscillating,B=0L)
+stopifnot(wf$task_summary$distortion_between_ms<1e-20,
+          abs(wf$task_summary$distortion_within_fraction-1)<1e-12)
+# Conditional explanation recovers an imposed component slope after nuisance
+# adjustment; metrics/tasks are not resampled for confidence intervals.
+link_fixture <- tibble(rq1_distortion_A=seq(.01,1,length.out=60),
+  candidate_config=rep(c("chest","20s"),30),outcome=rep(c("a","b","c"),each=20),
+  D_T=exp(cos(seq_len(60))/3+1)-1,f_W=.5+.3*sin(seq_len(60)))
+x <- link_fixture$f_W
+link_fixture$inference_deviation <- expm1(2+.7*x/sd(x)+.2*log1p(link_fixture$rq1_distortion_A)+.4*log1p(link_fixture$D_T))
+lr <- rq1_component_regression(link_fixture)
+stopifnot(abs(lr$beta-.7)<1e-10,lr$delta_r2>0)
+link_fixture$inference_deviation <- expm1(2+.2*log1p(link_fixture$rq1_distortion_A)+.4*log1p(link_fixture$D_T))
+stopifnot(abs(rq1_component_regression(link_fixture)$beta)<1e-10)
+link_fixture$D_T[1] <- NA_real_
+stopifnot(is.na(rq1_component_regression(link_fixture)$beta))
 unavailable <- g; unavailable$pair_reason <- "candidate_unavailable"
 stopifnot(rq1_inference_fit(unavailable, B = 0L)$summary$status == "measurement_unavailable")
 
@@ -244,6 +274,7 @@ stopifnot(
   all(cf$summary$distortion_A < 1e-12),
   is.finite(cf$task_summary$inference_deviation),
   cf$task_summary$inference_deviation < 1e-10,
+  cf$task_summary$distortion_total_ms < 1e-20,
   abs(rq1_inference_quadnorm(c(1, 2), diag(2)) - sqrt(5)) < 1e-12
 )
 

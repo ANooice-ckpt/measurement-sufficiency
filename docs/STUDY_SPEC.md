@@ -127,6 +127,33 @@ Pareto dominance is calculated only inside the observed sufficient region. Finer
 
 ## 9. Figures and implementation invariants
 
+### Approved explanatory additions: components and composition
+
+The RQ1 daily inference extension additionally decomposes candidate-reference
+differences in model exposure coordinates into stable participant offsets and
+demeaned interday perturbations on exact outcome-matched support. Squared norms
+add; absolute distortion A is not redefined or decomposed. Frozen RQ1 A remains
+the upstream magnitude covariate. Linear and circular geometries remain separate.
+This is a descriptive explanation of participant-fixed-effect association
+preservation, not an acute response model or a causal mechanism test.
+
+The composition test adds f_W (within squared norm / total squared norm, per
+primary-task SD) to log1p(inferential deviation) conditional on log1p(D_T),
+log1p(frozen A), contrast and outcome, where D_T is matched-support total RMS.
+Models are separate by domain and geometry. Shared participant bootstrap draws
+recompute both D_T and f_W; zero-total distortion has undefined f_W and is excluded.
+The coefficient is a conditional composition association, not a causal effect.
+
+RQ3 tests single-axis rule composition within each joint placement/optical/support/
+metric facet. For the same starting (r,d), R_T uses only finer cadences at d and
+R_D only longer windows at r, all on the joint scale. Where both axes have higher
+observed states, composition failure at epsilon means max(R_T,R_D) <= epsilon
+but R_joint > epsilon. The full failure interval is [max(R_T,R_D),R_joint).
+Otherwise the axis is unresolved, never assigned zero. Original maximal pairwise
+supports and their sample counts are retained. Composition failure can arise from
+additive accumulation and must not be called proof of non-additivity. No separate
+single-axis artifact with a different scale or support is spliced into this test.
+
 Plot scripts read frozen results artifacts only. They do not read raw series, call LightLogR operators, construct duration windows, bootstrap, refit models, calculate gamma or calculate sufficiency.
 
 The primary temporal lattice, primary duration domain, labels and analysis-design identifier are defined once in `scripts/utils/analysis_design.R` and consumed by core, RQ1-RQ3 and canonical plot wrappers. A lattice change therefore changes artifact identities and cannot silently reuse stale downstream caches.

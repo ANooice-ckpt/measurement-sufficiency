@@ -63,9 +63,20 @@ rq2_risk_monotone <- function(p) {
 rq2_risk_increment <- function(low, context, targets, edf=10) {
   base <- rq2_risk_predict(low,targets,edf,TRUE)
   if(!ncol(context$train))return(base$test)
-  projected <- rq2_risk_predict(low,context$train,edf,TRUE)
-  residual_design <- list(train=context$train-projected$train,
-    test=context$test-projected$test)
+  # Unpenalized, rank-aware projection, fitted on training rows only. Ridge
+  # residuals retain measurement signal and would count redundant C as new info.
+  x <- cbind(1, low$train); xt <- cbind(1, low$test)
+  s <- svd(x)
+  keep <- s$d > max(s$d) * max(dim(x)) * .Machine$double.eps
+  coef <- s$v[,keep,drop=FALSE] %*%
+    sweep(crossprod(s$u[,keep,drop=FALSE], context$train), 1, s$d[keep], "/")
+  residual_design <- list(train=context$train-x %*% coef,
+    test=context$test-xt %*% coef)
+  # Discard numerically zero residual columns, including fully redundant context.
+  active <- colSums(residual_design$train^2) >
+    1e-16 * pmax(1, colSums(context$train^2))
+  if (!any(active)) return(base$test)
+  residual_design <- lapply(residual_design, function(z) z[,active,drop=FALSE])
   base$test + rq2_risk_predict(residual_design,targets-base$train,edf)
 }
 

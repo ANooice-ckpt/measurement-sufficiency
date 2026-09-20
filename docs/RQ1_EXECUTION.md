@@ -100,9 +100,82 @@ This quantity measures configuration sensitivity of the observed association est
 
 ### Frozen RQ1 distortion is the upstream predictor
 
-The main Fig. 2 propagation analysis does **not** recompute RQ1 distortion on outcome-specific subsets. Instead, each eligible metric/contrast is joined to the already-frozen `A_mean_absolute` from `rq1_pairwise_summary.csv`.
+The Fig.2 explanatory analysis does **not** replace RQ1 distortion with an outcome-specific quantity. Each eligible metric/contrast is joined to the already-frozen `A_mean_absolute` from `rq1_pairwise_summary.csv`, used as the magnitude covariate and the pooled supplementary scatter's x-axis.
 
 An outcome-matched distortion is still calculated inside the paired model fit for support auditing, but it is stored as `matched_support_distortion_A/B` and must not replace the frozen RQ1 distortion in the main downstream-consequence result.
+
+### Stable participant offsets and interday distortion (v5)
+
+On exactly the matched participant-days used by each fit, let e be the candidate
+minus reference exposure DESIGN vector. Linear designs use the common reference
+SD; circular designs retain unscaled sine/cosine coordinates. Decompose
+e_it = mean_i(e) + (e_it - mean_i(e)). Participant-day weighting gives the exact
+identity total mean squared norm = stable-offset mean squared norm + within-person
+mean squared norm. The stable term includes a shared offset, not just variance
+between people. Zero total distortion gives an undefined share, not zero percent.
+The within term describes interday perturbations, not intraday timing of events.
+A stable clock-time offset need not be a stable sin/cos-vector offset.
+
+Define D_T = sqrt(total mean squared norm) and f_W = within mean squared norm /
+total mean squared norm. Both are computed on exactly the same matched rows.
+`rq1_distortion_components.csv` retains D_T, f_W, both components, total, within RMS,
+within fraction, support counts, frozen A and inference deviation. This is not
+an additive decomposition of A. The reference association landscape remains
+available in the artifact and moves to a supplementary figure.
+
+`rq1_inference_component_link.csv` contains six prespecified domain-by-geometry
+descriptive models. The base model is log1p(deviation) ~ log1p(D_T) + log1p(frozen A) + contrast
++ outcome. The augmented model adds within share, scaled by its primary-task
+SD. It reports the added coefficient and incremental in-sample R-squared, not
+held-out prediction or causal mediation. No tasks are selected by effect size.
+
+Intervals use one site-stratified participant bootstrap shared across all tasks
+(seed 20260919, B inherited from RQ1_INFERENCE_BOOT). Task-specific supports are
+preserved; draws from the union cohort can have different task-specific sample
+sizes. Paired coefficients and total RMS and within share are recomputed from cluster sufficient
+statistics. Reference covariance, reference exposure scaling and frozen A remain
+fixed at their primary estimates. These are conditional intervals, not an extra
+nested bootstrap of reference SE or upstream A. A singular task invalidates the
+whole corresponding domain/geometry draw; at least max(20, .8 B) valid draws are
+required for interval reporting. Metrics are never bootstrap sampling units.
+
+### Manuscript revision text (pending execution; no numerical claims yet)
+
+Results: Replace the claim of a universally transferable pooled A-displacement
+relation with a description of its contrast-specific heterogeneity. Report stable
+and interday component shares first, then the within-share coefficient and interval
+conditional on matched-support total RMS, frozen A, contrast and outcome. State that composition helps
+explain placement/temporal differences ONLY if the component distributions and
+conditional results support that claim. Otherwise report the unresolved contrast.
+
+Discussion: Participant fixed effects remove stable additive offsets in the
+model's exposure coordinates, while interday perturbations remain in the
+association fit. Thus exposure distortion should be interpreted relative to the
+variation used by the downstream model. This mechanism is model-specific; it
+does not establish acute effects, causal bias, or equivalent implications across
+linear and circular geometries. The decomposition alone does not prove why the
+observed configuration groups differ.
+
+Results template (fill only after execution): "Distortion differed not only in
+magnitude but also in its distribution between stable participant offsets and
+within-person interday perturbations. The within-person share was [values] for
+placement contrasts and [values] for temporal contrasts. Conditional on matched-support total RMS, frozen
+RQ1 distortion, configuration contrast and outcome, the within-person share
+was associated with [estimate and interval] change in log-transformed
+inferential displacement per SD of within-person share."
+Report linear and circular models separately. A weak or uncertain conditional
+association must remain an unresolved explanation, not be rewritten as evidence
+of the proposed mechanism.
+
+Discussion template when supported: "Comparable overall measurement distortion
+can have different implications for longitudinal association preservation
+because stable participant offsets and interday perturbations enter the model
+differently. Stable additive offsets disappear under participant demeaning,
+whereas errors in within-person variation remain. Consequently, fidelity should
+be evaluated against the variation required by the inferential target, rather
+than summarized by distortion magnitude alone." This explanation concerns the
+present fixed-effects diagnostics and does not establish universal protection
+from placement error or causal health effects.
 
 ### Reference association landscape
 
@@ -129,6 +202,8 @@ results/rq1/inference/
   rq1_inferential_preservation_summary.csv
   rq1_inferential_preservation_term_summary.csv
   rq1_reference_association_summary.csv
+  rq1_distortion_components.csv
+  rq1_inference_component_link.csv
   rq1_downstream_outcome_audit.csv
   fig2_reference_association_landscape.csv
   fig2_inferential_degradation.csv
@@ -140,7 +215,7 @@ results/figures/
   FigS_RQ1_*.png
 ```
 
-The historical `rq1_inferential_preservation.rds` all-configuration prototype and the intermediate sleep-only `rq1_inferential_preservation_anchor8.rds` artifact are retired. The v3 analysis removes both before writing the three-domain artifact so legacy drawing code cannot be mistaken for the active Fig. 2.
+The historical `rq1_inferential_preservation.rds` all-configuration prototype and the intermediate sleep-only `rq1_inferential_preservation_anchor8.rds` artifact are retired. The v5 composition analysis removes both before writing the three-domain artifact so legacy drawing code cannot be mistaken for the active Fig. 2.
 
 Duration cohort/run/window audit is written under `results/diagnostics/`. RQ2 loads only selected primary pairwise columns/rows through the manifest loader; RQ3 uses the frozen summary/local projections and manifest version. Plot scripts read frozen outputs only.
 

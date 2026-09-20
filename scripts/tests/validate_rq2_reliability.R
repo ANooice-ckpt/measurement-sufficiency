@@ -22,6 +22,11 @@ stopifnot(all(rowSums((q-truth)^2)<=rowSums((p-truth)^2)+1e-10))
 base<-rq2_risk_predict(a,y,10)
 joint<-rq2_risk_increment(a,list(train=matrix(0,20,0),test=matrix(0,2,0)),y,10)
 stopifnot(identical(base,joint))
+# Redundant context must add no information, including a rank-deficient low block.
+x <- matrix(seq(-1,1,length.out=100), ncol=1)
+low <- list(train=cbind(x,x), test=cbind(x,x))
+ctx <- list(train=x, test=x)
+stopifnot(identical(rq2_risk_predict(low,x,10), rq2_risk_increment(low,ctx,x,10)))
 cat("Conditional reliability numerical contracts passed\n")
 if("--frozen"%in%commandArgs(TRUE)){
   a<-readRDS("results/rq2/rq2_conditional_reliability.rds");stopifnot(isTRUE(a$complete))

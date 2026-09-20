@@ -1,6 +1,6 @@
 # Fig. 6 display only. Inputs are the unchanged, mature Fig. 6 display grids.
 # No new pooling, sufficiency classification, Pareto calculation or fitting.
-ms_fig6_redesign <- function(entry, pareto, classes, resolution_labels, days) {
+ms_fig6_redesign <- function(entry, pareto, classes, resolution_labels, days, composition) {
   ink <- "#30363B"
   muted <- "#657078"
   unresolved <- "#E1E5E7"
@@ -87,6 +87,49 @@ ms_fig6_redesign <- function(entry, pareto, classes, resolution_labels, days) {
     guides(linetype = guide_legend(title.position = "left", nrow = 1),
            shape = guide_legend(title.position = "left", nrow = 1))
 
+  class_profiles <- c
+  # Counts and sufficiency decisions are frozen by the analysis. This helper
+  # only selects display slices; it does not reconstruct a joint decision.
+  failure_cells <- composition |>
+    dplyr::filter(summary_scope=="cell_all_facets",abs(epsilon-.25)<1e-12) |>
+    dplyr::mutate(resolution_rank=match(resolution_s,rev(ms_primary_temporal_s())),
+      cell_label=dplyr::case_when(n_resolved==0 ~ "U",n_axis_pass==0 ~ "-",
+                                  TRUE ~ paste0(n_failure,"/",n_axis_pass)))
+  failure_map <- ggplot(failure_cells,aes(resolution_rank,n_days)) +
+    geom_tile(aes(fill=failure_rate),width=.97,height=.97,colour="white",linewidth=.2) +
+    geom_text(aes(label=cell_label),size=1.9,colour=ink) +
+    lattice_axes +
+    scale_fill_gradient(low="#F1F5F5",high="#C78257",limits=c(0,1),na.value=unresolved,
+      labels=scales::label_percent(),breaks=c(0,.5,1),name="Joint failures / axis passes") +
+    labs(x="Sampling interval",y="Days",title="Composition failures at epsilon = 0.25") + base +
+    theme(plot.title=element_text(size=6.5,face="bold")) +
+    guides(fill=guide_colorbar(title.position="top",barwidth=grid::unit(30,"mm"),barheight=grid::unit(2,"mm")))
+  failure_curves <- composition |>
+    dplyr::filter(summary_scope=="placement_optical")
+  failure_curve <- ggplot(failure_curves,
+    aes(epsilon,failure_rate,colour=placement,linetype=optical,group=interaction(placement,optical))) +
+    geom_line(linewidth=.45,na.rm=TRUE) + geom_point(size=1.2,na.rm=TRUE) +
+    scale_colour_manual(values=c(eye="#31586A",chest="#B2774F",wrist="#528C87")) +
+    scale_linetype_manual(values=c(MEDI="solid",LIGHT="22")) +
+    scale_y_continuous(limits=c(0,1),breaks=c(0,.5,1),labels=scales::label_percent()) +
+    scale_x_continuous(breaks=c(.05,.25,.5,1)) +
+    labs(x="Tolerance epsilon",y="Joint failures / axis passes",colour="Placement",linetype="Optical",
+         title="Failure across evaluated tolerances") + base +
+    theme(plot.title=element_text(size=6.5,face="bold"))
+  c <- cowplot::plot_grid(failure_map,failure_curve,nrow=1,rel_widths=c(.44,.56))
+  facet_cells <- composition |>
+    dplyr::filter(summary_scope=="cell_placement_optical",abs(epsilon-.25)<1e-12) |>
+    dplyr::mutate(resolution_rank=match(resolution_s,rev(ms_primary_temporal_s())),
+      cell_label=dplyr::case_when(n_resolved==0 ~ "U",n_axis_pass==0 ~ "-",
+                                  TRUE ~ paste0(n_failure,"/",n_axis_pass)))
+  composition_facets <- ggplot(facet_cells,aes(resolution_rank,n_days)) +
+    geom_tile(aes(fill=failure_rate),colour="white") + geom_text(aes(label=cell_label),size=2) +
+    facet_grid(optical~placement) + lattice_axes +
+    scale_fill_gradient(low="#F1F5F5",high="#C78257",limits=c(0,1),na.value=unresolved,
+      labels=scales::label_percent(),name="Failure rate") +
+    labs(x="Sampling interval",y="Days",title="Single-axis composition at epsilon = 0.25",
+      subtitle="Numbers: failures / single-axis passes; U: axis unresolved; -: no axis passes") + base
+
   # Align the top plotting fields themselves, not fixed-aspect outer boxes.
   # Titles occupy an independent, identical-height row above both fields.
   aligned <- cowplot::align_plots(a, b, align = "h", axis = "tb")
@@ -112,13 +155,13 @@ ms_fig6_redesign <- function(entry, pareto, classes, resolution_labels, days) {
     nrow = 1, rel_widths = c(.36, .64)
   )
   top <- cowplot::plot_grid(plotlist = aligned, nrow = 1, rel_widths = c(.36, .64))
-  c_header <- header("c  Which metric classes need more measurement?",
-                     "Shared tolerance = 0.50; faint lines retain the four intermediate sampling intervals")
+  c_header <- header("c  Can single-axis sufficiency rules be combined?",
+                     "Both axes pass separately; joint refinement may still exceed tolerance")
   note <- cowplot::ggdraw() + cowplot::draw_label(
-    "Class heading: share of resolved cells with at least 50% of metrics sufficient.  U: 10 s / 6 d has no higher observed state.",
+    "c: counts are metric-facet-states; U: an axis is unresolved; -: no single-axis passes. Pairwise supports retained; failure is not proof of interaction.",
     x = .005, y = .8, hjust = 0, vjust = 1, fontfamily = MS_FONT, size = 5.2, colour = muted)
   body <- cowplot::plot_grid(headers, top, c_header, class_grob, note, ncol = 1,
                                rel_heights = c(.085, .525, .085, .335, .04))
   final <- cowplot::ggdraw() + cowplot::draw_plot(body, x = .012, y = .008, width = .976, height = .980)
-  list(plot = final, a = a, b = b, c = c)
+  list(plot = final, a = a, b = b, c = c, class_profiles=class_profiles,composition_facets=composition_facets)
 }

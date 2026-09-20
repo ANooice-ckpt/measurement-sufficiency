@@ -95,7 +95,8 @@ rq1_fit_inference_groups <- function(pairs, keys, B, seed_base, workers) {
     packages = c("dplyr", "tibble"),
     exports = c(
       "rq1_fit_inference_group_task", "rq1_inference_fit", "rq1_inference_stats",
-      "rq1_inference_solve", "rq1_inference_solve_draws", "rq1_inference_quadnorm"
+      "rq1_inference_solve", "rq1_inference_solve_draws", "rq1_inference_quadnorm",
+      "rq1_distortion_components"
     )
   )
   message("RQ1 inference: completed ", length(results), " tasks")
@@ -232,6 +233,7 @@ rq1_run_inference <- function() {
   contrast_summary <- collect(contrast_results, "task_summary")
   support <- collect(contrast_results, "support")
   bootstrap <- collect(contrast_results, "bootstrap")
+  component_blocks <- collect(contrast_results, "component_blocks")
   reference_term_summary <- collect(reference_results, "summary")
   reference_summary <- collect(reference_results, "task_summary")
   reference_support <- collect(reference_results, "support")
@@ -276,6 +278,14 @@ rq1_run_inference <- function() {
     stop("Estimable downstream tasks are missing their frozen RQ1 distortion: ", nrow(estimable_missing_rq1))
   }
 
+  message("RQ1 inference: explain displacement using matched-support distortion components")
+  component_link <- rq1_component_link(contrast_summary, component_blocks, B)
+  component_link <- lapply(component_link, stamp)
+  distortion_components <- contrast_summary |>
+    select(all_of(contrast_keys), basis, n_matched_days, n_participants,
+           starts_with("distortion_"), D_T, f_W, rq1_distortion_A, inference_deviation, status,
+           core_artifact_version, rq1_analysis_version, rq1_inference_version)
+
   out <- file.path(rq_root("rq1"), "inference")
   ensure_result_dirs(out)
   provenance_paths <- unique(c(rq1_path, pair_part_paths, rq1_summary_path, sleep_paths, ema_paths))
@@ -303,6 +313,17 @@ rq1_run_inference <- function() {
     analysis_scope = "three human-state domains across eight single-axis frozen RQ1 anchor contrasts; duration and multi-axis combinations excluded",
     exposure_input = "frozen RQ1 participant-day pair values (state_a candidate; state_b eye/MEDI/10-s reference)",
     scale = "reference SD on matched repeated-measures support, fixed across paired bootstrap draws; circular sin/cos unscaled",
+    component_definition = paste("Participant-day weighted E||candidate-reference||^2 =",
+      "E||participant mean difference||^2 + E||demeaned difference||^2; model design space;",
+      "stable component includes common offset; within component is interday, not intraday"),
+    component_link_model = paste("Separate domain x geometry descriptive nested regressions:",
+      "log1p(deviation) ~ log1p(frozen RQ1 A) + log1p(D_T) + contrast + outcome + f_W;",
+      "f_W per primary-task SD; D_T=sqrt(total MS), f_W=within MS/total MS;",
+      "zero-total tasks excluded; conditional association, not causal effect or prediction"),
+    component_link_uncertainty = paste("Shared site-stratified participant bootstrap, seed 20260919;",
+      "paired FE coefficients and component RMS recomputed from sufficient statistics;",
+      "conditional on primary reference covariance, exposure scale and frozen RQ1 A;",
+      "any singular task invalidates that domain/geometry draw; not iid metric resampling"),
     input_provenance = tibble(
       path = provenance_paths,
       md5 = unname(tools::md5sum(provenance_paths))
@@ -312,6 +333,9 @@ rq1_run_inference <- function() {
     summary = term_summary,
     term_summary = term_summary,
     contrast_summary = contrast_summary,
+    distortion_components = distortion_components,
+    component_blocks = component_blocks,
+    component_link = component_link,
     reference_term_summary = reference_term_summary,
     reference_summary = reference_summary,
     support = support,
@@ -337,6 +361,10 @@ rq1_run_inference <- function() {
                    file.path(out, "rq1_reference_association_summary.csv"), na = "")
   readr::write_csv(artifact$outcome_audit,
                    file.path(out, "rq1_downstream_outcome_audit.csv"), na = "")
+  readr::write_csv(artifact$distortion_components,
+                   file.path(out, "rq1_distortion_components.csv"), na = "")
+  readr::write_csv(artifact$component_link$summary,
+                   file.path(out, "rq1_inference_component_link.csv"), na = "")
   message("RQ1 inferential preservation frozen: ", path)
   invisible(artifact)
 }

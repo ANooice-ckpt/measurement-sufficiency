@@ -18,6 +18,7 @@ source("scripts/utils/figure_style.R")
 source("scripts/utils/figure_atlas.R")
 source("scripts/utils/plot_contracts.R")
 source("scripts/utils/analysis_design.R")
+source("scripts/utils/artifact_validation.R")
 
 RQ1_SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
 OBSERVED_RDS <- file.path("results", "rq3", "rq3_sufficiency_long.rds")
@@ -28,11 +29,12 @@ COVERAGE_CSV <- file.path("results", "rq3", "rq3_unordered_coverage_curves.csv")
 CONVERGENCE_CSV <- file.path("results", "rq3", "rq3_convergence_profile.csv")
 JOINT_CSV <- file.path("results", "rq3", "rq3_joint_summary.csv")
 PARETO_OCCUPANCY_CSV <- file.path("results", "rq3", "rq3_pareto_occupancy.csv")
+COMPOSITION_CSV <- file.path("results", "rq3", "rq3_composition_failure_summary.csv")
 OUT_DIR <- file.path("results", "rq3", "figures")
 ms_plot_require_files(c(RQ1_SUMMARY_CSV, OBSERVED_RDS, SUFFICIENCY_CSV, REQUIREMENT_CSV,
                         UNORDERED_CSV, COVERAGE_CSV, CONVERGENCE_CSV, JOINT_CSV,
-                        PARETO_OCCUPANCY_CSV),
-                      "RQ3 v5 plotting inputs")
+                        PARETO_OCCUPANCY_CSV, COMPOSITION_CSV),
+                      "RQ3 v8 plotting inputs")
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
 METRIC_CLASSES <- MS_METRIC_CLASSES
@@ -53,6 +55,12 @@ coverage <- readr::read_csv(COVERAGE_CSV, show_col_types = FALSE, progress = FAL
 convergence <- readr::read_csv(CONVERGENCE_CSV, show_col_types = FALSE, progress = FALSE)
 joint <- readr::read_csv(JOINT_CSV, show_col_types = FALSE, progress = FALSE)
 pareto_occupancy <- readr::read_csv(PARETO_OCCUPANCY_CSV, show_col_types = FALSE, progress = FALSE)
+composition_summary <- readr::read_csv(COMPOSITION_CSV,show_col_types=FALSE,progress=FALSE)
+ms_plot_require_columns(composition_summary,
+  c("core_artifact_version", "rq1_analysis_version", "rq3_analysis_version",
+    "summary_scope", "epsilon", "placement", "optical", "resolution_s", "n_days",
+    "n_states", "n_resolved", "n_axis_pass", "n_failure", "failure_rate"),
+  "rq3_composition_failure_summary.csv")
 
 ms_plot_require_columns(rq1_summary, c("metric", "metric_class", "dimension", "A_mean_absolute"),
                         "rq1_pairwise_summary.csv")
@@ -83,16 +91,19 @@ ms_plot_require_columns(joint,
   "rq3_joint_summary.csv")
 ms_plot_require_columns(pareto_occupancy,
   c("support_id", "placement", "optical", "resolution_s", "n_days", "metric",
-    "epsilon_interval_start", "epsilon_interval_end", "pareto"),
+    "epsilon_interval_start", "epsilon_interval_end", "terminal_endpoint", "rq3_analysis_version", "pareto"),
   "rq3_pareto_occupancy.csv")
 
 RQ1_VERSION <- ms_plot_one_version(c(observed$rq1_analysis_version, joint$rq1_analysis_version),
                                    "rq1_analysis_version")
-RQ3_VERSION <- ms_plot_one_version(c(observed$rq3_analysis_version, joint$rq3_analysis_version),
+RQ3_VERSION <- ms_plot_one_version(c(observed$rq3_analysis_version, joint$rq3_analysis_version, pareto_occupancy$rq3_analysis_version),
                                    "rq3_analysis_version")
 CORE_VERSION <- ms_plot_assert_core(c(observed$core_artifact_version, joint$core_artifact_version))
 ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
-ms_plot_assert_prefix(RQ3_VERSION, "rq3_v5_", "rq3_analysis_version")
+ms_plot_assert_prefix(RQ3_VERSION, "rq3_v8_", "rq3_analysis_version")
+ms_assert_version(composition_summary,"rq3_analysis_version",RQ3_VERSION)
+ms_assert_version(composition_summary,"rq1_analysis_version",RQ1_VERSION)
+ms_assert_version(composition_summary,"core_artifact_version",CORE_VERSION)
 if (!all(sort(unique(joint$resolution_s)) %in% sort(ms_primary_temporal_s()))) {
   stop("RQ3 joint artifact contains temporal states outside the frozen primary design", call. = FALSE)
 }
@@ -336,7 +347,7 @@ select_pareto_interval5 <- function(g, eps) {
     filter({
       inside <- epsilon_interval_start <= eps + NUMERIC_TOL &
         epsilon_interval_end > eps + NUMERIC_TOL
-      if (any(inside)) inside else epsilon_interval_end <= eps + NUMERIC_TOL
+      inside | (terminal_endpoint & epsilon_interval_start <= eps + NUMERIC_TOL)
     }) |>
     slice_max(epsilon_interval_start, n = 1, with_ties = FALSE) |>
     ungroup()
@@ -488,16 +499,20 @@ class_boundary50 <- build_stepped_boundary5(
 # Fig. 6 redesign consumes the same display grids without changing their values.
 source("scripts/utils/fig6_redesign.R")
 fig6_display <- ms_fig6_redesign(entry_grid, pareto_grid5, class_grid5,
-                                fig5_res_labels_compact, fig5_days)
+                                fig5_res_labels_compact, fig5_days, composition_summary)
 fig6_redesigned <- fig6_display$plot
 p5a <- fig6_display$a; p5b <- fig6_display$b; p5c <- fig6_display$c
 ms_plot_save(fig6_redesigned, file.path(OUT_DIR, "Fig5_RQ3.png"), 7.40, 6.10)
+ms_plot_save(fig6_display$class_profiles,
+  file.path(OUT_DIR,"FigS_RQ3_class_sufficiency_profiles.png"),7.4,2.8)
+ms_plot_save(fig6_display$composition_facets,
+  file.path(OUT_DIR,"FigS_RQ3_composition_failure_facets.png"),7.4,5.0)
 
 ms_plot_write_manifest(
   file.path(OUT_DIR, "figure_artifact_manifest.csv"),
   tibble(
     figure = "Fig5_RQ3",
-    input_artifact = "rq3_joint_summary+rq3_pareto_occupancy",
+    input_artifact = "rq3_joint_summary+rq3_pareto_occupancy+rq3_composition_failure_summary",
     core_artifact_version = CORE_VERSION,
     rq1_analysis_version = RQ1_VERSION,
     rq2_analysis_version = NA_character_,
@@ -505,4 +520,4 @@ ms_plot_write_manifest(
   )
 )
 
-message("Fig. 6 complete: joint stability, Pareto occupancy and class-specific profiles.")
+message("Fig. 6 complete: joint stability, Pareto occupancy and single-axis composition failure.")

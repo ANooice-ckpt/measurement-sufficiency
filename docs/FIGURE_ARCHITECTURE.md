@@ -76,7 +76,7 @@ Across Fig. 1–6:
   arbitrary whitespace inside individual plotting panels.
 
 Fig. 1 retains its established preservation geometry. Fig. 2 intentionally uses
-an asymmetric information-dense layout: a tall association landscape on the left
+an asymmetric information-dense layout: a tall distortion-composition panel on the left
 and two downstream-consequence panels on the right. Figs. 3–6 retain their mature
 layouts and refinement/polish helpers; canonical file numbering is now identical
 to manuscript numbering.
@@ -147,34 +147,37 @@ response estimates.
 
 Fig. 2 presents:
 
-- Fig. 2a: six outcome-level reference-association distributions at eye/MEDI/10 s.
-  Each density pools the 52 daily representations with equal metric weight;
-  coloured metric dots retain descriptive class information. A separate open
-  circle and bar show the median and IQR. Association strength remains in
-  reference-bootstrap uncertainty units, not a significance-screening score.
-  Full metric-by-outcome values remain in the existing reference audit CSV;
+- Fig. 2a: two aligned tracks show matched-support total RMS D_T and the
+  within-person share f_W of squared candidate/reference distortion
+  for each of the eight contrasts, on the exact outcome-matched fitting support.
+  Its complement is the stable participant-offset share (including common bias).
+  Metric-outcome points and median/IQR retain heterogeneity. Linear reference-SD
+  and circular sin/cos design spaces are displayed separately;
 - Fig. 2b: inferential degradation for each of the eight measurement contrasts,
   shown as horizontal metric–outcome point distributions with domain-level
   median and interquartile range. Placement, optical and temporal groups are
   separated visually; all eight contrasts retain the eye/MEDI/10-s reference;
-- Fig. 2c: propagation from the already-frozen RQ1 representation distortion
-  `A_mean_absolute` to downstream inferential deviation. Metric–outcome points
-  remain visible, domain-specific binned median trajectories expose the overall
-  tendency, and a Spearman association summarizes monotone propagation within
-  each domain.
+- Fig. 2c: frozen coefficients and conditional participant-bootstrap intervals
+  for the added within-person share predictor in a descriptive model of
+  log1p(inferential deviation), adjusting for log1p(matched-support total RMS), log1p(frozen RQ1 A), contrast and
+  outcome. Fits are separate for each domain and exposure geometry. Coefficients
+  are expressed per primary-task SD of within share; missing/unreliable
+  estimates are not represented as zero.
 
-Fig. 2b's horizontal deviation axis and Fig. 2c's vertical deviation axis share
-the same zero-preserving pseudo-log transform and limits. Fig. 2c also expands
-small frozen A values using a pseudo-log x-axis. Ticks retain original units;
-these are display transforms, not new inferential cutoffs. The reference panel aggregates only for display; full metric IDs, ordering,
-and all three audit CSV contracts remain unchanged. In panel b, median/IQR
-marks occupy a separate vertical lane above the metric-outcome dots. The lane
-offset is categorical spacing only; deviation coordinates are unchanged. The distortion–inference relationship is
-descriptive and does not establish causal propagation.
+Fig. 2b retains its original pseudo-log deviation scale. The original reference
+landscape and pooled A-displacement scatter move to supplementary figures,
+together with within-contrast correlations stratified by exposure geometry.
+The established tall-left/two-right composition is retained. Panel b's summary
+lane offset is categorical spacing only. No plot refits the component model.
+The left column is widened and the figure is 8.2 x 7.2 inches to accommodate
+both tracks; total RMS uses a pseudo-log axis and geometry-specific ranges.
+The conditional forest distinguishes unreliable-bootstrap estimates with crosses.
 
-The main x-axis in Fig. 2c must come from the frozen RQ1 summary. The distortion
-recomputed on outcome-matched support is an audit quantity only and must never
-silently replace it.
+Frozen RQ1 A remains the upstream magnitude covariate and the pooled supplement's
+x-axis. Matched-support squared-error components are newly declared explanatory
+diagnostics, not a replacement for A or an additive decomposition of its absolute
+loss. Within-person means interday variation of daily representations, not
+intraday variation or an acute causal response.
 
 For linear metrics, inferential deviation is absolute paired coefficient
 movement divided by reference-bootstrap SE. For circular-time metrics, the
@@ -251,8 +254,53 @@ candidate lattice:
   resolved `epsilon_entry`, with boundary-unresolved cells marked explicitly;
 - Fig. 6b: Pareto occupancy at explicit tolerance slices using the frozen
   interval-level Pareto flags rather than a refitted optimization surface;
-- Fig. 6c: metric-class sufficient-region geometry at a shared tolerance,
-  showing the fraction of class metrics sufficient in each joint state.
+- Fig. 6c: failure of single-axis sufficiency composition. A cell map at the
+  existing epsilon=.25 slice shows joint failures / single-axis passes, alongside
+  failure-rate profiles at .05/.10/.20/.25/.30/.50/1 by placement/optical facet.
+  Both axes must have observed refinements. U denotes axis-unresolved and a dash
+  denotes no single-axis passes; neither is a zero failure rate. Full failure
+  intervals and pair-support counts are analysis outputs. The former class
+  profiles and the failure map separated by facet are supplementary outputs.
+
+Composition failure compares temporal-only and duration-only refinements from
+the SAME joint starting configuration and standardizer with all higher joint
+states. It does not concatenate Fig.5's separately defined single-axis summaries.
+Original maximal pairwise supports remain in use; failure is a design-rule
+disagreement in the observed comparison system, not proof of a statistical
+interaction. Fig.3c's Q and R/Q remain a separate cross-axis description.
+
+Display counts pool unique metric/configuration states across their respective
+maximal supports within each placement/optical facet; support-specific counts
+remain in the frozen summary for audit. They do not impose a common-support
+intersection or treat metric classes as independent replicates.
+
+The existing state-level composition CSV retains explicit R_T, R_D and R_J,
+failure_interval_start/end/width with [start,end) bounds, worst_joint_refinement,
+its cadence/duration and unit/participant counts. Temporal and duration maxima
+also retain their worst configuration and corresponding counts, plus support
+count ranges. These fields permit a representative case to be selected without
+opening raw observations or creating another output file. Ties are deterministic;
+pair-specific counts do not establish identical observation rows across pairs.
+
+### Manuscript wording after execution
+
+Results template (replace brackets only after inspecting the new outputs):
+"Among [N] observed configurations for which temporal-only and duration-only
+refinements both met the tolerance criterion, [n] failed the joint criterion
+at epsilon = [value]. Failures occurred in [observed regions/facets], showing
+that separately adequate temporal and duration choices did not necessarily
+compose into a sufficient joint configuration." Report metric/configuration
+counts and the evaluated tolerance range, not a population failure probability.
+If no failures are observed, report that result and do not claim demonstrated
+composition failure.
+
+Discussion template when failures are observed: "Measurement sufficiency must
+be assessed in the joint configuration space: passing separate refinement
+checks does not guarantee preservation under combined refinement. This failure
+can arise even through additive accumulation of discrepancies and therefore
+does not, by itself, establish cross-axis interaction. The design implication
+is to evaluate the selected cadence and monitoring duration together, within
+the observed configuration domain and application-specific tolerance."
 
 The conceptual object in Fig. 6 is a minimum-sufficient burden frontier within
 the frozen candidate domain. It is not an unconstrained accuracy-versus-burden

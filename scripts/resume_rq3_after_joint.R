@@ -4,6 +4,7 @@ source("scripts/utils/paths.R")
 source("scripts/utils/artifact_validation.R")
 source("scripts/utils/duration_artifacts.R")
 source("scripts/utils/rq1_pairwise_artifacts.R")
+source("scripts/utils/rq3_support.R")
 
 RQ1_LONG <- file.path("results", "rq1", "rq1_pairwise_change_long.rds")
 RQ1_SUMMARY <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
@@ -39,7 +40,7 @@ CORE_VERSION <- unique(na.omit(c(pairwise_artifact$core_artifact_version, pair_s
 if (length(CORE_VERSION) != 1L) stop("Core version mismatch")
 CORE_VERSION <- CORE_VERSION[[1]]
 ms_assert_version(duration_artifact, "core_artifact_version", CORE_VERSION)
-RQ3_VERSION <- paste0("rq3_v5_type_level_nested_pareto_fixed__", RQ1_VERSION, "__", ANALYSIS_DESIGN_ID)
+RQ3_VERSION <- paste0("rq3_v8_axis_composition__", RQ1_VERSION, "__", ANALYSIS_DESIGN_ID)
 single <- readr::read_csv(SINGLE_CSV, show_col_types = FALSE, progress = FALSE)
 ms_assert_version(single, "rq3_analysis_version", RQ3_VERSION)
 ms_assert_version(single, "core_artifact_version", CORE_VERSION)
@@ -59,20 +60,18 @@ aggregate_scale <- function(x, geometry) {
   if (identical(geometry, "circular_time")) sd(circular_delta(x, circular_mean(x))) else sd(x)
 }
 temporal_label <- ms_temporal_label
-metric_support_filter <- function(df) {
-  df |> filter((metric %in% DUAL & str_detect(support_id, "_full$")) |
-                (!metric %in% DUAL & !str_detect(support_id, "_full$")))
-}
 read_duration_primary <- function(path) {
   readRDS(path) |>
     filter(resolution_s %in% PRIMARY_TEMPORAL_S, n_days %in% PRIMARY_DURATION_DAYS) |>
-    metric_support_filter() |>
     select(support_id, site, Id, placement, optical, resolution_s, window_id, n_days,
            window_start, window_end, metric, metric_class, metric_geometry, value, available)
 }
 
 message("RQ3 recovery: reuse cached nested joint-pair summary")
 joint_pair_summary <- readRDS(JOINT_CACHE)
+ms_assert_version(joint_pair_summary, "rq3_analysis_version", RQ3_VERSION)
+ms_assert_version(joint_pair_summary, "core_artifact_version", CORE_VERSION)
+ms_assert_version(joint_pair_summary, "rq1_analysis_version", RQ1_VERSION)
 required_joint <- c(
   "support_id", "placement", "optical", "resolution_a", "n_days_a", "config_a_id",
   "resolution_b", "n_days_b", "config_b_id", "metric", "metric_class", "metric_geometry",
@@ -100,6 +99,7 @@ for (i in seq_along(duration_part_paths)) {
            available, is.finite(value)) |>
     select(support_id, metric, metric_geometry, value)
   state_parts[[i]] <- z |>
+    rq3_support_filter() |>
     filter(available, is.finite(value)) |>
     distinct(support_id, placement, optical, resolution_s, n_days, metric, metric_class, metric_geometry)
   if (i %% 8L == 0L || i == length(duration_part_paths)) message("  state catalogue ", i, "/", length(duration_part_paths))
@@ -152,6 +152,6 @@ writeLines(c(
 ), file.path(OUT, "RQ3_RUN_REPORT.md"))
 
 message("RQ3 recovery: build canonical figures")
-source("scripts/15a_plot_fig4.R", local = .GlobalEnv)
-source("scripts/15b_plot_fig5.R", local = .GlobalEnv)
+source("scripts/15a_plot_fig5.R", local = .GlobalEnv)
+source("scripts/15b_plot_fig6.R", local = .GlobalEnv)
 message("RQ3 recovery complete: ", RQ3_VERSION)
