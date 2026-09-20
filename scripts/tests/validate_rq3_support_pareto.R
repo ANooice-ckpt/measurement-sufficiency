@@ -32,6 +32,9 @@ check_projection <- function(A) {
     mutate(config_b_id = "r10__d6", resolution_b=10L,n_days_b=6L,
            n_units=20L,n_participants=4L,A = A)
   source("scripts/utils/rq3_joint_projection.R", local = TRUE)
+  saved <- readRDS(file.path(OUT, "rq3_joint_stability.rds"))
+  stopifnot(is.data.frame(saved), nrow(saved) == nrow(joint_pair_summary),
+    identical(attr(saved, "task_projection")$task_projection_version, "rq3_task_projection_v1"))
   stopifnot(all(!composition$states$composition_resolved),
             all(is.na(composition$summary$failure_rate)))
   endpoint <- pareto_occupancy |> filter(terminal_endpoint, config_id == "r120__d1")
@@ -75,4 +78,83 @@ check_projection <- function(A) {
 }
 check_projection(.5)
 check_projection(0)
-cat("RQ3 maximal-support and terminal Pareto contracts passed\n")
+
+# A task frontier is the intersection of its required targets, not the union or
+# majority of their individual frontiers. Missing targets cannot silently pass.
+inventory <- tibble(metric = c("mean_MEDI", "dose", "MDER", "crossings"),
+                    metric_class = c("level", "level", "spectral", "temporal dynamics"))
+cells <- tibble(resolution_s = c(120, 60, 120, 60, 10), n_days = c(1, 1, 2, 2, 2),
+                R_obs = c(.6, .3, .4, .2, NA_real_)) |>
+  mutate(config_id = paste0("r", resolution_s, "__d", n_days),
+         status = if_else(is.finite(R_obs), "resolved", "boundary_unresolved"))
+task_joint <- tidyr::crossing(cells, inventory, placement = c("eye", "wrist"),
+                             optical = c("MEDI", "LIGHT")) |>
+  filter(!(optical == "LIGHT" & metric == "MDER")) |>
+  mutate(support_id = paste0(if_else(placement == "eye", "eye", "eye_wrist"),
+      if_else(optical == "LIGHT" | metric == "MDER", "_full", "_medi")),
+    R_obs = if_else(metric == "dose", R_obs / 2, R_obs))
+tasks <- rq3_task_projection(task_joint, inventory,
+  tasks = list(level = c("mean_MEDI", "dose"), combined = c("mean_MEDI", "MDER")))
+stopifnot(all(tasks$states$n_required == 2L),
+  all(tasks$states$status[tasks$states$optical == "LIGHT" & tasks$states$task_id == "combined"] == "unavailable"),
+  all(is.na(tasks$states$R_task[tasks$states$status != "resolved"])),
+  tasks$states$support_ids[tasks$states$task_id == "combined" & tasks$states$placement == "eye" &
+    tasks$states$optical == "MEDI" & tasks$states$config_id == "r120__d1"] == "eye_full;eye_medi")
+select_task_interval <- function(x, eps) {
+  x |> filter(task_id == "level", placement == "eye", optical == "MEDI",
+    epsilon_interval_start <= eps + 1e-12,
+    epsilon_interval_end > eps + 1e-12 | terminal_endpoint)
+}
+for (eps in c(.4, .5)) {
+  z <- select_task_interval(tasks$frontiers, eps)
+  stopifnot(nrow(z) == nrow(cells),
+    setequal(z$config_id[which(z$pareto)], c("r60__d1", "r120__d2")),
+    z$sufficient[z$config_id == "r60__d2"], !z$pareto[z$config_id == "r60__d2"],
+    is.na(z$sufficient[z$config_id == "r10__d2"]))
+}
+for (eps in c(.6, 2)) {
+  z <- select_task_interval(tasks$frontiers, eps)
+  stopifnot(setequal(z$config_id[which(z$pareto)], "r120__d1"))
+}
+missing <- rq3_task_projection(task_joint |> filter(!(metric == "dose" & config_id == "r120__d1")),
+  inventory, list(level = c("mean_MEDI", "dose")))
+stopifnot(all(missing$states$status[missing$states$config_id == "r120__d1"] == "unavailable"),
+  all(missing$states$missing_targets[missing$states$config_id == "r120__d1"] == "dose"))
+absent_inventory <- bind_rows(inventory, tibble(metric = "absent", metric_class = "level"))
+absent <- rq3_task_projection(task_joint, absent_inventory)
+stopifnot(all(absent$states$status[absent$states$task_id %in% c("all_targets", "level")] == "unavailable"))
+nonmonotone <- task_joint |>
+  mutate(R_obs = if_else(config_id == "r120__d1", .1, R_obs)) |>
+  rq3_task_projection(inventory, list(level = c("mean_MEDI", "dose")))
+z <- select_task_interval(nonmonotone$frontiers, .1)
+stopifnot(z$sufficient[z$config_id == "r120__d1"],
+          !z$sufficient[z$config_id == "r60__d1"], sum(z$pareto, na.rm = TRUE) == 1L)
+
+# Compile only the new task-panel grammar with synthetic frozen decisions.
+# No production figure entrypoint, device, rendering or file save is invoked.
+published_classes <- readxl::read_excel("external/zauner_position/data/metric_types.xlsx")$metric_type
+stopifnot(all(c("level", "timing", "temporal dynamics") %in% published_classes))
+source("scripts/utils/fig6_redesign.R")
+plot_tasks <- rq3_task_projection(task_joint, inventory,
+  list(level = c("mean_MEDI", "dose"), timing = "mean_MEDI", `temporal dynamics` = "crossings"))$frontiers |>
+  filter(placement == "eye", optical == "MEDI", epsilon_interval_start <= .4,
+         epsilon_interval_end > .4 | terminal_endpoint) |>
+  mutate(resolution_rank = match(resolution_s, c(120, 60, 10)),
+         task_id = factor(task_id, levels = c("level", "timing", "temporal dynamics")))
+plot_env <- new.env(parent = environment())
+plot_env$tasks <- plot_tasks
+plot_env$base <- ggplot2::theme_void()
+plot_env$lattice_axes <- list()
+plot_env$unresolved <- "#E1E5E7"
+plot_env$muted <- "#657078"
+for (expr in as.list(body(ms_fig6_redesign))[-1L]) {
+  if (is.call(expr) && identical(expr[[1L]], as.name("<-")) &&
+      paste(deparse(expr[[2L]]), collapse = "") %in%
+        c("tasks$decision", "task_names", "tasks$task_label", "b")) eval(expr, plot_env)
+}
+panel <- ggplot2::ggplot_build(plot_env$b)
+stopifnot(nrow(panel$data[[1L]]) == nrow(plot_tasks),
+  length(unique(panel$data[[1L]]$PANEL)) == 3L,
+  nrow(panel$data[[2L]]) == sum(plot_tasks$pareto, na.rm = TRUE),
+  nrow(panel$data[[3L]]) == sum(plot_tasks$status != "resolved"))
+cat("RQ3 maximal-support, task-set completeness and sufficient/Pareto contracts passed\n")

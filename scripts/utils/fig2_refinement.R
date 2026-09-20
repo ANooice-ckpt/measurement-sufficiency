@@ -1,15 +1,6 @@
-# Final display refinement for Fig. 2.
-#
-# This helper uses only display objects and already-aggregated frozen RQ2 outputs
-# constructed by scripts/13a_plot_fig2.R. It does not refit models or redefine
-# any RQ2 estimand. The refinements are deliberately local:
-#   a) separate overall coefficient summaries from the dimension fingerprint;
-#   b) give each measurement dimension its own symmetric viewing window for
-#      context-induced geometry displacement;
-#   c) replace the full CV distribution in the main figure with a descriptive
-#      ranked view of the most context-recoverable representation tasks.
-# The complete participant-grouped CV distribution remains in the canonical
-# fig2_joint_context_cv.csv audit output.
+# Accepted predictor atlas for current Fig. 3a.
+# Uses display objects from scripts/13a_plot_fig3.R; no model fitting.
+# The legacy function name is retained for its existing p2a return interface.
 
 ms_fig2_env_get <- function(env, name, default = NULL) {
   if (is.environment(env) && exists(name, envir = env, inherits = FALSE)) {
@@ -17,56 +8,6 @@ ms_fig2_env_get <- function(env, name, default = NULL) {
   } else {
     default
   }
-}
-
-ms_fig2_robust_symmetric_limit <- function(values, foreground = numeric(),
-                                           prob = .95, pad = 1.14,
-                                           fallback = .05, hard_cap = NULL) {
-  values <- suppressWarnings(as.numeric(values))
-  values <- values[is.finite(values)]
-  foreground <- suppressWarnings(as.numeric(foreground))
-  foreground <- foreground[is.finite(foreground)]
-  core <- if (length(values)) {
-    as.numeric(stats::quantile(abs(values), prob, na.rm = TRUE,
-                               names = FALSE, type = 8))
-  } else NA_real_
-  fg <- if (length(foreground)) max(abs(foreground), na.rm = TRUE) else NA_real_
-  lim <- suppressWarnings(max(c(core, fg, fallback / pad), na.rm = TRUE)) * pad
-  if (!is.finite(lim) || lim <= 0) lim <- fallback
-  if (!is.null(hard_cap) && is.finite(hard_cap)) lim <- min(lim, hard_cap)
-  lim
-}
-
-# Three deterministic symmetric ticks preserve the signed, zero-centred geometry
-# while guaranteeing that compact panels show more than the origin alone.
-ms_fig2_three_symmetric_breaks <- function(lim) {
-  lim <- abs(as.numeric(lim)[[1]])
-  if (!is.finite(lim) || lim <= 0) return(0)
-  target <- .72 * lim
-  exponent <- floor(log10(target))
-  fraction <- target / (10 ^ exponent)
-  nice_fraction <- if (fraction < 1.5) 1 else if (fraction < 3.5) 2 else if (fraction < 7.5) 5 else 10
-  tick <- nice_fraction * (10 ^ exponent)
-  if (!is.finite(tick) || tick <= 0) tick <- lim / 2
-  if (tick >= lim) tick <- tick / 2
-  c(-tick, 0, tick)
-}
-
-ms_fig2_short_metric <- function(x) {
-  x <- stringr::str_replace_all(as.character(x), "_", " ")
-  x <- stringr::str_squish(x)
-  x <- stringr::str_replace(x, stringr::regex("^frequency crossing\\s*", ignore_case = TRUE),
-                            "Crossing freq. ")
-  x <- stringr::str_replace(x, stringr::regex("^total duration pulses above\\s*", ignore_case = TRUE),
-                            "Pulse dur. > ")
-  x <- stringr::str_replace(x, stringr::regex("^total duration pulses\\s*", ignore_case = TRUE),
-                            "Pulse duration ")
-  x <- stringr::str_replace(x, stringr::regex("^bright mean level$", ignore_case = TRUE),
-                            "Mean bright level")
-  x <- stringr::str_replace(x, stringr::regex("^bright threshold$", ignore_case = TRUE),
-                            "Bright threshold")
-  x <- stringr::str_replace(x, stringr::regex("^dose$", ignore_case = TRUE), "Dose")
-  stringr::str_trunc(x, width = 18, side = "right", ellipsis = "…")
 }
 
 ms_fig2_add_family_guides <- function(plot, boundaries) {
@@ -77,15 +18,12 @@ ms_fig2_add_family_guides <- function(plot, boundaries) {
   } else plot
 }
 
-ms_fig2_refine_main <- function(env, top_n = 8L) {
+ms_fig2_refine_main <- function(env) {
   required <- c(
-    "p_labels", "p_strength", "predictor_legend", "dimension_legend",
+    "p_labels", "p_strength",
     "coef_summary_all_plot", "coef_summary_dim_plot",
     "status_grid", "predictor_y_limits", "family_boundaries",
-    "PREDICTOR_COLORS", "DIMENSION_SHAPES", "coef_window_global",
-    "conditional_shift_path_metric", "conditional_shift_class_path",
-    "conditional_shift_overall_path", "DIMENSIONS", "DIM_TITLES",
-    "joint_cv_metric_panel"
+    "PREDICTOR_COLORS", "DIMENSION_SHAPES", "coef_window_global"
   )
   objects <- lapply(required, function(nm) ms_fig2_env_get(env, nm))
   names(objects) <- required
@@ -94,8 +32,6 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
   p_labels <- objects$p_labels
   # Narrow strength column: avoid a terminal tick label intruding into signed effects.
   p_strength <- objects$p_strength + ggplot2::theme(axis.text.x = ggplot2::element_text(size = 3.1))
-  predictor_legend <- objects$predictor_legend
-  dimension_legend <- objects$dimension_legend
   coef_summary_all_plot <- objects$coef_summary_all_plot
   coef_summary_dim_plot <- objects$coef_summary_dim_plot
   status_grid <- objects$status_grid
@@ -104,14 +40,12 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
   PREDICTOR_COLORS <- objects$PREDICTOR_COLORS
   DIMENSION_SHAPES <- objects$DIMENSION_SHAPES
   coef_window_global <- objects$coef_window_global
-  DIMENSIONS <- objects$DIMENSIONS
-  DIM_TITLES <- objects$DIM_TITLES
 
   # ---------------------------------------------------------------------------
   # a. Overall coefficient backbone + clearly separated dimension fingerprint
   # ---------------------------------------------------------------------------
   # The barely visible metric/task point cloud is intentionally omitted here.
-  # Fig. 2a now has only two visual levels: the foreground overall distribution
+  # Fig. 3a has two visual levels: the foreground overall distribution
   # and the secondary dimension fingerprint. Full coefficient detail remains in
   # the exported audit tables.
   refined_offsets <- c(
@@ -217,317 +151,5 @@ ms_fig2_refine_main <- function(env, top_n = 8L) {
       colour = "#666A6D", size = 4.25
     )
 
-  # ---------------------------------------------------------------------------
-  # b. Dimension-specific displacement windows
-  # ---------------------------------------------------------------------------
-  raw_shift <- objects$conditional_shift_path_metric
-  class_shift <- objects$conditional_shift_class_path
-  overall_shift <- objects$conditional_shift_overall_path
-
-  make_shift_panel <- function(dim_name) {
-    raw <- raw_shift |>
-      dplyr::filter(dimension == dim_name)
-    cls <- class_shift |>
-      dplyr::filter(dimension == dim_name)
-    ov <- overall_shift |>
-      dplyr::filter(dimension == dim_name)
-
-    x_lim <- ms_fig2_robust_symmetric_limit(
-      raw$delta_A[raw$state_num > 1L],
-      c(cls$delta_A, ov$delta_A),
-      prob = .95, pad = 1.16, fallback = .035
-    )
-    y_lim <- ms_fig2_robust_symmetric_limit(
-      raw$delta_direction[raw$state_num > 1L],
-      c(cls$delta_direction, ov$delta_direction),
-      prob = .95, pad = 1.16, fallback = .06, hard_cap = 2.05
-    )
-    x_breaks <- ms_fig2_three_symmetric_breaks(x_lim)
-    y_breaks <- ms_fig2_three_symmetric_breaks(y_lim)
-
-    # M/H are data-identical points even when they sit nearly on top of one
-    # another. Separate only their text labels, with short leader lines; the
-    # plotted coordinates themselves remain linear and untouched.
-    ov <- ov |>
-      dplyr::mutate(
-        state_label = dplyr::case_when(
-          state_num == 2L ~ "M",
-          state_num == 3L ~ "H",
-          TRUE ~ ""
-        ),
-        label_dx = dplyr::case_when(
-          state_num == 2L ~ -.070,
-          state_num == 3L ~  .070,
-          TRUE ~ 0
-        ),
-        label_dy = dplyr::case_when(
-          state_num == 2L ~  .085,
-          state_num == 3L ~  .105,
-          TRUE ~ 0
-        ),
-        label_x = delta_A + label_dx * x_lim,
-        label_y = delta_direction + label_dy * y_lim
-      )
-
-    ggplot2::ggplot() +
-      ggplot2::geom_hline(yintercept = 0, linewidth = .24, colour = "#C5C9CB") +
-      ggplot2::geom_vline(xintercept = 0, linewidth = .24, colour = "#C5C9CB") +
-      ggplot2::geom_path(
-        data = raw,
-        ggplot2::aes(delta_A, delta_direction,
-                     group = interaction(metric, metric_class), colour = metric_class),
-        linewidth = .10, alpha = .055
-      ) +
-      ggplot2::geom_point(
-        data = raw |> dplyr::filter(state_num > 1L),
-        ggplot2::aes(delta_A, delta_direction, colour = metric_class),
-        size = .30, alpha = .12
-      ) +
-      ggplot2::geom_path(
-        data = cls,
-        ggplot2::aes(delta_A, delta_direction, group = metric_class, colour = metric_class),
-        linewidth = .56, alpha = .84
-      ) +
-      ggplot2::geom_point(
-        data = cls |> dplyr::filter(state_num > 1L),
-        ggplot2::aes(delta_A, delta_direction, colour = metric_class, shape = state),
-        size = .94, alpha = .98
-      ) +
-      ggplot2::geom_path(
-        data = ov,
-        ggplot2::aes(delta_A, delta_direction, group = 1),
-        linewidth = .60, colour = "#343B3F"
-      ) +
-      ggplot2::geom_point(
-        data = ov,
-        ggplot2::aes(delta_A, delta_direction, shape = state),
-        size = 1.32, colour = "#343B3F", fill = "white", stroke = .30
-      ) +
-      ggplot2::geom_segment(
-        data = ov |> dplyr::filter(state_num > 1L),
-        ggplot2::aes(x = delta_A, y = delta_direction, xend = label_x, yend = label_y),
-        inherit.aes = FALSE, linewidth = .16, colour = "#7A8084", alpha = .78
-      ) +
-      ggplot2::geom_text(
-        data = ov |> dplyr::filter(state_num > 1L),
-        ggplot2::aes(label_x, label_y, label = state_label),
-        inherit.aes = FALSE,
-        size = 1.38, colour = "#343B3F", fontface = "bold"
-      ) +
-      scale_colour_ms_metric(guide = "none") +
-      ggplot2::scale_shape_manual(
-        values = c("Low" = 1, "Middle" = 16, "High" = 18), guide = "none"
-      ) +
-      ggplot2::scale_x_continuous(
-        breaks = x_breaks,
-        expand = ggplot2::expansion(mult = c(0, 0))
-      ) +
-      ggplot2::scale_y_continuous(
-        breaks = y_breaks,
-        expand = ggplot2::expansion(mult = c(0, 0))
-      ) +
-      # Clip the viewing window after constructing paths, so outlying vertices
-      # do not delete trajectory segments crossing the visible region.
-      ggplot2::coord_cartesian(xlim = c(-x_lim, x_lim), ylim = c(-y_lim, y_lim),
-                              expand = FALSE) +
-      ggplot2::labs(title = unname(DIM_TITLES[[dim_name]]), x = NULL, y = NULL) +
-      theme_rq2(base_size = 5.05) +
-      ggplot2::theme(
-        panel.grid = ggplot2::element_blank(),
-        strip.text = ggplot2::element_blank(),
-        plot.title = ggplot2::element_text(
-          size = 4.55, hjust = .5, face = "bold", margin = ggplot2::margin(b = .8)
-        ),
-        axis.text.x = ggplot2::element_text(size = 3.05),
-        axis.text.y = ggplot2::element_text(size = 3.05),
-        axis.ticks.x = ggplot2::element_line(linewidth = .22),
-        axis.ticks.y = ggplot2::element_line(linewidth = .22),
-        axis.line.x = ggplot2::element_line(colour = "#505457", linewidth = .30),
-        axis.line.y = ggplot2::element_line(colour = "#505457", linewidth = .30),
-        plot.margin = ggplot2::margin(.7, .8, .7, .8)
-      )
-  }
-
-  p_b1 <- make_shift_panel("placement")
-  p_b2 <- make_shift_panel("optical")
-  p_b3 <- make_shift_panel("temporal")
-  p_b4 <- make_shift_panel("duration")
-  p2b_grid <- cowplot::plot_grid(
-    p_b1, p_b2, p_b3, p_b4,
-    ncol = 2, rel_widths = c(1, 1), rel_heights = c(1, 1),
-    align = "hv", axis = "tblr", greedy = TRUE
-  )
-  p2b <- cowplot::ggdraw() +
-    cowplot::draw_plot(p2b_grid, x = .070, y = .070, width = .925, height = .805) +
-    cowplot::draw_label(
-      "b  Context-induced geometry shifts",
-      x = .004, y = .998, hjust = 0, vjust = 1,
-      fontface = "bold", size = 6.25
-    ) +
-    cowplot::draw_label(
-      "Low = origin; M/H = Middle/High displacement · each dimension uses its own symmetric viewing window",
-      x = .004, y = .960, hjust = 0, vjust = 1,
-      colour = "#666A6D", size = 3.65
-    ) +
-    cowplot::draw_label(
-      expression(Delta * " distortion magnitude, A"),
-      x = .535, y = .010, hjust = .5, vjust = 0,
-      size = 3.95, colour = "#34383B"
-    ) +
-    cowplot::draw_label(
-      expression(Delta * " directional coherence, B/A"),
-      x = .015, y = .470, angle = 90, hjust = .5, vjust = .5,
-      size = 3.95, colour = "#34383B"
-    )
-
-  # ---------------------------------------------------------------------------
-  # c. Ranked recoverability showcase
-  # ---------------------------------------------------------------------------
-  cv <- objects$joint_cv_metric_panel |>
-    dplyr::filter(is.finite(r2)) |>
-    dplyr::mutate(
-      metric_class = factor(metric_class, levels = MS_METRIC_CLASSES),
-      dimension = as.character(dimension),
-      outcome_label = as.character(outcome_label)
-    )
-  positive <- cv |>
-    dplyr::filter(r2 > 0) |>
-    dplyr::arrange(dplyr::desc(r2)) |>
-    dplyr::slice_head(n = as.integer(top_n))
-  if (!nrow(positive)) {
-    positive <- cv |>
-      dplyr::arrange(dplyr::desc(r2)) |>
-      dplyr::slice_head(n = as.integer(top_n))
-  }
-
-  dim_short <- c(
-    placement = "P", optical = "O", temporal = "T", duration = "D"
-  )
-  positive <- positive |>
-    dplyr::mutate(
-      metric_text = ms_fig2_short_metric(metric),
-      outcome_code = dplyr::if_else(outcome_label == "Absolute distortion", "|z|", "z"),
-      task_code = paste0(unname(dim_short[dimension]), "  ", outcome_code),
-      row_key = paste(metric, dimension, outcome_label, dplyr::row_number(), sep = "|||"),
-      row_key = forcats::fct_reorder(row_key, r2)
-    )
-  r2_max <- if (nrow(positive)) max(positive$r2, na.rm = TRUE) else .1
-  if (!is.finite(r2_max) || r2_max <= 0) r2_max <- .1
-  row_levels <- levels(positive$row_key)
-
-  p2c_labels <- ggplot2::ggplot(positive, ggplot2::aes(y = row_key)) +
-    ggplot2::geom_text(
-      ggplot2::aes(x = .02, label = metric_text),
-      hjust = 0, size = 1.42, colour = "#444A4D"
-    ) +
-    ggplot2::geom_text(
-      ggplot2::aes(x = .98, label = task_code),
-      hjust = 1, size = 1.30, colour = "#747A7E"
-    ) +
-    ggplot2::scale_x_continuous(limits = c(0, 1), expand = ggplot2::expansion(mult = c(0, 0))) +
-    ggplot2::scale_y_discrete(limits = row_levels, drop = FALSE) +
-    ggplot2::theme_void(base_family = MS_FONT) +
-    ggplot2::theme(plot.margin = ggplot2::margin(.6, 1.4, .6, 0))
-
-  p2c_rank <- ggplot2::ggplot(positive, ggplot2::aes(r2, row_key, colour = metric_class)) +
-    ggplot2::geom_vline(xintercept = 0, linewidth = .25, colour = "#A8ADB0") +
-    ggplot2::geom_segment(
-      ggplot2::aes(x = 0, xend = r2, yend = row_key),
-      linewidth = .55, alpha = .35, lineend = "round"
-    ) +
-    ggplot2::geom_point(shape = 18, size = 1.28, alpha = .98) +
-    ggplot2::geom_text(
-      ggplot2::aes(label = sprintf("%.2f", r2)),
-      hjust = -.18, size = 1.40, colour = "#4E5559", show.legend = FALSE
-    ) +
-    scale_colour_ms_metric(guide = "none") +
-    ggplot2::scale_x_continuous(
-      limits = c(0, r2_max * 1.18),
-      breaks = scales::breaks_extended(n = 4),
-      expand = ggplot2::expansion(mult = c(0, 0))
-    ) +
-    ggplot2::scale_y_discrete(limits = row_levels, drop = FALSE) +
-    ggplot2::labs(x = "participant-grouped CV R²", y = NULL) +
-    theme_rq2(base_size = 4.95) +
-    ggplot2::theme(
-      panel.grid.major.y = ggplot2::element_blank(),
-      panel.grid.minor = ggplot2::element_blank(),
-      axis.line.y = ggplot2::element_blank(),
-      axis.ticks.y = ggplot2::element_blank(),
-      axis.text.y = ggplot2::element_blank(),
-      axis.text.x = ggplot2::element_text(size = 3.35),
-      axis.title.x = ggplot2::element_text(size = 3.85),
-      plot.margin = ggplot2::margin(.6, 4.0, .6, .2)
-    )
-
-  p2c_body <- cowplot::plot_grid(
-    p2c_labels, p2c_rank,
-    ncol = 2, rel_widths = c(.31, .69),
-    align = "hv", axis = "tb", greedy = TRUE
-  )
-  p2c <- cowplot::ggdraw() +
-    cowplot::draw_plot(p2c_body, x = 0, y = .055, width = 1, height = .805) +
-    cowplot::draw_label(
-      "c  Most context-recoverable representations",
-      x = .004, y = .998, hjust = 0, vjust = 1,
-      fontface = "bold", size = 6.05
-    ) +
-    cowplot::draw_label(
-      paste0("top ", nrow(positive),
-             " positive participant-grouped CV R² tasks; complete distribution retained in audit output"),
-      x = .004, y = .955, hjust = 0, vjust = 1,
-      colour = "#666A6D", size = 3.45
-    )
-
-  # ---------------------------------------------------------------------------
-  # Final composition
-  # ---------------------------------------------------------------------------
-  # Rebuild the metric-class legend as a single row rather than reusing the
-  # two-row compact legend from the original Fig. 2 script.
-  metric_legend_single <- cowplot::get_legend(
-    ggplot2::ggplot(
-      tibble::tibble(
-        metric_class = factor(MS_METRIC_CLASSES, levels = MS_METRIC_CLASSES),
-        x = seq_along(MS_METRIC_CLASSES), y = 1
-      ), ggplot2::aes(x, y, colour = metric_class)
-    ) +
-      ggplot2::geom_point(size = 1.00) +
-      scale_colour_ms_metric() +
-      ggplot2::guides(colour = ggplot2::guide_legend(
-        title = NULL, nrow = 1, byrow = TRUE,
-        override.aes = list(size = 1.00, alpha = 1)
-      )) +
-      ggplot2::theme_void(base_family = MS_FONT) +
-      ggplot2::theme(
-        legend.position = "bottom",
-        legend.text = ggplot2::element_text(size = 3.35),
-        legend.key.width = grid::unit(1.8, "mm"),
-        legend.spacing.x = grid::unit(.30, "mm"),
-        legend.margin = ggplot2::margin(0, 0, 0, 0)
-      )
-  )
-
-  legend_band <- cowplot::plot_grid(
-    cowplot::plot_grid(predictor_legend, dimension_legend,
-                      ncol = 2, rel_widths = c(.40, .60)),
-    metric_legend_single, ncol = 1, rel_heights = c(1, 1)
-  )
-  right_column <- cowplot::plot_grid(
-    p2b, p2c,
-    ncol = 1, rel_heights = c(.61, .39),
-    align = "v", axis = "lr", greedy = TRUE
-  )
-  main_body <- cowplot::plot_grid(
-    p2a, right_column,
-    ncol = 2, rel_widths = c(.57, .43),
-    align = "hv", axis = "tblr", greedy = TRUE
-  )
-  final <- cowplot::plot_grid(
-    main_body, legend_band,
-    ncol = 1, rel_heights = c(.91, .09),
-    align = "v", axis = "lr", greedy = TRUE
-  )
-
-  list(plot = final, p2a = p2a, p2b = p2b, p2c = p2c,
-       top_recoverable = positive)
+  list(p2a = p2a)
 }

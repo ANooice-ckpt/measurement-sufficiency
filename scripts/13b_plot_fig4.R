@@ -1,4 +1,21 @@
 # Canonical Fig.4: frozen conditional-reliability results only. No refitting.
+# Pair already-frozen losses within each metric, tolerance and validation split.
+# Absolute Brier reduction remains defined when the baseline loss is zero.
+fig4_increment_display <- function(scores) {
+  d<-data.table::as.data.table(scores)[startsWith(target,"exceed_")]
+  keys<-c("task_index","metric","metric_class","dimension","comparison_pair_id",
+    "support_id","target","repeat_id")
+  stopifnot(!anyDuplicated(d[,c(keys,"state"),with=FALSE]))
+  w<-data.table::dcast(d,task_index+metric+metric_class+dimension+comparison_pair_id+
+    support_id+target+repeat_id~state,value.var="mse")
+  out<-data.table::melt(w,id.vars=c(keys,"joint"),
+    measure.vars=c("measurement","measurement_capacity"),
+    variable.name="baseline",value.name="baseline_brier")
+  out[,`:=`(epsilon=as.numeric(sub("exceed_","",target)),
+    brier_reduction=baseline_brier-joint)]
+  out[]
+}
+
 options(encoding="UTF-8")
 if(.Platform$OS.type=="windows")invisible(suppressWarnings(Sys.setlocale("LC_CTYPE","English_United States.utf8")))
 suppressPackageStartupMessages({library(data.table);library(ggplot2);library(cowplot)})
@@ -36,25 +53,24 @@ pa<-ggplot(display,aes(ratio,pair,colour=context_group,group=pair))+
   scale_colour_manual(values=group_colors,breaks=c("Lower","Middle","Higher"),labels=c("Lower risk","Middle","Higher risk"))+
   labs(x="Observed distortion / unstratified distortion",y=NULL)+theme_risk()
 pa_body<-pa
-pa<-header(pa,"a  Context separates reliability regimes","New participants; training-only risk groups")
 
-ci<-as.data.table(z$information_value)[contrast%in%c("context_skill","context_increment")]
-kind_labels<-c("Context vs configuration mean","Context beyond measurement")
-ci[,`:=`(pair=pair_factor(comparison_pair_id),kind=factor(contrast,levels=c("context_skill","context_increment"),labels=kind_labels))]
+value_kinds<-c("context_skill","context_increment","capacity_control")
+kind_labels<-c("Context vs mean","Joint vs measurement (10 df)","Joint vs measurement (20 df)")
+ci<-as.data.table(z$information_value)[contrast%in%value_kinds]
+ci[,`:=`(pair=pair_factor(comparison_pair_id),kind=factor(contrast,levels=value_kinds,labels=kind_labels))]
 reps<-melt(as.data.table(z$repeat_scores),id.vars=c("comparison_pair_id","repeat_id"),
-  measure.vars=c("context_skill","context_increment"),variable.name="contrast",value.name="estimate")
-reps[,`:=`(pair=pair_factor(comparison_pair_id),kind=factor(contrast,levels=c("context_skill","context_increment"),labels=kind_labels))]
-pd<-position_dodge(width=.55)
+  measure.vars=value_kinds,variable.name="contrast",value.name="estimate")
+reps[,`:=`(pair=pair_factor(comparison_pair_id),kind=factor(contrast,levels=value_kinds,labels=kind_labels))]
+pd<-position_dodge(width=.65)
 pb<-ggplot(ci,aes(estimate,pair,colour=kind,group=kind))+
   geom_vline(xintercept=0,colour="#7D858A",linetype=2,linewidth=.35)+
   geom_errorbar(aes(xmin=lo,xmax=hi),orientation="y",width=.12,position=pd,linewidth=.5)+geom_point(size=2,position=pd)+
   geom_point(data=reps[repeat_id!=1],aes(shape=factor(repeat_id)),size=1.3,position=pd,alpha=.6,show.legend=FALSE)+
-  scale_colour_manual(values=c("#2F5D7E","#B16C42"),
-    labels=c("Context vs mean","Context beyond measurement"))+
-  labs(x="Held-out Brier score improvement (%)",y=NULL)+theme_risk()+guides(colour=guide_legend(nrow=1))
+  scale_colour_manual(values=c("#2F5D7E","#B16C42","#52958B"))+
+  labs(x="Held-out Brier score improvement (%)",y=NULL)+theme_risk()+guides(colour=guide_legend(ncol=1))
 top_aligned<-align_plots(pa_body,pb,align="h",axis="tb")
 pa<-header(top_aligned[[1]],"a  Context separates reliability regimes","New participants; training-only risk groups")
-pb<-header(top_aligned[[2]],"b  Information value depends on what is known","All tolerance slices; bootstrap bars and repeat splits")
+pb<-header(top_aligned[[2]],"b  Context value and decoder-capacity control","Pooled loss ratios; fixed-prediction bootstrap bars + repeat splits")
 
 prof<-as.data.table(z$context_profiles)[startsWith(target,"exceed_") & context_group%in%c("Lower","Higher")]
 prof[,`:=`(epsilon=as.numeric(sub("exceed_","",target)),pair=factor(comparison_pair_id,levels=ORDER,labels=LABELS))]
@@ -71,10 +87,9 @@ pc<-header(pc,"c  A given tolerance implies different reliability across context
 foot<-ggdraw()+draw_label(
   "52 daily targets; eight contrasts; unavailable targets excluded. Summaries weight metrics equally.\nContext: 18 daily + 32 daypart fields. Measurement: candidate target + 16 observed-configuration signatures.\nContext groups do not redefine the cohort or certify RQ3 sufficiency. No universal tolerance is imposed.",
   x=.012,hjust=0,size=5.6,colour="#626A70",fontfamily=MS_FONT)
-# Preserve the earlier pooled view; the main figure exposes all analytical units.
+# Preserve the established supplementary output; no new supplementary figure.
 previous_figure<-plot_grid(plot_grid(pa,pb,nrow=1,rel_widths=c(.49,.51)),pc,foot,ncol=1,rel_heights=c(.47,.45,.08))
-# Each point is one metric/contrast; facets retain every prespecified tolerance.
-# The identity line makes successful and reversed risk ordering immediately visible.
+# Keep the existing risk-scatter audit tables and their output contracts.
 tail<-as.data.table(z$metric_profiles)[startsWith(target,"exceed_") & context_group %in% c("Lower","Higher")]
 cloud<-dcast(tail,task_index+metric+dimension+comparison_pair_id+target~context_group,value.var="observed")
 cloud[,`:=`(epsilon=as.numeric(sub("exceed_","",target)),
@@ -83,35 +98,53 @@ cloud[,slice:=factor(epsilon,levels=sort(unique(epsilon)),labels=paste0("ε = ",
 spread<-cloud[,.(x=median(Lower),y=median(Higher),
   xlo=quantile(Lower,.25),xhi=quantile(Lower,.75),
   ylo=quantile(Higher,.25),yhi=quantile(Higher,.75)),by=.(slice,axis)]
-pc<-ggplot(cloud,aes(Lower,Higher,colour=axis))+
-  geom_abline(slope=1,intercept=0,colour="#899499",linetype=2,linewidth=.35)+
-  geom_point(size=.5,alpha=.22)+
-  geom_segment(data=spread,aes(x=xlo,xend=xhi,y=y,yend=y),inherit.aes=FALSE,colour="white",linewidth=1.6)+
-  geom_segment(data=spread,aes(x=x,xend=x,y=ylo,yend=yhi),inherit.aes=FALSE,colour="white",linewidth=1.6)+
-  geom_segment(data=spread,aes(x=xlo,xend=xhi,y=y,yend=y,colour=axis),inherit.aes=FALSE,linewidth=.65)+
-  geom_segment(data=spread,aes(x=x,xend=x,y=ylo,yend=yhi,colour=axis),inherit.aes=FALSE,linewidth=.65)+
-  geom_point(data=spread,aes(x,y,fill=axis),shape=23,size=2.2,colour="white",stroke=.4)+
-  facet_wrap(~slice,ncol=3)+coord_cartesian(xlim=c(0,1),ylim=c(0,1))+
-  scale_colour_manual(values=c(Placement="#2F5D7E",Optical="#B16C42",Temporal="#52958B"))+
-  scale_fill_manual(values=c(Placement="#2F5D7E",Optical="#B16C42",Temporal="#52958B"),guide="none")+
-  scale_x_continuous(breaks=c(0,.5,1),labels=c("0","50","100"))+
-  scale_y_continuous(breaks=c(0,.5,1),labels=c("0","50","100"))+
-  labs(x="Exceedance probability in lower-risk context (%)",
-    y="Exceedance probability in higher-risk context (%)")+theme_risk()+
-  guides(colour=guide_legend(override.aes=list(alpha=1,size=2)))
-pc<-header(pc,"c  Context changes tolerance-exceedance risk",
-  "Above diagonal: higher risk as predicted · dots: metric–contrast pairs · diamonds / bars: median / IQR",.10,left=.047)
+
+# The main atlas reveals the incremental-value structure before any pooling.
+# Every frozen split remains in `increment`; choose the declared primary split,
+# and mark sign reversals across splits without introducing a hypothesis test.
+increment<-fig4_increment_display(z$task_scores)
+repeat_range<-increment[baseline=="measurement",.(split_min=min(brier_reduction),
+  split_max=max(brier_reduction)),by=.(task_index,target)]
+atlas<-merge(increment[baseline=="measurement" & repeat_id==1L],repeat_range,by=c("task_index","target"))
+metric_order<-unique(atlas[,.(metric,metric_class)])
+metric_order[,class_order:=match(metric_class,MS_METRIC_CLASSES)]
+setorder(metric_order,class_order,metric)
+eps<-sort(unique(increment$epsilon))
+atlas[,`:=`(metric=factor(metric,levels=rev(metric_order$metric)),
+  metric_class=factor(metric_class,levels=MS_METRIC_CLASSES),
+  pair=factor(comparison_pair_id,levels=ORDER,
+    labels=c("Chest","Wrist","LIGHT","20 s","30 s","40 s","60 s","120 s")),
+  epsilon=factor(epsilon,levels=eps),gain=100*brier_reduction,
+  split_reversal=split_min<0 & split_max>0)]
+fill_limit<-max(abs(atlas$gain))
+if(fill_limit==0)fill_limit<-1
+pc<-ggplot(atlas,aes(epsilon,metric,fill=gain))+
+  geom_tile(width=.94,height=.94)+
+  geom_point(data=atlas[split_reversal==TRUE],shape=4,size=.65,stroke=.2,colour="#30363A")+
+  facet_grid(metric_class~pair,scales="free_y",space="free_y",switch="y")+
+  scale_fill_gradient2(low="#B16C42",mid="#FAFAF8",high="#2F5D7E",midpoint=0,
+    limits=c(-fill_limit,fill_limit),trans=scales::pseudo_log_trans(sigma=.1),
+    name="Brier reduction × 100")+
+  labs(x="Tolerance ε within each contrast (frozen RQ1 standardized units)",y=NULL)+theme_risk()+
+  theme(panel.grid=element_blank(),panel.background=element_rect(fill="#E0E3E5",colour=NA),
+    panel.spacing.x=unit(.6,"mm"),panel.spacing.y=unit(.6,"mm"),
+    strip.placement="outside",strip.text.y.left=element_text(angle=0,size=5.2),
+    axis.text.y=element_text(size=4.8),axis.text.x=element_text(size=4.8,angle=90,hjust=1,vjust=.5),
+    axis.ticks=element_blank(),legend.title=element_text(size=6))+
+  guides(fill=guide_colourbar(barwidth=unit(40,"mm"),barheight=unit(2,"mm"),title.position="top"))
+pc<-header(pc,"c  Where context adds information beyond candidate measurements",
+  "Primary split: measurement (10 df) loss − joint loss; blue = improvement · × = sign changes across splits · grey = unavailable",.07)
 foot<-ggdraw()+draw_label(
-  "52 daily targets; eight contrasts; participant-grouped out-of-sample evaluation. a–b: equal metric weights.\nRisk groups use training-only cutpoints. c: IQRs describe heterogeneity, not confidence intervals.\nDaily exceedance risk informs context of use; RQ3 retains its separate observed-stability criterion.",
+  "52 daily targets; eight contrasts; participant-grouped out-of-sample evaluation. a–b: equal metric weights.\nb: relative improvement over each baseline; c: absolute loss reduction, with no metric or tolerance averaging.\nSplit markers describe validation variability, not significance. Daily risk does not redefine RQ3 sufficiency.",
   x=.012,hjust=0,size=5.4,colour="#626A70",fontfamily=MS_FONT)
 figure<-plot_grid(plot_grid(pa,pb,nrow=1,rel_widths=c(.49,.51)),pc,foot,
-  ncol=1,rel_heights=c(.35,.59,.06))
-ms_fig3_atlas_refine_main<-function(...)NULL;ms_fig3_refine_main<-function(...)NULL
-ms_polish_main_figure<-function(plot,path,caller_env,width,height)list(plot=plot,width=width,height=height)
-ms_plot_save(figure,"results/rq2/Fig4_RQ2.png",7.4,6.56)
+  ncol=1,rel_heights=c(.29,.66,.05))
+ms_plot_save(figure,"results/rq2/Fig4_RQ2.png",8.6,8.4)
 ms_plot_save(previous_figure,"results/rq2/FigS_RQ2_reliability_profiles.png",7.4,7.7)
-fwrite(cloud,"results/rq2/fig4_tolerance_scatter_display.csv")
-fwrite(spread,"results/rq2/fig4_tolerance_scatter_iqr.csv")
+if (!ms_plot_prep_only()) {
+  fwrite(cloud,"results/rq2/fig4_tolerance_scatter_display.csv")
+  fwrite(spread,"results/rq2/fig4_tolerance_scatter_iqr.csv")
+}
 
 # Strong nuisance controls and metric-level detail are retained as supplements.
 sens<-as.data.table(z$information_value)
@@ -128,8 +161,11 @@ pm<-ggplot(metric,aes(ratio,pair,colour=metric_class))+geom_vline(xintercept=1,l
   scale_x_continuous(trans=scales::pseudo_log_trans(sigma=.1),breaks=c(0,.5,1,2,5))+
   labs(x="Metric-specific conditional / unstratified distortion",y=NULL)+theme_risk()
 ms_plot_save(pm,"results/rq2/FigS_RQ2_reliability_metrics.png",7.4,4.8)
-fwrite(display,"results/rq2/fig4_conditional_risk_display.csv");fwrite(prof,"results/rq2/fig4_tolerance_reliability_display.csv")
+if (!ms_plot_prep_only()) {
+  fwrite(display,"results/rq2/fig4_conditional_risk_display.csv");fwrite(prof,"results/rq2/fig4_tolerance_reliability_display.csv")
+}
 ms_plot_write_manifest("results/rq2/figure_artifact_manifest.csv",data.frame(figure="Fig4_RQ2",input_artifact=path,
   core_artifact_version=z$provenance$core_artifact_version,rq1_analysis_version=z$provenance$rq1_analysis_version,
   rq2_analysis_version=z$provenance$rq2_analysis_version,rq3_analysis_version=NA_character_,source_md5=unname(tools::md5sum(path))))
-message("Fig.4 conditional reliability and controls written")
+message(if (ms_plot_prep_only()) "Fig.4 conditional reliability and controls prepared in memory" else
+  "Fig.4 conditional reliability and controls written")

@@ -96,7 +96,7 @@ rq1_fit_inference_groups <- function(pairs, keys, B, seed_base, workers) {
     exports = c(
       "rq1_fit_inference_group_task", "rq1_inference_fit", "rq1_inference_stats",
       "rq1_inference_solve", "rq1_inference_solve_draws", "rq1_inference_quadnorm",
-      "rq1_distortion_components"
+      "rq1_distortion_components", "rq1_association_signal"
     )
   )
   message("RQ1 inference: completed ", length(results), " tasks")
@@ -310,6 +310,10 @@ rq1_run_inference <- function() {
     ),
     model = "participant fixed effects; native outcome linear projection; paired site-stratified participant bootstrap",
     inference_deviation = "reference-bootstrap uncertainty norm: absolute/SE for linear; Mahalanobis norm for circular sin/cos",
+    association_signal = paste("Same matched rows and existing FE fits: u = participant-demeaned X beta;",
+      "signal_difference_outcome_sd = RMS(u_candidate-u_reference) / RMS(demeaned outcome);",
+      "signal_*_r2 = sum(u^2) / sum(demeaned outcome^2); native-unit RMS and signal correlation retained;",
+      "descriptive in-sample preservation, not held-out prediction; no additional fitting or testing"),
     analysis_scope = "three human-state domains across eight single-axis frozen RQ1 anchor contrasts; duration and multi-axis combinations excluded",
     exposure_input = "frozen RQ1 participant-day pair values (state_a candidate; state_b eye/MEDI/10-s reference)",
     scale = "reference SD on matched repeated-measures support, fixed across paired bootstrap draws; circular sin/cos unscaled",

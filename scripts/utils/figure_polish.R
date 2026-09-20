@@ -159,75 +159,6 @@ ms_polish_fig1 <- function(plot, env, width, height) {
   list(plot = final, width = 7.40, height = 5.65)
 }
 
-ms_polish_fig2 <- function(plot, env, width, height) {
-  # Fig. 2 is the current layout reference. Preserve its composition and only
-  # normalize the export box so it remains the visual anchor for the other RQs.
-  list(plot = plot, width = 8.20, height = 4.85)
-}
-
-ms_polish_fig3 <- function(plot, env, width, height) {
-  p3a <- ms_polish_env_get(env, "p3a")
-  p3b_po <- ms_polish_env_get(env, "p3b_po")
-  p3b_ot <- ms_polish_env_get(env, "p3b_ot")
-  p3b_pt <- ms_polish_env_get(env, "p3b_pt")
-  p3c <- ms_polish_env_get(env, "p3c")
-  metric_legend <- ms_polish_env_get(
-    env, "metric_legend_main", ms_polish_env_get(env, "metric_legend")
-  )
-  if (any(vapply(list(p3a, p3b_po, p3b_ot, p3b_pt, p3c, metric_legend), is.null, logical(1)))) {
-    return(list(plot = plot, width = width, height = height))
-  }
-
-  a_info <- ms_polish_take_labels(p3a)
-  p3a_body <- ms_polish_ggplot(
-    a_info$plot, margin = ggplot2::margin(1, 2.5, 1, 2.5)
-  )
-  p3a_panel <- ms_polish_panel_frame(
-    p3a_body, a_info$title, a_info$subtitle,
-    body_height = .870
-  )
-
-  p3b_po <- ms_polish_ggplot(p3b_po, title_size = 5.10,
-                             margin = ggplot2::margin(0, 2.5, 0, 2.5))
-  p3b_ot <- ms_polish_ggplot(p3b_ot, title_size = 5.10,
-                             margin = ggplot2::margin(0, 2.5, 0, 2.5))
-  p3b_body <- cowplot::plot_grid(
-    p3b_po, p3b_ot, p3b_pt, ncol = 1,
-    rel_heights = c(.88, 1.18, 1.42),
-    align = "v", axis = "lr", greedy = TRUE
-  )
-  p3b_panel <- ms_polish_panel_frame(
-    p3b_body,
-    "b  Ordered-transition backbone with class overlays",
-    "overall = median + IQR; coloured marks = class medians + IQR; faint points = metric-level Q",
-    body_height = .865
-  )
-
-  c_info <- ms_polish_take_labels(p3c)
-  p3c_body <- ms_polish_ggplot(
-    c_info$plot, title_size = MS_PANEL_TITLE_SIZE,
-    margin = ggplot2::margin(1, 2.5, 1, 2.5)
-  )
-  p3c_panel <- ms_polish_panel_frame(
-    p3c_body, c_info$title, c_info$subtitle,
-    body_height = .865
-  )
-
-  bottom <- cowplot::plot_grid(
-    p3b_panel, p3c_panel, ncol = 2, rel_widths = c(.70, .30),
-    align = "hv", axis = "tblr", greedy = TRUE
-  )
-  body <- cowplot::plot_grid(
-    p3a_panel, bottom, ncol = 1, rel_heights = c(.98, 1.02),
-    align = "v", axis = "lr", greedy = TRUE
-  )
-  final <- cowplot::plot_grid(
-    metric_legend, body, ncol = 1, rel_heights = c(.045, 1),
-    align = "v", axis = "l", greedy = TRUE
-  )
-  list(plot = final, width = 7.20, height = 6.80)
-}
-
 ms_polish_fig4 <- function(plot, env, width, height) {
   p4a <- ms_polish_env_get(env, "p4a")
   p4b <- ms_polish_env_get(env, "p4b")
@@ -298,11 +229,11 @@ ms_polish_fig5 <- function(plot, env, width, height) {
   list(plot = final, width = 7.40, height = 6.10)
 }
 
+# Legacy identities come from figure_registry.R at the export boundary.
+# Current Figs. 2/3/4 and supplementary outputs keep their entrypoint layouts.
 ms_polish_main_figure <- function(plot, path, env, width, height) {
   name <- basename(path)
   if (identical(name, "Fig1_RQ1.png")) return(ms_polish_fig1(plot, env, width, height))
-  if (identical(name, "Fig2_RQ2.png")) return(ms_polish_fig2(plot, env, width, height))
-  if (identical(name, "Fig3_RQ2.png")) return(ms_polish_fig3(plot, env, width, height))
   if (identical(name, "Fig4_RQ3.png")) return(ms_polish_fig4(plot, env, width, height))
   if (identical(name, "Fig5_RQ3.png")) return(ms_polish_fig5(plot, env, width, height))
   list(plot = plot, width = width, height = height)

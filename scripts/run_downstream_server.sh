@@ -51,7 +51,7 @@ LOG="results/logs/downstream_v5.log"
         !identical(as.character(manifest$analysis_design_id[[1]]), ms_analysis_design_id())) {
       stop("RQ1 pairwise artifact does not match the frozen analysis design")
     }
-    paths <- file.path(manifest$part_dir, manifest$parts)
+    paths <- rq1_pairwise_part_paths(manifest)
     if (!length(paths) || any(!file.exists(paths))) stop("One or more canonical RQ1 parts are missing")
     s <- readr::read_csv("results/rq1/rq1_pairwise_summary.csv", show_col_types = FALSE, progress = FALSE)
     rq1_assert_summary_version(manifest, s)

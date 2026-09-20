@@ -10,9 +10,25 @@ rq1_pairwise_is_partitioned <- function(x) {
     length(x$parts) > 0L && !is.null(x$part_dir) && nzchar(as.character(x$part_dir[[1]]))
 }
 
-rq1_pairwise_part_paths <- function(x) {
+rq1_pairwise_part_dir <- function(x, repo_root = ".") {
+  if (!rq1_pairwise_is_partitioned(x)) return(NULL)
+  stored <- as.character(x$part_dir[[1]])
+  absolute <- grepl("^(/|[A-Za-z]:[/\\\\]|\\\\\\\\)", stored)
+  original <- if (absolute || identical(repo_root, ".")) stored else file.path(repo_root, stored)
+  # An existing original directory remains authoritative, even if incomplete.
+  # Never fill its missing parts from a second directory or another version.
+  if (dir.exists(original)) return(original)
+  version <- x$rq1_analysis_version
+  if (length(version) != 1L || is.na(version) || !nzchar(version) ||
+      grepl("[/\\\\]", version) || version %in% c(".", "..")) {
+    stop("Cannot relocate RQ1 parts without one valid analysis version")
+  }
+  file.path(repo_root, "results", "rq1", "pairwise_parts", version)
+}
+
+rq1_pairwise_part_paths <- function(x, repo_root = ".") {
   if (!rq1_pairwise_is_partitioned(x)) return(character())
-  file.path(x$part_dir, x$parts)
+  file.path(rq1_pairwise_part_dir(x, repo_root), x$parts)
 }
 
 rq1_pairwise_version <- function(x) {

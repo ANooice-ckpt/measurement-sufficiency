@@ -27,10 +27,13 @@ suppressPackageStartupMessages({
 })
 
 source("scripts/utils/figure_style.R")
+source("scripts/utils/plot_contracts.R")
 source("scripts/utils/melidos_io.R")
 
 OUT_DIR <- file.path("results", "figures")
-dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
+if (!ms_plot_prep_only()) {
+  dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
+}
 
 # =============================================================================
 # Fig. S — MeLiDos field-study sites and sample distribution
@@ -111,9 +114,12 @@ MAP_URL <- paste0(
   "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/",
   "master/geojson/ne_50m_admin_0_countries.geojson"
 )
-dir.create(dirname(MAP_FILE), recursive = TRUE, showWarnings = FALSE)
+if (!ms_plot_prep_only()) {
+  dir.create(dirname(MAP_FILE), recursive = TRUE, showWarnings = FALSE)
+}
 
 if (!file.exists(MAP_FILE) || file.info(MAP_FILE)$size < 10000) {
+  if (ms_plot_prep_only()) stop("Prep-only requires the existing Natural Earth basemap: ", MAP_FILE)
   message("Natural Earth basemap not found locally; downloading once to ", MAP_FILE)
   ok <- tryCatch({
     utils::download.file(MAP_URL, MAP_FILE, mode = "wb", quiet = FALSE, method = "libcurl")
@@ -204,8 +210,11 @@ p_sites <- ggplot() +
   guides(size = guide_legend(title.position = "left", override.aes = list(fill = MS_PRIMARY, colour = "white")))
 
 png_path <- file.path(OUT_DIR, "FigS_MeLiDos_sites.png")
-ggsave(png_path, p_sites, width = 10.4, height = 5.9, dpi = MS_RASTER_DPI, bg = "white")
-message("Supplementary map written:\n  ", png_path)
+if (!ms_plot_prep_only()) {
+  ggsave(png_path, p_sites, width = 10.4, height = 5.9, dpi = MS_RASTER_DPI, bg = "white")
+}
+message(if (ms_plot_prep_only()) "Supplementary map prepared in memory" else
+  paste0("Supplementary map written:\n  ", png_path))
 
 # =============================================================================
 # Fig. S — Measurement configuration space
@@ -403,8 +412,11 @@ p_config <- ggplot() +
   )
 
 config_path <- file.path(OUT_DIR, "FigS_measurement_configuration.png")
-ggsave(config_path, p_config, width = 10.4, height = 6.3, dpi = MS_RASTER_DPI, bg = "white")
-message("Measurement configuration schematic written:\n  ", config_path)
+if (!ms_plot_prep_only()) {
+  ggsave(config_path, p_config, width = 10.4, height = 6.3, dpi = MS_RASTER_DPI, bg = "white")
+}
+message(if (ms_plot_prep_only()) "Measurement configuration schematic prepared in memory" else
+  paste0("Measurement configuration schematic written:\n  ", config_path))
 
 # =============================================================================
 # Fig. S — From representation change to observed sufficiency
@@ -584,5 +596,8 @@ p_concept <- ggplot() +
   )
 
 concept_path <- file.path(OUT_DIR, "FigS_representation_to_sufficiency.png")
-ggsave(concept_path, p_concept, width = 10.4, height = 5.8, dpi = MS_RASTER_DPI, bg = "white")
-message("Representation-to-sufficiency schematic written:\n  ", concept_path)
+if (!ms_plot_prep_only()) {
+  ggsave(concept_path, p_concept, width = 10.4, height = 5.8, dpi = MS_RASTER_DPI, bg = "white")
+}
+message(if (ms_plot_prep_only()) "Representation-to-sufficiency schematic prepared in memory" else
+  paste0("Representation-to-sufficiency schematic written:\n  ", concept_path))

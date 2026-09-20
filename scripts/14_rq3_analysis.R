@@ -303,7 +303,6 @@ joint_pair_summary <- joint_pair_summary |>
          rq3_analysis_version = RQ3_VERSION)
 readr::write_csv(joint_pair_summary, file.path(OUT, "rq3_joint_pair_summary.csv"), na = "")
 saveRDS(joint_pair_summary, file.path(OUT, "rq3_joint_stability.rds"), compress = "xz")
-
 source("scripts/utils/rq3_joint_projection.R", local = TRUE)
 
 boundary_audit <- single |>
@@ -335,6 +334,8 @@ writeLines(c(
   "Joint temporal-duration pairs are actual nested-window comparisons; equal duration implies the same observed dates.",
   "Joint A/B and R_obs are aggregated by generic (resolution, duration) configuration type within fixed support x placement x optical facets.",
   "Pareto dominance treats coarser temporal resolution and shorter monitoring duration as lower burden inside the sufficient region.",
+  "Task bundles intersect the sufficient sets of every required target at a common tolerance, retaining target-specific maximal supports.",
+  "The joint-stability RDS retains its pair-summary data frame and adds task inventory, availability, entry tolerance and full sufficient/Pareto intervals as task_projection metadata.",
   "Composition failure: max(temporal-only R, duration-only R) <= epsilon < joint R on the same starting state and scale.",
   "Both single-axis refinements must be observed. Counts retain pair-specific maximal supports; failure is not proof of non-additivity.",
   paste0("Joint duration-part workers: ", RQ3_PART_WORKERS)

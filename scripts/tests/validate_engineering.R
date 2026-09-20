@@ -213,7 +213,10 @@ ff <- rq1_inference_fit(scaled, B = 40L)
 stopifnot(
   abs(ff$summary$candidate_beta * 2 - ff$summary$reference_beta) < 1e-10,
   is.finite(ff$task_summary$inference_deviation),
-  ff$task_summary$inference_deviation > 0
+  ff$task_summary$inference_deviation > 0,
+  ff$task_summary$signal_difference_outcome_sd < 1e-12,
+  abs(ff$task_summary$signal_correlation - 1) < 1e-12,
+  abs(ff$task_summary$signal_reference_r2 - ff$task_summary$signal_candidate_r2) < 1e-12
 )
 
 # Row order and constant participant offsets cannot change paired FE estimates.
@@ -246,6 +249,42 @@ oscillating$candidate_value <- g$reference_value + rep(c(-2,-1,0,1,2),12)
 wf <- rq1_inference_fit(oscillating,B=0L)
 stopifnot(wf$task_summary$distortion_between_ms<1e-20,
           abs(wf$task_summary$distortion_within_fraction-1)<1e-12)
+
+# Signal summaries agree with independent dummy-variable fits, not coefficient
+# equality. They exclude participant intercepts and use identical matched rows.
+signal_fixture <- oscillating[-1L, ]
+signal_fit <- rq1_inference_fit(signal_fixture, B = 0L)$task_summary
+ref_model <- lm(outcome_value ~ reference_value + factor(Id), data = signal_fixture)
+candidate_model <- lm(outcome_value ~ candidate_value + factor(Id), data = signal_fixture)
+ur <- fitted(ref_model) - ave(fitted(ref_model), signal_fixture$Id)
+uc <- fitted(candidate_model) - ave(fitted(candidate_model), signal_fixture$Id)
+yw <- signal_fixture$outcome_value - ave(signal_fixture$outcome_value, signal_fixture$Id)
+stopifnot(
+  abs(signal_fit$signal_difference_rms - sqrt(mean((uc - ur)^2))) < 1e-10,
+  abs(signal_fit$signal_difference_outcome_sd - sqrt(sum((uc - ur)^2) / sum(yw^2))) < 1e-10,
+  abs(signal_fit$signal_reference_r2 - sum(ur^2) / sum(yw^2)) < 1e-10,
+  abs(signal_fit$signal_difference_outcome_sd^2 -
+        (signal_fit$signal_reference_r2 + signal_fit$signal_candidate_r2 -
+         2 * signal_fit$signal_correlation *
+         sqrt(signal_fit$signal_reference_r2 * signal_fit$signal_candidate_r2))) < 1e-10,
+  signal_fit$signal_difference_outcome_sd > 0,
+  sf$task_summary$signal_difference_outcome_sd < 1e-10
+)
+rescaled_outcome <- signal_fixture
+rescaled_outcome$outcome_value <- -3 * rescaled_outcome$outcome_value
+rs <- rq1_inference_fit(rescaled_outcome, B = 0L)$task_summary
+stopifnot(abs(rs$signal_difference_outcome_sd - signal_fit$signal_difference_outcome_sd) < 1e-10,
+          abs(rs$signal_difference_rms - 3 * signal_fit$signal_difference_rms) < 1e-10)
+# A zero reference association is not perfect preservation or a division by zero.
+zero_signal <- g
+zero_signal$outcome_value <- residuals(lm(outcome_value ~ reference_value + factor(Id), data = g))
+zero_signal$candidate_value <- zero_signal$outcome_value
+zs <- rq1_inference_fit(zero_signal, B = 0L)$task_summary
+stopifnot(zs$signal_reference_r2 < 1e-20,
+          abs(zs$signal_candidate_r2 - 1) < 1e-10,
+          abs(zs$signal_difference_outcome_sd - 1) < 1e-10,
+          is.na(zs$signal_correlation),
+          is.na(rq1_inference_fit(flat, B = 0L)$task_summary$signal_difference_outcome_sd))
 # Conditional explanation recovers an imposed component slope after nuisance
 # adjustment; metrics/tasks are not resampled for confidence intervals.
 link_fixture <- tibble(rq1_distortion_A=seq(.01,1,length.out=60),
@@ -277,6 +316,32 @@ stopifnot(
   cf$task_summary$distortion_total_ms < 1e-20,
   abs(rq1_inference_quadnorm(c(1, 2), diag(2)) - sqrt(5)) < 1e-12
 )
+rotated <- circ
+rotated$candidate_value <- (rotated$reference_value + 7200) %% 86400
+rf <- rq1_inference_fit(rotated, B = 40L)
+stopifnot(rf$task_summary$inference_deviation > 0,
+          rf$task_summary$signal_difference_outcome_sd < 1e-10,
+          abs(rf$task_summary$signal_correlation - 1) < 1e-10)
+
+# Compile only the new panel on synthetic summaries in memory. Do not source a
+# plot entrypoint, access frozen results, render an image or write a figure.
+local({
+  source("scripts/utils/figure_style.R", local = TRUE)
+  contrast_plot <- tibble(
+    inference_deviation = c(0, 1, 3), signal_difference_outcome_sd = c(0, .2, 0),
+    signal_reference_r2 = c(0, .3, 1), metric_class = "level",
+    dimension = c("placement", "optical", "temporal"),
+    outcome_domain = c("Sleep", "Alertness", "Affect")
+  )
+  deviation_limits <- c(0, 4); deviation_breaks <- c(0, 1, 3)
+  panel <- Filter(function(e) is.call(e) && identical(e[[1]], as.name("<-")) &&
+                    identical(e[[2]], as.name("p2d")), parse("scripts/11b_plot_fig2.R"))
+  stopifnot(length(panel) == 1L)
+  eval(panel[[1]])
+  plotted <- ggplot_build(p2d)$data[[2]]
+  stopifnot(nrow(plotted) == 3L, all(is.finite(plotted$x)), all(is.finite(plotted$y)),
+            all(is.finite(plotted$size)), all(plotted$size > 0))
+})
 
 # Validate version guards and all advertised RDS compression modes.
 ms_assert_version(list(v = "current"), "v", "current")
@@ -301,5 +366,34 @@ stopifnot(identical(scaled_helper$te$x, c(8, 18)), helpers$performance(c(1, 2), 
 
 # Figure identity/routing is tested once in its package-free contract test.
 source("scripts/tests/validate_figure_registry.R")
+
+# Fig.6's direct grob construction must not open Rplots.pdf in prep-only mode,
+# and must restore the caller's graphics device even when plot building fails.
+local({
+  source("scripts/utils/fig6_redesign.R", local = TRUE)
+  assignment <- Filter(function(x) is.call(x) && identical(x[[1]], as.name("<-")) &&
+                         identical(x[[2]], as.name("class_grob")),
+                       as.list(body(ms_fig6_redesign))[-1L])
+  stopifnot(length(assignment) == 1L)
+  fixture <- tempfile("prep_grob_"); dir.create(fixture)
+  stopifnot(identical(dirname(normalizePath(fixture, winslash = "/")), normalizePath(tempdir(), winslash = "/")))
+  oldwd <- getwd(); setwd(fixture)
+  on.exit({setwd(oldwd); unlink(fixture, recursive = TRUE)}, add = TRUE)
+  e <- new.env(parent = environment()); e$prep_only <- TRUE
+  e$c <- ggplot(data.frame(x = 1:3, y = 1:3), aes(x, y)) + geom_point()
+  before <- dev.list()
+  eval(assignment[[1]], e)
+  stopifnot(inherits(e$class_grob, "gtable"), identical(dev.list(), before),
+            !length(list.files(all.files = TRUE, no.. = TRUE)))
+  pdf(NULL); existing <- dev.cur()
+  on.exit(dev.off(existing), add = TRUE)
+  before <- dev.list()
+  eval(assignment[[1]], e)
+  stopifnot(identical(dev.cur(), existing), identical(dev.list(), before))
+  e$c <- ggplot(data.frame(x = 1), aes(missing_column, x)) + geom_point()
+  expect_error(eval(assignment[[1]], e))
+  stopifnot(identical(dev.cur(), existing), identical(dev.list(), before),
+            !length(list.files(all.files = TRUE, no.. = TRUE)))
+})
 
 cat("PASS: all R sources parse; three-domain frozen-pairwise outcome/support/FE/bootstrap/circular/version/compression checks\n")

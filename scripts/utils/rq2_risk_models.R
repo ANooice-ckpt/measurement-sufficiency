@@ -45,7 +45,10 @@ rq2_risk_predict <- function(design, targets, edf=10, return_train=FALSE) {
 # Euclidean projection onto nonincreasing exceedance probabilities. The common
 # tolerance grid defines a coherent CDF, without fitting another model.
 rq2_risk_monotone <- function(p) {
-  p[]<-pmax(0,pmin(1,as.vector(p))); n<-ncol(p); out<-p
+  if (!is.matrix(p) || !is.numeric(p) || any(!is.finite(p))) {
+    stop("Probability projection requires a finite numeric matrix")
+  }
+  n<-ncol(p); out<-p
   for(i in seq_len(n)) {
     outer<-rep(Inf,nrow(p))
     for(a in seq_len(i)) {
@@ -55,6 +58,10 @@ rq2_risk_monotone <- function(p) {
     }
     out[,i]<-outer
   }
+  # First project the original predictions onto the monotone cone. Clipping
+  # those fitted block means then gives the projection with common [0,1] bounds.
+  # Clipping inputs first changes block means and is not the bounded projection.
+  out[]<-pmax(0,pmin(1,as.vector(out)))
   out
 }
 

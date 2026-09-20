@@ -12,23 +12,24 @@ ms_all_temporal_s <- function() sort(unique(c(ms_primary_temporal_s(), ms_reserv
 
 ms_primary_duration_days <- function() 1:6
 
-# Artifact/cache identifiers need to change whenever the ordered state vectors
-# change, but embedding the full vectors repeatedly in nested RQ version strings
-# creates unnecessarily long paths (especially for Windows model shards). This
-# deterministic weighted signature is compact while remaining transparent and
-# collision-resistant enough for the small frozen integer lattices used here.
-ms_weighted_signature <- function(x) {
+# Keep the published design's existing cache identity as an exact compatibility
+# alias, NOT a weighted checksum. Every other vector uses a lossless encoding in
+# a disjoint namespace. These historical vectors are aliases, not design inputs.
+ms_design_vector_id <- function(x, legacy_values, legacy_id) {
+  if (!is.numeric(x) || anyNA(x) || any(!is.finite(x)) ||
+      any(x <= 0 | x > .Machine$integer.max | x != floor(x)) ||
+      any(diff(x) <= 0)) stop("Design levels must be increasing positive integers")
   x <- as.integer(x)
-  if (!length(x)) return(0L)
-  as.integer(sum(x * seq_along(x)))
+  if (identical(x, as.integer(legacy_values))) return(legacy_id)
+  paste0("v2n", length(x), "x", paste(x, collapse = "_"))
 }
 
 ms_analysis_design_id <- function() {
   temporal <- ms_primary_temporal_s()
   duration <- ms_primary_duration_days()
   paste0(
-    "t", length(temporal), "s", ms_weighted_signature(temporal),
-    "__d", length(duration), "s", ms_weighted_signature(duration)
+    "t", ms_design_vector_id(temporal, c(10L, 20L, 30L, 40L, 60L, 120L), "6s1320"),
+    "__d", ms_design_vector_id(duration, 1:6, "6s91")
   )
 }
 
@@ -36,7 +37,7 @@ ms_core_design_id <- function() {
   reserve <- ms_reserve_temporal_s()
   paste0(
     ms_analysis_design_id(),
-    "__r", length(reserve), "s", ms_weighted_signature(reserve)
+    "__r", ms_design_vector_id(reserve, 300L, "1s300")
   )
 }
 

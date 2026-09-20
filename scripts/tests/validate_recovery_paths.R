@@ -37,5 +37,39 @@ local({
   original <- recovery_resolve_parts(manifest, root)
   stopifnot(identical(original$upstream, manifest), length(original$problems) == 0L,
     identical(tools::md5sum(path), before))
+
+  # A wholly absent copy must report the requested repository root, never fall
+  # back a second time to the working repository (which can contain old parts).
+  absent_root <- file.path(root, "not_copied")
+  absent <- manifest; absent$part_dir <- file.path(root, "missing_origin")
+  resolved <- recovery_resolve_parts(absent, absent_root)
+  stopifnot(identical(resolved$paths,
+    file.path(absent_root,"results","rq1","pairwise_parts",version,manifest$parts)),
+    length(resolved$problems)==4L)
 })
 cat("PASS: original-path precedence, same-version fallback, all parts/markers, immutable manifest.\n")
+
+# Read-only validation of an explicitly selected export must not refresh stale
+# dayparts. Inject every upstream dependency; no weather/diary data are accessed.
+local({
+  root<-tempfile("daypart_validation_");dir.create(root)
+  on.exit(unlink(root,recursive=TRUE))
+  path<-file.path(root,"dayparts.rds")
+  e<-new.env(parent=globalenv())
+  e$check<-recovery_ensure_dayparts;environment(e$check)<-e
+  e$recovery_daypart_provenance<-function(...)list(version="current")
+  e$recovery_hash<-function(...)"fixture_hash"
+  e$recovery_temporal_context<-function(...)invisible(TRUE)
+  e$recovery_read_csv<-function(...)stop("BUILD_FORBIDDEN_IN_UNIT_TEST")
+  check<-function()e$check(path,"unused","unused",character(),"core","rq1",allow_build=FALSE)
+  err<-tryCatch(check(),error=identity)
+  stopifnot(inherits(err,"error"),grepl("Missing or stale",conditionMessage(err)),!file.exists(path))
+  obj<-list(provenance=list(version="current"),data_md5="fixture_hash",data="fixture")
+  saveRDS(obj,path);before<-tools::md5sum(path)
+  stopifnot(isTRUE(check()$reused),identical(tools::md5sum(path),before))
+  obj$provenance$version<-"old";saveRDS(obj,path);before<-tools::md5sum(path)
+  err<-tryCatch(check(),error=identity)
+  stopifnot(inherits(err,"error"),grepl("Missing or stale",conditionMessage(err)),
+    identical(tools::md5sum(path),before))
+})
+cat("PASS: explicit-export daypart validation cannot build or overwrite inputs.\n")

@@ -240,7 +240,8 @@ recovery_daypart_provenance <- function(weather_path, unit_path, diary_paths, co
     source_rules = "minute_left_interval_60s; diary_half_open_overlap_union; reporting domains separate; conflicts missing per domain")
 }
 
-recovery_ensure_dayparts <- function(path, weather_path, unit_path, diary_paths, core_version, rq1_version) {
+recovery_ensure_dayparts <- function(path, weather_path, unit_path, diary_paths, core_version, rq1_version,
+                                    allow_build = TRUE) {
   provenance <- recovery_daypart_provenance(weather_path, unit_path, diary_paths, core_version, rq1_version)
   old <- if (file.exists(path)) tryCatch(readRDS(path), error = function(e) NULL) else NULL
   if (!is.null(old) && identical(old$provenance, provenance) && identical(old$data_md5, recovery_hash(old$data))) {
@@ -248,6 +249,7 @@ recovery_ensure_dayparts <- function(path, weather_path, unit_path, diary_paths,
     message("Daypart context: reused ", path)
     return(list(object = old, reused = TRUE))
   }
+  if (!allow_build) stop("Missing or stale daypart context; rebuild inputs before selecting a frozen export")
   message("Daypart context: building rich temporal representation from current weather/diary inputs")
   unit <- recovery_read_csv(unit_path)
   recovery_require(unit, c("site", "Id", "Date", "timezone", "analysis_unit_type"), "Core context calendar")
@@ -301,8 +303,10 @@ recovery_read_csv <- function(path) {
   readr::read_csv(path, col_types = do.call(readr::cols, c(types, list(.default = readr::col_guess()))), show_col_types = FALSE, progress = FALSE)
 }
 recovery_resolve_parts <- function(upstream, repo_root = ".") {
-  if (!dir.exists(upstream$part_dir)) upstream$part_dir <- file.path(repo_root, "results", "rq1", "pairwise_parts", rq1_pairwise_version(upstream))
-  parts <- rq1_pairwise_part_paths(upstream); problems <- character()
+  upstream$part_dir <- rq1_pairwise_part_dir(upstream, repo_root)
+  # Already resolved against repo_root; do not resolve a missing fallback again
+  # against the process working directory when reporting incomplete copies.
+  parts <- file.path(upstream$part_dir, upstream$parts); problems <- character()
   for (p in parts) {
     if (!file.exists(p)) problems <- c(problems, paste0("Missing anchor part: ", p))
     if (!file.exists(paste0(p, ".ok"))) problems <- c(problems, paste0("Missing completion marker: ", p, ".ok"))
@@ -310,7 +314,7 @@ recovery_resolve_parts <- function(upstream, repo_root = ".") {
   list(upstream = upstream, paths = parts, problems = problems)
 }
 
-recovery_inputs <- function() {
+recovery_inputs <- function(allow_build = TRUE) {
   paths <- c(pairwise = "results/rq1/rq1_pairwise_change_long.rds", summary = "results/rq1/rq1_pairwise_summary.csv",
     scales = "results/diagnostics/rq1_standardizer_audit.csv", context = "results/diagnostics/rq2_layered_context_day_features.csv")
   core_root <- Sys.getenv("RQ2_RECOVERY_CORE_ROOT", "results/core")
@@ -347,7 +351,8 @@ recovery_inputs <- function() {
   sites <- sort(unique(context$site)); diary_paths <- setNames(vapply(sites, raw_data_path, character(1), modality = "lightexposurediary"), sites)
   if (any(!file.exists(diary_paths))) problems <- c(problems, paste0("Missing daypart diary: ", diary_paths[!file.exists(diary_paths)]))
   if (!length(problems)) {
-    cached <- recovery_ensure_dayparts(extra_paths[["temporal_context"]], weather_path, extra_paths[["unit_context"]], diary_paths, core, version)
+    cached <- recovery_ensure_dayparts(extra_paths[["temporal_context"]], weather_path, extra_paths[["unit_context"]], diary_paths, core, version,
+                                      allow_build = allow_build)
     temporal_reused <- cached$reused; temporal <- recovery_temporal_context(cached$object, core, version); temporal_sources <- cached$object$sources
   }
   list(problems = problems, paths = c(paths, extra_paths, parts), upstream = upstream, version = version, core = core,

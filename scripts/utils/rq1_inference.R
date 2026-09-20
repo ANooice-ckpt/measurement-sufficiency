@@ -8,7 +8,7 @@ if (!exists("rq1_pairwise_load", mode = "function")) {
 }
 
 rq1_inference_version <- function(rq1_version) {
-  paste0("rq1_inference_v5_composition_anchor8__", rq1_version)
+  paste0("rq1_inference_v6_signal_anchor8__", rq1_version)
 }
 
 rq1_inference_anchor_map <- function() {
@@ -362,6 +362,32 @@ rq1_inference_quadnorm <- function(v, covariance) {
   sqrt(max(0, q))
 }
 
+# Compare the exposure-associated fitted signals, excluding participant intercepts.
+# These are descriptive SAME-SAMPLE projections from the existing paired fits,
+# invariant to invertible exposure-coordinate changes, not held-out prediction.
+# The common within-outcome RMS keeps weak/zero reference signals well defined.
+rq1_association_signal <- function(xr, xc, y, participant, br, bc) {
+  demean <- function(x) x - ave(x, participant)
+  ur <- demean(as.numeric(xr %*% br))
+  uc <- demean(as.numeric(xc %*% bc))
+  yy <- demean(y)
+  ss_y <- sum(yy^2)
+  ss_r <- sum(ur^2)
+  ss_c <- sum(uc^2)
+  ss_difference <- sum((uc - ur)^2)
+  tibble::tibble(
+    signal_reference_rms = sqrt(mean(ur^2)),
+    signal_candidate_rms = sqrt(mean(uc^2)),
+    signal_difference_rms = sqrt(mean((uc - ur)^2)),
+    signal_difference_outcome_sd = sqrt(ss_difference / ss_y),
+    signal_reference_r2 = ss_r / ss_y,
+    signal_candidate_r2 = ss_c / ss_y,
+    signal_correlation = if (min(ss_r, ss_c) > .Machine$double.eps * ss_y) {
+      max(-1, min(1, sum(ur * uc) / sqrt(ss_r * ss_c)))
+    } else NA_real_
+  )
+}
+
 # Additive squared-error decomposition in the actual exposure design space.
 # The stable term includes a common offset; it is not a between-person variance.
 rq1_distortion_components <- function(xr, xc, participant, site) {
@@ -514,6 +540,9 @@ rq1_inference_fit <- function(g, B = 1000L, seed = 20260911L) {
   components <- tibble::tibble(distortion_total_ms=NA_real_, distortion_between_ms=NA_real_,
     distortion_within_ms=NA_real_, D_T=NA_real_, f_W=NA_real_,
     distortion_within_rms=NA_real_, distortion_within_fraction=NA_real_)
+  signal <- tibble::tibble(signal_reference_rms=NA_real_, signal_candidate_rms=NA_real_,
+    signal_difference_rms=NA_real_, signal_difference_outcome_sd=NA_real_,
+    signal_reference_r2=NA_real_, signal_candidate_r2=NA_real_, signal_correlation=NA_real_)
   component_blocks <- tibble::tibble()
   finish <- function(summary, draws = tibble::tibble(),
                      reference_strength = NA_real_, candidate_strength = NA_real_,
@@ -534,7 +563,7 @@ rq1_inference_fit <- function(g, B = 1000L, seed = 20260911L) {
       bootstrap_requested = B, bootstrap_valid_joint = bootstrap_valid_joint,
       status = paste(sort(unique(summary$status)), collapse = ";")
     )
-    list(summary = summary, task_summary = dplyr::bind_cols(task, components),
+    list(summary = summary, task_summary = dplyr::bind_cols(task, components, signal),
          support = support, bootstrap = draws, component_blocks = component_blocks)
   }
   if (all(!is.na(g$pair_reason))) {
@@ -590,6 +619,7 @@ rq1_inference_fit <- function(g, B = 1000L, seed = 20260911L) {
   if (any(!is.finite(c(br, bc)))) {
     base$status <- "singular_within_participant_exposure"; return(finish(base))
   }
+  signal <- rq1_association_signal(xr, xc, y, good$participant, br, bc)
   base$reference_beta <- br
   base$candidate_beta <- bc
   base$beta_difference <- bc - br

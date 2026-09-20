@@ -19,23 +19,15 @@ if (!exists("ms_fig2_refine_main", mode = "function") &&
     file.exists("scripts/utils/fig2_refinement.R")) {
   source("scripts/utils/fig2_refinement.R")
 }
-if (!exists("ms_fig3_refine_main", mode = "function") &&
-    file.exists("scripts/utils/fig3_refinement.R")) {
-  source("scripts/utils/fig3_refinement.R")
-}
-if (!exists("ms_fig3_atlas_refine_main", mode = "function") &&
-    file.exists("scripts/utils/fig3_atlas_refinement.R")) {
-  source("scripts/utils/fig3_atlas_refinement.R")
-}
 
 if (!exists("ms_polish_main_figure", mode = "function") &&
     file.exists("scripts/utils/figure_polish.R")) {
   source("scripts/utils/figure_polish.R")
 }
 
-# Explicit opt-in remains useful for diagnostics that need to construct plot
-# objects without writing files. There is no longer a supplementary-script
-# auto-detection path.
+# MS_PLOT_PREP_ONLY=1 constructs plots in memory without exporting images,
+# display tables or manifests, creating output directories, or downloading
+# appendix inputs. Entry scripts guard direct writers with the same predicate.
 ms_plot_prep_only <- function() {
   identical(Sys.getenv("MS_PLOT_PREP_ONLY", unset = "0"), "1")
 }
@@ -152,23 +144,6 @@ ms_plot_write_manifest <- function(path, figure_rows) {
   invisible(manifest_path)
 }
 
-ms_plot_apply_current_crossrefs <- function(current_id, caller_env) {
-  # The pre-insertion RQ3 Fig. 4 code points its tolerance guides to the then-current
-  # Fig. 5. After insertion of the RQ1 Fig. 2 that destination is Fig. 6. Correct
-  # only the visible cross-reference; data and geometry are untouched.
-  if (identical(current_id, "Fig5_RQ3") &&
-      is.environment(caller_env) && exists("p4c", envir = caller_env, inherits = FALSE)) {
-    p4c <- get("p4c", envir = caller_env, inherits = FALSE)
-    if (inherits(p4c, "ggplot")) {
-      p4c <- p4c + ggplot2::labs(
-        subtitle = "open points = ε50; faint vertical guides = Fig. 6 tolerance slices"
-      )
-      assign("p4c", p4c, envir = caller_env)
-    }
-  }
-  invisible(NULL)
-}
-
 ms_plot_save <- function(plot, path, width, height,
                          dpi = if (exists("MS_RASTER_DPI", inherits = TRUE)) MS_RASTER_DPI else 600) {
   if (ms_plot_prep_only()) return(invisible(path))
@@ -201,45 +176,9 @@ ms_plot_save <- function(plot, path, width, height,
     }
   }
 
-  # Refinement helpers retain component names from the pre-insertion figure
-  # numbering. Route by legacy identity rather than duplicate a second dispatch
-  # table here.
-  if (identical(legacy_id, "Fig2_RQ2") &&
-      exists("ms_fig2_refine_main", mode = "function")) {
-    refined <- ms_fig2_refine_main(caller_env)
-    if (is.list(refined) && !is.null(refined$plot)) {
-      plot <- refined$plot
-      assign("p2", refined$plot, envir = caller_env)
-      if (!is.null(refined$p2a)) assign("p2a", refined$p2a, envir = caller_env)
-      if (!is.null(refined$p2b)) assign("p2b", refined$p2b, envir = caller_env)
-      if (!is.null(refined$p2c)) assign("p2c", refined$p2c, envir = caller_env)
-      if (!is.null(refined$top_recoverable)) {
-        assign("fig2_top_recoverable", refined$top_recoverable, envir = caller_env)
-      }
-    }
-  }
-
-  if (identical(legacy_id, "Fig3_RQ2") &&
-      (exists("ms_fig3_atlas_refine_main", mode = "function") ||
-       exists("ms_fig3_refine_main", mode = "function"))) {
-    refined <- if (exists("ms_fig3_atlas_refine_main", mode = "function")) {
-      ms_fig3_atlas_refine_main(caller_env)
-    } else {
-      ms_fig3_refine_main(caller_env)
-    }
-    if (is.list(refined) && !is.null(refined$plot)) {
-      plot <- refined$plot
-      assign("p3", refined$plot, envir = caller_env)
-      if (!is.null(refined$p3a)) assign("p3a", refined$p3a, envir = caller_env)
-      if (!is.null(refined$p3b)) assign("p3b", refined$p3b, envir = caller_env)
-      if (!is.null(refined$p3c)) assign("p3c", refined$p3c, envir = caller_env)
-      if (!is.null(refined$width) && is.finite(refined$width[[1]])) width <- as.numeric(refined$width[[1]])
-      if (!is.null(refined$height) && is.finite(refined$height[[1]])) height <- as.numeric(refined$height[[1]])
-    }
-  }
-
-  ms_plot_apply_current_crossrefs(current_id, caller_env)
-
+  # Current Figs. 3/4 are fully composed by their entrypoints; they do not
+  # refine again at export. The polish dispatcher preserves that composition
+  # without replacing shared functions in the caller's R session.
   if (exists("ms_polish_main_figure", mode = "function")) {
     # figure_polish.R intentionally retains legacy component identities. Passing
     # the registry-derived legacy filename preserves the mature layout without

@@ -445,7 +445,7 @@ pairwise_manifest <- list(
   core_artifact_version = CORE_VERSION,
   rq1_analysis_version = RQ1_ANALYSIS_VERSION,
   analysis_design_id = ANALYSIS_DESIGN_ID,
-  part_dir = normalizePath(pairwise_part_dir, winslash = "/", mustWork = TRUE),
+  part_dir = pairwise_part_dir,
   parts = all_part_records$part,
   part_manifest = all_part_records,
   generated_at = format(Sys.time(), tz = "UTC", usetz = TRUE)
@@ -632,7 +632,10 @@ invisible(gc(FALSE))
 
 if (any(summary$A_mean_absolute + NUMERIC_TOL < abs(summary$B_mean_signed))) stop("RQ1 A >= |B| invariant failed")
 readr::write_csv(summary, file.path(OUT, "rq1_pairwise_summary.csv"), na = "")
-readr::write_csv(summary, file.path(OUT, "rq1_summary.csv"), na = "")
+# Optional legacy alias; canonical summaries are always exported.
+if (identical(Sys.getenv("MS_EXPORT_COMPAT_CSV", unset = "0"), "1")) {
+  readr::write_csv(summary, file.path(OUT, "rq1_summary.csv"), na = "")
+}
 readr::write_csv(bootstrap_summary, file.path(OUT, "rq1_pairwise_bootstrap.csv"), na = "")
 
 anchor_projection <- read_rq1_fragment_component("anchor") |>

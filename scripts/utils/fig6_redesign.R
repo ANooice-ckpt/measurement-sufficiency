@@ -1,6 +1,7 @@
-# Fig. 6 display only. Inputs are the unchanged, mature Fig. 6 display grids.
+# Fig. 6 display only. Inputs are frozen joint/task decisions and display grids.
 # No new pooling, sufficiency classification, Pareto calculation or fitting.
-ms_fig6_redesign <- function(entry, pareto, classes, resolution_labels, days, composition) {
+ms_fig6_redesign <- function(entry, tasks, classes, resolution_labels, days, composition,
+                             prep_only = FALSE) {
   ink <- "#30363B"
   muted <- "#657078"
   unresolved <- "#E1E5E7"
@@ -46,23 +47,25 @@ ms_fig6_redesign <- function(entry, pareto, classes, resolution_labels, days, co
     guides(fill = guide_colorbar(title.position = "top", barwidth = grid::unit(32, "mm"),
                                  barheight = grid::unit(2, "mm")))
 
-  # b: occupancy is an absolute fraction of the SAME available metric-facets.
-  # Area, not radius, is proportional to the fraction. Zero and U are distinct.
-  b <- ggplot(pareto, aes(resolution_rank, n_days)) +
-    geom_tile(fill = "#FCFDFD", colour = "white", width = .98, height = .98, linewidth = .25) +
-    geom_tile(data = pareto[pareto$cell_unresolved, ], fill = unresolved, width = .98, height = .98) +
-    geom_point(data = pareto[is.finite(pareto$pareto_fraction) & pareto$pareto_fraction == 0, ],
-               size = .25, colour = "#DFE5E8") +
-    geom_point(data = pareto[is.finite(pareto$pareto_fraction) & pareto$pareto_fraction > 0, ],
-               aes(size = pareto_fraction), shape = 21, stroke = .25, colour = "#31586A", fill = "#5F8B9E", alpha = .92) +
-    geom_text(data = pareto[pareto$cell_unresolved, ], label = "U", size = 2.1, colour = muted) +
-    scale_size_area(max_size = 5.2, limits = c(0, max(pareto$pareto_fraction, na.rm = TRUE)),
-                     breaks = c(.01, .10, .20, .30), labels = scales::label_percent(accuracy = 1),
-                     name = "Pareto occupancy") +
-    facet_wrap(~epsilon_label, nrow = 1) + lattice_axes +
+  # b: preserve every required target, rather than counting how frequently an
+  # individually optimal state occurs. Sufficiency and Pareto flags are frozen.
+  tasks$decision <- factor(ifelse(is.na(tasks$sufficient), NA_character_,
+    ifelse(tasks$pareto, "Pareto", ifelse(tasks$sufficient, "Sufficient", "Not sufficient"))),
+    levels = c("Not sufficient", "Sufficient", "Pareto"))
+  task_names <- c(level = "Level", timing = "Timing", `temporal dynamics` = "Temporal dynamics")
+  tasks$task_label <- paste0(unname(task_names[as.character(tasks$task_id)]), " (", tasks$n_required, " targets)")
+  tasks$task_label <- factor(tasks$task_label, levels = unique(tasks$task_label[order(tasks$task_id)]))
+  b <- ggplot(tasks, aes(resolution_rank, n_days)) +
+    geom_tile(aes(fill = decision), colour = "white", width = .97, height = .97, linewidth = .3) +
+    geom_point(data = tasks[which(tasks$pareto), ], shape = 21, fill = "white",
+               colour = "#31586A", size = 1.65, stroke = .45) +
+    geom_text(data = tasks[tasks$status != "resolved", ],
+      aes(label = ifelse(status == "unavailable", "NA", "U")), size = 2, colour = muted) +
+    scale_fill_manual(values = c(`Not sufficient` = "#FCFDFD", Sufficient = "#CCDDE0", Pareto = "#5F8B9E"),
+                      na.value = unresolved, drop = FALSE, name = NULL) +
+    facet_wrap(~task_label, nrow = 1) + lattice_axes +
     labs(x = "Sampling interval", y = NULL) + base +
-    guides(size = guide_legend(title.position = "top", nrow = 1,
-                                override.aes = list(alpha = 1)))
+    guides(fill = guide_legend(nrow = 1))
 
   # c: re-express all four original 6 x 6 class fields as discrete-day profiles.
   # Heavy endpoint cadences reveal sampling sensitivity; middle cadences remain
@@ -133,7 +136,13 @@ ms_fig6_redesign <- function(entry, pareto, classes, resolution_labels, days, co
   # Align the top plotting fields themselves, not fixed-aspect outer boxes.
   # Titles occupy an independent, identical-height row above both fields.
   aligned <- cowplot::align_plots(a, b, align = "h", axis = "tb")
-  class_grob <- ggplotGrob(c)
+  # Direct ggplotGrob can open Rplots.pdf on a null device. In prep-only mode,
+  # cowplot scopes a file-free device and restores the caller's device on exit.
+  class_grob <- if (prep_only) {
+    cowplot::as_grob(c, device = function(width, height) {
+      grDevices::pdf(NULL, width = width, height = height)
+    })
+  } else ggplotGrob(c)
   left_a <- min(aligned[[1]]$layout$l[grepl("^panel", aligned[[1]]$layout$name)]) - 1L
   left_c <- min(class_grob$layout$l[grepl("^panel", class_grob$layout$name)]) - 1L
   if (left_a == left_c) {
@@ -151,14 +160,14 @@ ms_fig6_redesign <- function(entry, pareto, classes, resolution_labels, days, co
   }
   headers <- cowplot::plot_grid(
     header("a  Joint stability landscape", "Lower entry tolerance = greater stability"),
-    header("b  Where minimum-burden solutions occur", "Circle area = occupancy on the frozen Pareto set"),
+    header("b  Sufficient designs for required target bundles", "Eye/MEDI; epsilon = 0.50; every target must pass; circles: Pareto"),
     nrow = 1, rel_widths = c(.36, .64)
   )
   top <- cowplot::plot_grid(plotlist = aligned, nrow = 1, rel_widths = c(.36, .64))
   c_header <- header("c  Can single-axis sufficiency rules be combined?",
                      "Both axes pass separately; joint refinement may still exceed tolerance")
   note <- cowplot::ggdraw() + cowplot::draw_label(
-    "c: counts are metric-facet-states; U: an axis is unresolved; -: no single-axis passes. Pairwise supports retained; failure is not proof of interaction.",
+    "b: all targets required; U: unresolved; NA: unavailable. c: metric-facet-state counts; -: no state passes both axes. Failure does not establish interaction.",
     x = .005, y = .8, hjust = 0, vjust = 1, fontfamily = MS_FONT, size = 5.2, colour = muted)
   body <- cowplot::plot_grid(headers, top, c_header, class_grob, note, ncol = 1,
                                rel_heights = c(.085, .525, .085, .335, .04))

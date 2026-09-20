@@ -28,14 +28,16 @@ UNORDERED_CSV <- file.path("results", "rq3", "rq3_unordered_substitutability.csv
 COVERAGE_CSV <- file.path("results", "rq3", "rq3_unordered_coverage_curves.csv")
 CONVERGENCE_CSV <- file.path("results", "rq3", "rq3_convergence_profile.csv")
 JOINT_CSV <- file.path("results", "rq3", "rq3_joint_summary.csv")
-PARETO_OCCUPANCY_CSV <- file.path("results", "rq3", "rq3_pareto_occupancy.csv")
+JOINT_RDS <- file.path("results", "rq3", "rq3_joint_stability.rds")
 COMPOSITION_CSV <- file.path("results", "rq3", "rq3_composition_failure_summary.csv")
 OUT_DIR <- file.path("results", "rq3", "figures")
 ms_plot_require_files(c(RQ1_SUMMARY_CSV, OBSERVED_RDS, SUFFICIENCY_CSV, REQUIREMENT_CSV,
                         UNORDERED_CSV, COVERAGE_CSV, CONVERGENCE_CSV, JOINT_CSV,
-                        PARETO_OCCUPANCY_CSV, COMPOSITION_CSV),
+                        COMPOSITION_CSV, JOINT_RDS),
                       "RQ3 v8 plotting inputs")
-dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
+if (!ms_plot_prep_only()) {
+  dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
+}
 
 METRIC_CLASSES <- MS_METRIC_CLASSES
 ORDERED_DIMS <- c("temporal", "duration")
@@ -54,7 +56,10 @@ unordered <- readr::read_csv(UNORDERED_CSV, show_col_types = FALSE, progress = F
 coverage <- readr::read_csv(COVERAGE_CSV, show_col_types = FALSE, progress = FALSE)
 convergence <- readr::read_csv(CONVERGENCE_CSV, show_col_types = FALSE, progress = FALSE)
 joint <- readr::read_csv(JOINT_CSV, show_col_types = FALSE, progress = FALSE)
-pareto_occupancy <- readr::read_csv(PARETO_OCCUPANCY_CSV, show_col_types = FALSE, progress = FALSE)
+task_projection <- attr(readRDS(JOINT_RDS), "task_projection", exact = TRUE)
+if (!identical(task_projection$task_projection_version, "rq3_task_projection_v1")) {
+  stop("Frozen RQ3 task projection is missing; run RQ3 analysis/projection before plotting", call. = FALSE)
+}
 composition_summary <- readr::read_csv(COMPOSITION_CSV,show_col_types=FALSE,progress=FALSE)
 ms_plot_require_columns(composition_summary,
   c("core_artifact_version", "rq1_analysis_version", "rq3_analysis_version",
@@ -89,14 +94,10 @@ ms_plot_require_columns(joint,
     "optical", "resolution_s", "n_days", "metric", "status", "epsilon_entry",
     "worst_higher_config"),
   "rq3_joint_summary.csv")
-ms_plot_require_columns(pareto_occupancy,
-  c("support_id", "placement", "optical", "resolution_s", "n_days", "metric",
-    "epsilon_interval_start", "epsilon_interval_end", "terminal_endpoint", "rq3_analysis_version", "pareto"),
-  "rq3_pareto_occupancy.csv")
 
 RQ1_VERSION <- ms_plot_one_version(c(observed$rq1_analysis_version, joint$rq1_analysis_version),
                                    "rq1_analysis_version")
-RQ3_VERSION <- ms_plot_one_version(c(observed$rq3_analysis_version, joint$rq3_analysis_version, pareto_occupancy$rq3_analysis_version),
+RQ3_VERSION <- ms_plot_one_version(c(observed$rq3_analysis_version, joint$rq3_analysis_version),
                                    "rq3_analysis_version")
 CORE_VERSION <- ms_plot_assert_core(c(observed$core_artifact_version, joint$core_artifact_version))
 ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
@@ -104,6 +105,9 @@ ms_plot_assert_prefix(RQ3_VERSION, "rq3_v8_", "rq3_analysis_version")
 ms_assert_version(composition_summary,"rq3_analysis_version",RQ3_VERSION)
 ms_assert_version(composition_summary,"rq1_analysis_version",RQ1_VERSION)
 ms_assert_version(composition_summary,"core_artifact_version",CORE_VERSION)
+ms_assert_version(task_projection,"rq3_analysis_version",RQ3_VERSION)
+ms_assert_version(task_projection,"rq1_analysis_version",RQ1_VERSION)
+ms_assert_version(task_projection,"core_artifact_version",CORE_VERSION)
 if (!all(sort(unique(joint$resolution_s)) %in% sort(ms_primary_temporal_s()))) {
   stop("RQ3 joint artifact contains temporal states outside the frozen primary design", call. = FALSE)
 }
@@ -113,7 +117,6 @@ if (!all(sort(unique(joint$n_days)) %in% DURATION_LEVELS)) {
 if (!grepl(ms_analysis_design_id(), RQ3_VERSION, fixed = TRUE)) {
   stop("RQ3 plotting inputs do not match the current frozen analysis design", call. = FALSE)
 }
-metric_order <- ms_metric_order(rq1_summary)
 
 safe_median <- function(x) {
   x <- x[is.finite(x)]
@@ -132,8 +135,6 @@ safe_mean <- function(x) {
 theme_rq3 <- function(base_size = 6.7, legend_position = "none") {
   theme_ms_axes(base_size = base_size, legend_position = legend_position)
 }
-
-metric_legend <- ms_metric_legend(text_size = 5.35, point_size = 1.5, key_width_mm = 3.5)
 
 # =============================================================================
 # Fig. 5 — joint temporal × duration sufficiency phase diagrams
@@ -161,14 +162,6 @@ if (!setequal(unique(joint_plot_base$resolution_s), fig5_res_levels) ||
   stop("RQ3 joint artifact does not contain the frozen 6 x 6 primary lattice", call. = FALSE)
 }
 
-format_resolution5 <- function(x) {
-  x <- as.numeric(x)
-  ifelse(
-    x >= 60 & abs(x / 60 - round(x / 60)) < 1e-9,
-    paste0(format(round(x / 60), trim = TRUE), " min"),
-    paste0(format(x, trim = TRUE), " s")
-  )
-}
 format_resolution_compact5 <- function(x) {
   x <- as.numeric(x)
   ifelse(
@@ -177,7 +170,6 @@ format_resolution_compact5 <- function(x) {
     paste0(format(x, trim = TRUE), "s")
   )
 }
-fig5_res_labels <- format_resolution5(fig5_res_levels)
 fig5_res_labels_compact <- format_resolution_compact5(fig5_res_levels)
 joint_plot_base <- joint_plot_base |>
   mutate(resolution_rank = match(resolution_s, fig5_res_levels))
@@ -222,194 +214,6 @@ entry_grid <- tidyr::crossing(
   ) |>
   left_join(joint_cell_status, by = c("resolution_rank", "n_days")) |>
   mutate(cell_unresolved = replace_na(cell_unresolved, FALSE))
-
-entry_fill_max5 <- max(
-  c(entry_grid$epsilon_entry_median, entry_metric_surface$epsilon_metric),
-  na.rm = TRUE
-)
-if (!is.finite(entry_fill_max5) || entry_fill_max5 <= 0) entry_fill_max5 <- 1
-entry_fill_limits5 <- c(0, entry_fill_max5)
-
-# Build exposed cell edges for one scientifically interpretable threshold. The
-# helper supports both <= thresholds (entry tolerance) and >= thresholds
-# (occupancy / sufficient fractions), optionally within facets.
-build_stepped_boundary5 <- function(g, threshold, value_column,
-                                    direction = c("ge", "le"),
-                                    facet_column = NULL,
-                                    half_width = .46) {
-  direction <- match.arg(direction)
-  facet_values <- if (is.null(facet_column)) {
-    NA_character_
-  } else {
-    unique(as.character(g[[facet_column]]))
-  }
-  facet_values <- facet_values[is.na(facet_values) | nzchar(facet_values)]
-  segments <- list()
-
-  for (facet_value in facet_values) {
-    gs <- if (is.null(facet_column)) {
-      g
-    } else {
-      g[as.character(g[[facet_column]]) == facet_value, , drop = FALSE]
-    }
-    if (!nrow(gs)) next
-
-    is_region <- function(x, y) {
-      z <- gs[gs$resolution_rank == x & gs$n_days == y, , drop = FALSE]
-      if (nrow(z) != 1L) return(FALSE)
-      unresolved <- if ("cell_unresolved" %in% names(z)) {
-        isTRUE(z$cell_unresolved[[1]])
-      } else {
-        FALSE
-      }
-      value <- z[[value_column]][[1]]
-      if (unresolved || !isTRUE(is.finite(value))) return(FALSE)
-      if (direction == "ge") {
-        value >= threshold - NUMERIC_TOL
-      } else {
-        value <= threshold + NUMERIC_TOL
-      }
-    }
-
-    add_edge <- function(x, xend, y, yend) {
-      row <- tibble(x = x, xend = xend, y = y, yend = yend)
-      if (!is.null(facet_column)) row[[facet_column]] <- facet_value
-      segments[[length(segments) + 1L]] <<- row
-    }
-
-    for (x in seq_along(fig5_res_levels)) {
-      for (y in fig5_days) {
-        if (!is_region(x, y)) next
-        if (x == 1L || !is_region(x - 1L, y)) {
-          add_edge(x - half_width, x - half_width, y - half_width, y + half_width)
-        }
-        if (x == length(fig5_res_levels) || !is_region(x + 1L, y)) {
-          add_edge(x + half_width, x + half_width, y - half_width, y + half_width)
-        }
-        if (y == min(fig5_days) || !is_region(x, y - 1L)) {
-          add_edge(x - half_width, x + half_width, y - half_width, y - half_width)
-        }
-        if (y == max(fig5_days) || !is_region(x, y + 1L)) {
-          add_edge(x - half_width, x + half_width, y + half_width, y + half_width)
-        }
-      }
-    }
-  }
-
-  if (!length(segments)) {
-    out <- tibble(x = numeric(), xend = numeric(), y = numeric(), yend = numeric())
-    if (!is.null(facet_column)) out[[facet_column]] <- character()
-    return(out)
-  }
-  bind_rows(segments)
-}
-
-FIG5_TOLERANCE_COLORS <- c(
-  "#FBFAF7", "#F0E4CC", "#DEC08B", "#BC8C4D", "#80562C"
-)
-FIG5_FRACTION_COLORS <- c(
-  "#FAFBFB", "#E4ECEE", "#BCD1D7", "#7FA8B7", "#365F74"
-)
-FIG5_UNRESOLVED <- "#D8DCDE"
-FIG5_CELL_BORDER <- "#F0F2F2"
-
-# -----------------------------------------------------------------------------
-# a. Entry-tolerance phase diagram
-# -----------------------------------------------------------------------------
-# The fill carries the continuous entry-tolerance information. Only two decision
-# contours remain: epsilon = .50 is the primary frontier; .25 is a weak reference.
-entry_boundary25 <- build_stepped_boundary5(
-  entry_grid, .25, "epsilon_entry_median", direction = "le"
-)
-entry_boundary50 <- build_stepped_boundary5(
-  entry_grid, .50, "epsilon_entry_median", direction = "le"
-)
-
-# -----------------------------------------------------------------------------
-# b. Pareto occupancy as a continuous phase field
-# -----------------------------------------------------------------------------
-# Pareto flags are read from the frozen epsilon-interval artifact. At each
-# tolerance slice, the cell fill is the fraction of available metric-facet
-# combinations occupying the frozen Pareto set; the only contour is 50%.
-FIG5_PARETO_SLICES <- c(.10, .25, .50)
-pareto_occupancy5 <- pareto_occupancy |>
-  mutate(
-    resolution_s = as.numeric(resolution_s),
-    n_days = as.numeric(n_days),
-    epsilon_interval_start = as.numeric(epsilon_interval_start),
-    epsilon_interval_end = as.numeric(epsilon_interval_end),
-    pareto = replace_na(as.logical(pareto), FALSE)
-  )
-
-select_pareto_interval5 <- function(g, eps) {
-  g |>
-    group_by(support_id, placement, optical, metric, resolution_s, n_days) |>
-    filter({
-      inside <- epsilon_interval_start <= eps + NUMERIC_TOL &
-        epsilon_interval_end > eps + NUMERIC_TOL
-      inside | (terminal_endpoint & epsilon_interval_start <= eps + NUMERIC_TOL)
-    }) |>
-    slice_max(epsilon_interval_start, n = 1, with_ties = FALSE) |>
-    ungroup()
-}
-
-pareto_slice5 <- bind_rows(lapply(FIG5_PARETO_SLICES, function(eps) {
-  select_pareto_interval5(pareto_occupancy5, eps) |>
-    mutate(epsilon = eps)
-}))
-
-joint_available5 <- joint_plot_base |>
-  group_by(resolution_rank, n_days) |>
-  summarise(
-    n_available = n_distinct(paste(support_id, placement, optical, metric, sep = "|")),
-    .groups = "drop"
-  )
-
-pareto_slice_counts5 <- pareto_slice5 |>
-  group_by(epsilon, resolution_s, n_days) |>
-  summarise(
-    n_available = n_distinct(paste(support_id, placement, optical, metric, sep = "|")),
-    .groups = "drop"
-  ) |>
-  mutate(resolution_rank = match(resolution_s, fig5_res_levels)) |>
-  left_join(joint_available5, by = c("resolution_rank", "n_days"))
-if (any(pareto_slice_counts5$n_available.x != pareto_slice_counts5$n_available.y,
-        na.rm = TRUE)) {
-  stop("Frozen Pareto occupancy slices do not cover the available joint metrics", call. = FALSE)
-}
-
-pareto_slice_summary5 <- pareto_slice5 |>
-  group_by(epsilon, resolution_s, n_days) |>
-  summarise(pareto_fraction = mean(pareto), .groups = "drop")
-
-pareto_grid5 <- tidyr::crossing(
-  epsilon = FIG5_PARETO_SLICES,
-  resolution_rank = seq_along(fig5_res_levels),
-  n_days = fig5_days
-) |>
-  left_join(
-    pareto_slice_summary5 |>
-      mutate(resolution_rank = match(resolution_s, fig5_res_levels)) |>
-      select(epsilon, resolution_rank, n_days, pareto_fraction),
-    by = c("epsilon", "resolution_rank", "n_days")
-  ) |>
-  left_join(joint_cell_status, by = c("resolution_rank", "n_days")) |>
-  mutate(
-    epsilon_label = factor(
-      paste0("ε = ", sprintf("%.2f", epsilon)),
-      levels = paste0("ε = ", sprintf("%.2f", FIG5_PARETO_SLICES))
-    ),
-    cell_unresolved = replace_na(cell_unresolved, FALSE),
-    pareto_fraction = if_else(cell_unresolved, NA_real_, pareto_fraction)
-  )
-
-pareto_boundary50 <- build_stepped_boundary5(
-  pareto_grid5, .50, "pareto_fraction", direction = "ge",
-  facet_column = "epsilon_label"
-) |>
-  mutate(epsilon_label = factor(
-    epsilon_label, levels = levels(pareto_grid5$epsilon_label)
-  ))
 
 # -----------------------------------------------------------------------------
 # c. Class-specific sufficient-fraction phase diagrams
@@ -481,25 +285,29 @@ class_rank5 <- class_grid_raw5 |>
       if_else(is.finite(region_share), sprintf("%.0f%%", 100 * region_share), "NA")
     )
   )
-class_order5 <- class_rank5$metric_class
 class_label_levels5 <- class_rank5$class_label
 
 class_grid5 <- class_grid_raw5 |>
   left_join(class_rank5, by = "metric_class") |>
   mutate(class_label = factor(class_label, levels = class_label_levels5))
 
-class_boundary50 <- build_stepped_boundary5(
-  class_grid5, .50, "suff_fraction", direction = "ge",
-  facet_column = "class_label"
-) |>
-  mutate(class_label = factor(
-    class_label, levels = levels(class_grid5$class_label)
-  ))
-
 # Fig. 6 redesign consumes the same display grids without changing their values.
 source("scripts/utils/fig6_redesign.R")
-fig6_display <- ms_fig6_redesign(entry_grid, pareto_grid5, class_grid5,
-                                fig5_res_labels_compact, fig5_days, composition_summary)
+# The main decision slice uses three transparent target bundles at the reference
+# placement/optical facet. All bundles, facets and tolerance intervals are frozen
+# in task_projection; selecting a slice never reconstructs a sufficient set.
+task_slice5 <- task_projection$frontiers |>
+  filter(task_id %in% c("level", "timing", "temporal dynamics"),
+         placement == "eye", optical == "MEDI",
+         epsilon_interval_start <= .50 + NUMERIC_TOL,
+         epsilon_interval_end > .50 + NUMERIC_TOL | terminal_endpoint) |>
+  group_by(task_id, placement, optical, config_id) |>
+  slice_max(epsilon_interval_start, n = 1, with_ties = FALSE) |> ungroup() |>
+  mutate(resolution_rank = match(resolution_s, fig5_res_levels),
+         task_id = factor(task_id, levels = c("level", "timing", "temporal dynamics")))
+fig6_display <- ms_fig6_redesign(entry_grid, task_slice5, class_grid5,
+                                fig5_res_labels_compact, fig5_days, composition_summary,
+                                prep_only = ms_plot_prep_only())
 fig6_redesigned <- fig6_display$plot
 p5a <- fig6_display$a; p5b <- fig6_display$b; p5c <- fig6_display$c
 ms_plot_save(fig6_redesigned, file.path(OUT_DIR, "Fig5_RQ3.png"), 7.40, 6.10)
@@ -512,7 +320,7 @@ ms_plot_write_manifest(
   file.path(OUT_DIR, "figure_artifact_manifest.csv"),
   tibble(
     figure = "Fig5_RQ3",
-    input_artifact = "rq3_joint_summary+rq3_pareto_occupancy+rq3_composition_failure_summary",
+    input_artifact = "rq3_joint_summary+rq3_joint_stability.task_projection+rq3_composition_failure_summary",
     core_artifact_version = CORE_VERSION,
     rq1_analysis_version = RQ1_VERSION,
     rq2_analysis_version = NA_character_,
@@ -520,4 +328,4 @@ ms_plot_write_manifest(
   )
 )
 
-message("Fig. 6 complete: joint stability, Pareto occupancy and single-axis composition failure.")
+message("Fig. 6 complete: joint stability, task-conditioned sufficient/Pareto sets and single-axis composition failure.")

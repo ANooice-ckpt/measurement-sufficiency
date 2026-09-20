@@ -33,7 +33,9 @@ ms_plot_require_files(c(RQ1_SUMMARY_CSV, CONDITION_RDS, COND_GEOM_CSV, MODEL_COE
                         MODEL_PERF_CSV, MODEL_MANIFEST_CSV, GAMMA_RDS,
                         GAMMA_SUMMARY_CSV, SCOPE_CSV),
                       "RQ2 v5 plotting inputs")
-dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
+if (!ms_plot_prep_only()) {
+  dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
+}
 
 METRIC_CLASSES <- MS_METRIC_CLASSES
 DIMENSIONS <- c("placement", "optical", "temporal", "duration")
@@ -374,80 +376,6 @@ conditional_shift_overall_path <- conditional_shift_overall_path |>
     )
   )
 
-p2b <- ggplot() +
-  geom_hline(yintercept = 0, linewidth = .24, colour = "#C5C9CB") +
-  geom_vline(xintercept = 0, linewidth = .24, colour = "#C5C9CB") +
-  geom_path(
-    data = conditional_shift_path_metric,
-    aes(delta_A, delta_direction, group = interaction(metric, metric_class), colour = metric_class),
-    linewidth = .09, alpha = .035
-  ) +
-  geom_point(
-    data = conditional_shift_path_metric |> filter(state_num > 1L),
-    aes(delta_A, delta_direction, colour = metric_class),
-    size = .20, alpha = .075
-  ) +
-  geom_path(
-    data = conditional_shift_class_path,
-    aes(delta_A, delta_direction, group = metric_class, colour = metric_class),
-    linewidth = .52, alpha = .72
-  ) +
-  geom_point(
-    data = conditional_shift_class_path |> filter(state_num > 1L),
-    aes(delta_A, delta_direction, colour = metric_class, shape = state),
-    size = .88, alpha = .95
-  ) +
-  geom_path(
-    data = conditional_shift_overall_path,
-    aes(delta_A, delta_direction, group = dimension_label),
-    linewidth = 1.02, colour = "#343B3F"
-  ) +
-  geom_point(
-    data = conditional_shift_overall_path,
-    aes(delta_A, delta_direction, shape = state),
-    size = 1.38, colour = "#343B3F", fill = "white", stroke = .30
-  ) +
-  geom_text(
-    data = conditional_shift_overall_path |> filter(state_num > 1L),
-    aes(delta_A, delta_direction, label = state_label),
-    nudge_x = .035 * shift_x_limit, nudge_y = .045 * shift_y_limit,
-    size = 1.40, colour = "#343B3F", fontface = "bold"
-  ) +
-  facet_wrap(~dimension_label, ncol = 2) +
-  scale_colour_ms_metric(guide = "none") +
-  scale_shape_manual(
-    values = c("Low" = 1, "Middle" = 16, "High" = 18),
-    breaks = c("Middle", "High"), labels = c("Middle", "High"),
-    name = "state"
-  ) +
-  scale_x_continuous(
-    limits = c(-shift_x_limit, shift_x_limit),
-    breaks = scales::breaks_extended(n = 3)
-  ) +
-  scale_y_continuous(
-    limits = c(-shift_y_limit, shift_y_limit),
-    breaks = scales::breaks_extended(n = 3)
-  ) +
-  labs(
-    title = "b  Context-induced geometry shifts",
-    subtitle = "Low state is the origin; M/H = displacement at Middle/High exposure state",
-    x = expression(Delta * " distortion magnitude, A"),
-    y = expression(Delta * " directional coherence, B/A")
-  ) +
-  theme_rq2(base_size = 5.35, legend_position = "bottom") +
-  theme(
-    panel.grid = element_blank(),
-    strip.text = element_text(size = 4.55, face = "bold"),
-    axis.text = element_text(size = 3.65),
-    axis.title = element_text(size = 4.05),
-    plot.title = element_text(size = 6.25, hjust = 0, margin = margin(b = 2)),
-    plot.subtitle = element_text(size = 3.80, colour = "#666A6D", hjust = 0,
-                                 margin = margin(t = -1, b = 2)),
-    panel.spacing = grid::unit(.75, "mm"),
-    legend.position = "none",
-    plot.margin = margin(1.5, 2, 1.5, 2)
-  )
-
 # Transition-resolved state spread remains supplementary.
 transition_state <- conditional |>
   mutate(
@@ -711,69 +639,6 @@ p_strength <- ggplot(predictor_order, aes(fill = predictor_family)) +
   )
 p_strength <- add_row_guides(p_strength)
 
-make_effect_panel <- function(outcome_name, panel_title) {
-  raw <- coef_metric_plot |> filter(outcome_label == outcome_name)
-  overall <- coef_summary_all_plot |> filter(outcome_label == outcome_name)
-  dim <- coef_summary_dim_plot |> filter(outcome_label == outcome_name)
-  miss <- status_grid |> filter(outcome_label == outcome_name, !is.na(status_label))
-
-  p <- ggplot() +
-    geom_vline(xintercept = 0, linewidth = .27, colour = "#A1A6A9") +
-    geom_point(
-      data = raw,
-      aes(estimate_plot, y, colour = predictor_family),
-      position = position_jitter(width = 0, height = .055, seed = 72),
-      shape = 16, size = .15, alpha = .025
-    ) +
-    geom_segment(
-      data = overall,
-      aes(x = estimate_q05_plot, xend = estimate_q95_plot, y = y, yend = y),
-      linewidth = .30, alpha = .34, colour = "#596166", lineend = "round"
-    ) +
-    geom_segment(
-      data = overall,
-      aes(x = estimate_q25_plot, xend = estimate_q75_plot, y = y, yend = y),
-      linewidth = .90, alpha = .88, colour = "#343B3F", lineend = "round"
-    ) +
-    geom_point(
-      data = overall,
-      aes(estimate_q50_plot, y, colour = predictor_family),
-      shape = 18, size = 1.05, alpha = 1
-    ) +
-    geom_segment(
-      data = dim,
-      aes(x = estimate_q25_plot, xend = estimate_q75_plot, y = y_pos, yend = y_pos),
-      linewidth = .20, alpha = .34, colour = "#70787C", lineend = "round"
-    ) +
-    geom_point(
-      data = dim,
-      aes(estimate_q50_plot, y_pos, shape = dimension_label),
-      size = .58, stroke = .23, colour = "#616A6F", fill = "white", alpha = .90
-    ) +
-    geom_text(
-      data = miss,
-      aes(x = 0, y = y_pos, label = status_label),
-      size = 1.05, colour = "#BEC2C4"
-    ) +
-    scale_colour_manual(values = PREDICTOR_COLORS, drop = FALSE, guide = "none") +
-    scale_shape_manual(values = DIMENSION_SHAPES, drop = FALSE, guide = "none") +
-    scale_x_continuous(limits = coef_window_global, breaks = scales::breaks_extended(n = 3)) +
-    scale_y_continuous(limits = predictor_y_limits, expand = expansion(mult = c(0, 0))) +
-    labs(title = panel_title, x = "standardized \u03b2", y = NULL) +
-    theme_rq2(base_size = 5.30) +
-    theme(
-      panel.grid.major.y = element_blank(), axis.line.y = element_blank(),
-      axis.ticks.y = element_blank(), axis.text.y = element_blank(),
-      axis.text.x = element_text(size = 3.55), axis.title.x = element_text(size = 4.15),
-      plot.title = element_text(size = 5.25, hjust = .5, face = "bold", margin = margin(b = 1.2)),
-      plot.margin = margin(1.5, .7, 1.5, .7)
-    )
-  add_row_guides(p)
-}
-
-p_signed <- make_effect_panel("Signed", "Signed effect")
-p_absolute <- make_effect_panel("Absolute", "Absolute effect")
-
 predictor_legend <- cowplot::get_legend(
   ggplot(
     tibble(
@@ -814,32 +679,6 @@ dimension_legend <- cowplot::get_legend(
       legend.margin = margin(0, 0, 0, 0)
     )
 )
-
-p2a_core <- cowplot::plot_grid(
-  p_labels, p_strength, p_signed, p_absolute,
-  ncol = 4, rel_widths = c(.23, .12, .325, .325),
-  align = "hv", axis = "tb", greedy = TRUE
-)
-p2a_legends <- cowplot::plot_grid(
-  predictor_legend, dimension_legend,
-  ncol = 2, rel_widths = c(.48, .52), align = "h", axis = "b", greedy = TRUE
-)
-p2a_body <- cowplot::plot_grid(
-  p2a_core, p2a_legends,
-  ncol = 1, rel_heights = c(.935, .065), align = "v", axis = "l", greedy = TRUE
-)
-p2a <- cowplot::ggdraw() +
-  cowplot::draw_plot(p2a_body, x = 0, y = 0, width = 1, height = .965) +
-  cowplot::draw_label(
-    "a  Contextual predictor hierarchy",
-    x = .002, y = .998, hjust = 0, vjust = 1,
-    fontface = "bold", size = 7.0
-  ) +
-  cowplot::draw_label(
-    "overall coefficient distributions are foreground; dimension-specific estimates form the secondary fingerprint",
-    x = .002, y = .972, hjust = 0, vjust = 1,
-    colour = "#666A6D", size = 4.25
-  )
 
 coef_metric_display <- coef_metric |> mutate(displayed_in_fig2a = TRUE)
 
@@ -976,101 +815,6 @@ joint_cv_summary_panel <- joint_cv_summary_panel |>
     r2_q75_plot = squish_to_limits(r2_q75, joint_cv_window_panel)
   )
 
-p_cv_panel <- ggplot(joint_cv_metric_panel, aes(r2_plot, y_pos, colour = metric_class)) +
-  geom_vline(xintercept = 0, linewidth = .27, colour = "#A1A6A9") +
-  geom_point(
-    position = position_jitter(width = 0, height = .014, seed = 63),
-    size = .34, alpha = .18
-  ) +
-  geom_segment(
-    data = joint_cv_summary_panel,
-    aes(x = r2_q25_plot, xend = r2_q75_plot, y = y_pos, yend = y_pos, colour = metric_class),
-    inherit.aes = FALSE, linewidth = .58, alpha = .56, lineend = "round"
-  ) +
-  geom_point(
-    data = joint_cv_summary_panel,
-    aes(r2_median_plot, y_pos, colour = metric_class),
-    inherit.aes = FALSE, shape = 18, size = .98
-  ) +
-  facet_wrap(~outcome_label, nrow = 1) +
-  scale_colour_ms_metric(guide = "none") +
-  scale_x_continuous(limits = joint_cv_window_panel, breaks = scales::breaks_extended(n = 3)) +
-  scale_y_continuous(
-    breaks = dim_map_panel$y, labels = dim_map_panel$dimension_label,
-    limits = range(dim_map_panel$y) + c(-.34, .34), expand = expansion(mult = c(0, 0))
-  ) +
-  labs(x = "participant-grouped CV R\u00b2", y = NULL) +
-  theme_rq2(base_size = 4.9) +
-  theme(
-    panel.grid.major.y = element_blank(), axis.line.y = element_blank(), axis.ticks.y = element_blank(),
-    axis.text.y = element_text(size = 3.85), axis.text.x = element_text(size = 3.7),
-    axis.title.x = element_text(size = 4.15), strip.text = element_text(size = 4.15, face = "bold"),
-    panel.spacing = grid::unit(.45, "mm"), plot.margin = margin(.7, .7, .7, .7)
-  )
-
-FRACTION_COLORS_PANEL <- c(
-  "Absolute distortion" = "#707B83",
-  "Signed distortion" = "#B7BDC1"
-)
-p_frac_panel <- ggplot(joint_cv_positive_panel, aes(fraction_plot, y)) +
-  geom_vline(xintercept = 0, linewidth = .27, colour = "#A1A6A9") +
-  geom_segment(
-    aes(x = 0, xend = fraction_plot, y = y, yend = y, colour = outcome_label),
-    linewidth = 2.4, alpha = .82, lineend = "butt"
-  ) +
-  geom_text(
-    aes(x = fraction_plot, label = label,
-        hjust = if_else(fraction_plot >= 0, -.08, 1.08)),
-    size = 1.35, colour = "#54595C"
-  ) +
-  scale_colour_manual(values = FRACTION_COLORS_PANEL, guide = "none") +
-  scale_x_continuous(
-    limits = c(-1.16, 1.16), breaks = c(-1, -.5, 0, .5, 1),
-    labels = c("100", "50", "0", "50", "100")
-  ) +
-  scale_y_continuous(
-    limits = range(dim_map_panel$y) + c(-.34, .34), expand = expansion(mult = c(0, 0))
-  ) +
-  labs(title = "% metrics with CV R\u00b2 > 0", x = "%", y = NULL) +
-  theme_rq2(base_size = 4.75) +
-  theme(
-    panel.grid.major.y = element_blank(), panel.grid.minor = element_blank(), axis.line.y = element_blank(),
-    axis.ticks.y = element_blank(), axis.text.y = element_blank(), axis.text.x = element_text(size = 3.55),
-    axis.title.x = element_text(size = 3.9),
-    plot.title = element_text(size = 4.05, hjust = .5, face = "bold", margin = margin(b = .7)),
-    plot.margin = margin(.7, 1.15, .7, .3)
-  )
-
-p2c_core <- cowplot::plot_grid(
-  p_cv_panel, p_frac_panel, ncol = 2, rel_widths = c(.77, .23),
-  align = "hv", axis = "tb", greedy = TRUE
-)
-p2c <- cowplot::ggdraw() +
-  cowplot::draw_plot(p2c_core, x = 0, y = 0, width = 1, height = .955) +
-  cowplot::draw_label(
-    "c  Out-of-sample contextual predictability",
-    x = .004, y = .997, hjust = 0, vjust = 1,
-    fontface = "bold", size = 6.15
-  )
-
-metric_legend_plot <- ggplot(
-  tibble(metric_class = factor(METRIC_CLASSES, levels = METRIC_CLASSES), x = 1, y = 1),
-  aes(x, y, colour = metric_class)
-) +
-  geom_point(size = 1.05) +
-  scale_colour_ms_metric() +
-  guides(colour = guide_legend(
-    title = NULL, nrow = 2, byrow = TRUE,
-    override.aes = list(size = 1.05, alpha = 1)
-  )) +
-  theme_void(base_family = MS_FONT) +
-  theme(
-    legend.position = "bottom", legend.text = element_text(size = 3.75),
-    legend.key.width = grid::unit(2.1, "mm"), legend.spacing.x = grid::unit(.45, "mm"),
-    legend.margin = margin(0, 0, 0, 0)
-  )
-metric_legend_right <- cowplot::get_legend(metric_legend_plot)
-
 # -----------------------------------------------------------------------------
 # Main composition
 # -----------------------------------------------------------------------------
@@ -1131,9 +875,6 @@ p_cv <- ggplot(cv_display, aes(r2, family, colour = outcome)) +
   scale_x_continuous(trans = scales::pseudo_log_trans(sigma = .003), breaks = c(-1, 0, .5)) +
   labs(x = expression("Participant-grouped CV "*R^2), y = NULL) + theme_dense() +
   theme(axis.text.x = element_text(size = 4.7), panel.spacing = unit(1.2, "mm"))
-p2c <- section(p_cv, "c  Which information predicts distortion?",
-  "All metrics; median / IQR \u00b7 blue = signed, ochre = absolute", .21)
-
 # Frozen four-cell gamma only: reorganize Q and R/Q, never recompute gamma.
 if (any(gamma_summary$Q < 0, na.rm = TRUE) ||
     any(abs(gamma_summary$R) > gamma_summary$Q + 1e-8, na.rm = TRUE)) stop("Invalid frozen gamma geometry")
@@ -1191,76 +932,78 @@ foot <- ggdraw() + draw_label(paste0(
   "Display summaries weight metrics equally. IQRs describe metric heterogeneity, not confidence intervals."),
   x = .015, hjust = 0, size = 5.1, colour = "#626A70", fontfamily = MS_FONT)
 p2 <- plot_grid(main_body, legends, foot, ncol = 1, rel_heights = c(1, .07, .06))
-ms_fig2_refine_main <- function(...) NULL
-ms_polish_main_figure <- function(plot, path, caller_env, width, height) list(plot = plot, width = width, height = height)
 ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.png"), 7.40, 6.88)
 ms_plot_save(section(p_cv, "Which information predicts distortion?",
   "Participant-grouped CV; descriptive context includes reference exposure state", .16),
   file.path(OUT_DIR, "FigS_RQ2_context_predictability.png"), 7.4, 3.0)
-write_csv(cv_display, file.path(OUT_DIR, "fig3_context_cv_complete.csv"))
-write_csv(gamma_display, file.path(OUT_DIR, "fig3_nonadditivity_display.csv"))
+if (!ms_plot_prep_only()) {
+  write_csv(cv_display, file.path(OUT_DIR, "fig3_context_cv_complete.csv"))
+  write_csv(gamma_display, file.path(OUT_DIR, "fig3_nonadditivity_display.csv"))
+}
 
 # -----------------------------------------------------------------------------
 # Audit/display tables
 # -----------------------------------------------------------------------------
-readr::write_csv(
-  conditional_profile_summary |>
-    mutate(metric_class = as.character(metric_class), state_bin_label = as.character(state_bin_label)),
-  file.path("results", "rq2", "fig2_conditional_profile.csv"), na = ""
-)
-readr::write_csv(
-  conditional_shift_metric |>
-    mutate(metric_class = as.character(metric_class), state = as.character(state)),
-  file.path("results", "rq2", "fig2_conditional_shift.csv"), na = ""
-)
-readr::write_csv(
-  predictor_order |> mutate(predictor_family = as.character(predictor_family)),
-  file.path("results", "rq2", "fig2_context_predictor_order.csv"), na = ""
-)
-readr::write_csv(
-  coef_metric_display |>
-    mutate(predictor_family = as.character(predictor_family), outcome_label = as.character(outcome_label)),
-  file.path("results", "rq2", "fig2_context_predictor_display_diagnostics.csv"), na = ""
-)
-readr::write_csv(
-  coef_summary |>
-    mutate(predictor_family = as.character(predictor_family), outcome_label = as.character(outcome_label)),
-  file.path("results", "rq2", "fig2_context_predictor_summary.csv"), na = ""
-)
-readr::write_csv(
-  tidyr::crossing(
-    PREDICTOR_CATALOG |>
-      transmute(term, predictor = label, predictor_family = as.character(predictor_family)),
-    dimension = DIMENSIONS,
-    outcome = c("Signed", "Absolute")
-  ) |>
-    left_join(
-      coef_summary |>
-        transmute(
-          term, dimension, outcome = as.character(outcome_label),
-          n_display_units, n_metrics,
-          Q05 = estimate_q05, Q25 = estimate_q25, Q50 = estimate_q50,
-          Q75 = estimate_q75, Q95 = estimate_q95
-        ),
-      by = c("term", "dimension", "outcome")
+if (!ms_plot_prep_only()) {
+  readr::write_csv(
+    conditional_profile_summary |>
+      mutate(metric_class = as.character(metric_class), state_bin_label = as.character(state_bin_label)),
+    file.path("results", "rq2", "fig2_conditional_profile.csv"), na = ""
+  )
+  readr::write_csv(
+    conditional_shift_metric |>
+      mutate(metric_class = as.character(metric_class), state = as.character(state)),
+    file.path("results", "rq2", "fig2_conditional_shift.csv"), na = ""
+  )
+  readr::write_csv(
+    predictor_order |> mutate(predictor_family = as.character(predictor_family)),
+    file.path("results", "rq2", "fig2_context_predictor_order.csv"), na = ""
+  )
+  readr::write_csv(
+    coef_metric_display |>
+      mutate(predictor_family = as.character(predictor_family), outcome_label = as.character(outcome_label)),
+    file.path("results", "rq2", "fig2_context_predictor_display_diagnostics.csv"), na = ""
+  )
+  readr::write_csv(
+    coef_summary |>
+      mutate(predictor_family = as.character(predictor_family), outcome_label = as.character(outcome_label)),
+    file.path("results", "rq2", "fig2_context_predictor_summary.csv"), na = ""
+  )
+  readr::write_csv(
+    tidyr::crossing(
+      PREDICTOR_CATALOG |>
+        transmute(term, predictor = label, predictor_family = as.character(predictor_family)),
+      dimension = DIMENSIONS,
+      outcome = c("Signed", "Absolute")
     ) |>
-    arrange(factor(predictor_family, levels = FAMILY_LEVELS), predictor, dimension, outcome),
-  file.path("results", "rq2", "fig2_context_predictor_quantiles.csv"), na = ""
-)
-readr::write_csv(
-  context_task |> mutate(dimension = as.character(dimension), information = as.character(information)),
-  file.path("results", "rq2", "fig2_context_increment.csv"), na = ""
-)
-readr::write_csv(
-  transition_spread |>
-    mutate(dimension = as.character(dimension), transition_key = as.character(transition_key)),
-  file.path("results", "rq2", "fig2_transition_spread.csv"), na = ""
-)
-readr::write_csv(
-  joint_cv_metric_panel |>
-    mutate(metric_class = as.character(metric_class), outcome_label = as.character(outcome_label)),
-  file.path("results", "rq2", "fig2_joint_context_cv.csv"), na = ""
-)
+      left_join(
+        coef_summary |>
+          transmute(
+            term, dimension, outcome = as.character(outcome_label),
+            n_display_units, n_metrics,
+            Q05 = estimate_q05, Q25 = estimate_q25, Q50 = estimate_q50,
+            Q75 = estimate_q75, Q95 = estimate_q95
+          ),
+        by = c("term", "dimension", "outcome")
+      ) |>
+      arrange(factor(predictor_family, levels = FAMILY_LEVELS), predictor, dimension, outcome),
+    file.path("results", "rq2", "fig2_context_predictor_quantiles.csv"), na = ""
+  )
+  readr::write_csv(
+    context_task |> mutate(dimension = as.character(dimension), information = as.character(information)),
+    file.path("results", "rq2", "fig2_context_increment.csv"), na = ""
+  )
+  readr::write_csv(
+    transition_spread |>
+      mutate(dimension = as.character(dimension), transition_key = as.character(transition_key)),
+    file.path("results", "rq2", "fig2_transition_spread.csv"), na = ""
+  )
+  readr::write_csv(
+    joint_cv_metric_panel |>
+      mutate(metric_class = as.character(metric_class), outcome_label = as.character(outcome_label)),
+    file.path("results", "rq2", "fig2_joint_context_cv.csv"), na = ""
+  )
+}
 
 ms_plot_write_manifest(
   file.path(OUT_DIR, "figure_artifact_manifest.csv"),

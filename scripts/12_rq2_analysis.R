@@ -392,106 +392,11 @@ readr::write_csv(conditional_geometry, file.path(OUT, "rq2_conditional_geometry.
 rm(conditional_parts)
 invisible(gc())
 
-family_predictors <- function(dimension, family) {
-  state <- if (identical(dimension, "duration")) c("primary_state_raw", "duration_day_variability") else "primary_state_raw"
-  if (identical(family, "external_context")) return(EXTERNAL)
-  if (identical(family, "exposure_state")) return(state)
-  if (identical(family, "joint")) return(c(state, EXTERNAL))
-  character()
-}
-
-fit_task <- function(task) {
-  dat <- bind_rows(lapply(task$shard_paths, readRDS))
-  meta <- task$meta
-  helpers <- rq2_model_helpers()
-  scale_train_test <- helpers$scale_train_test
-  fit_one <- helpers$fit_one
-  performance <- helpers$performance
-
-  set.seed(task$seed)
-  pm_base <- dat |>
-    distinct(site, participant_key) |>
-    group_by(site) |>
-    mutate(fold = sample(rep(seq_len(task$folds), length.out = n()))) |>
-    ungroup()
-  coefs <- list(); perfs <- list(); ci <- 0L; pi <- 0L
-  for (oname in names(OUTCOMES)) for (fname in c("external_context", "exposure_state", "joint")) {
-    outcome <- OUTCOMES[[oname]]
-    candidates <- family_predictors(meta$dimension[[1]], fname)
-    usable <- candidates[vapply(candidates, function(p) {
-      x <- dat[[p]]; sum(is.finite(x)) >= 3L && is.finite(sd(x[is.finite(x)])) && sd(x[is.finite(x)]) > sqrt(.Machine$double.eps)
-    }, logical(1))]
-    if (!length(usable)) next
-    d <- dat |> filter(is.finite(.data[[outcome]]), if_all(all_of(usable), is.finite))
-    if (nrow(d) < 20L || n_distinct(d$participant_key) < 3L) next
-
-    sc <- scale_train_test(d, d, usable)
-    full_fit <- fit_one(sc$tr, outcome, sc$keep)
-    if (!is.null(full_fit$fit)) {
-      tt <- summary(full_fit$fit)$tTable
-      ci <- ci + 1L
-      coefs[[ci]] <- tibble(
-        dimension = meta$dimension, comparison_pair_id = meta$comparison_pair_id, metric = meta$metric,
-        outcome = oname, model_family = fname, random_structure = full_fit$random_structure,
-        term = rownames(tt), estimate = tt[, "Value"], std_error = tt[, "Std.Error"],
-        df = tt[, "DF"], t_value = tt[, "t-value"], p_value = tt[, "p-value"]
-      )
-    }
-
-    d_cv <- d |> left_join(pm_base, by = c("site", "participant_key"))
-    obs <- pred <- numeric()
-    for (sp in sort(unique(d_cv$fold))) {
-      tr <- d_cv |> filter(fold != sp)
-      te <- d_cv |> filter(fold == sp)
-      if (nrow(tr) < 20L || nrow(te) < 2L || n_distinct(tr$participant_key) < 3L) next
-      ss <- scale_train_test(tr, te, usable)
-      ff <- fit_one(ss$tr, outcome, ss$keep)
-      if (is.null(ff$fit)) next
-      pr <- tryCatch(as.numeric(predict(ff$fit, newdata = ss$te, level = 0)),
-                     error = function(e) rep(NA_real_, nrow(ss$te)))
-      obs <- c(obs, ss$te[[outcome]]); pred <- c(pred, pr)
-    }
-    perf <- performance(obs, pred)
-    pi <- pi + 1L
-    perfs[[pi]] <- tibble(
-      dimension = meta$dimension, comparison_pair_id = meta$comparison_pair_id, metric = meta$metric,
-      outcome = oname, model_family = fname, validation_scheme = "participant_grouped",
-      n_participants = n_distinct(d$participant_key), n_sites = n_distinct(d$site),
-      n_test = perf$n_test, rmse = perf$rmse, mae = perf$mae, r2 = perf$r2
-    )
-  }
-  list(checkpoint_version = task$checkpoint_version, complete = TRUE,
-       coefficients = bind_rows(coefs), performance = bind_rows(perfs))
-}
-
-fit_task_checkpoint <- function(task) {
-  log_progress <- function(status) {
-    line <- paste(
-      format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"), task$index, status,
-      task$meta$dimension[[1]], task$meta$comparison_pair_id[[1]], task$meta$metric[[1]],
-      sep = "\t"
-    )
-    cat(line, "\n", file = task$progress_path, append = TRUE, sep = "")
-  }
-  cached <- if (file.exists(task$checkpoint_path)) tryCatch(readRDS(task$checkpoint_path), error = function(e) NULL) else NULL
-  if (!is.null(cached) && identical(cached$checkpoint_version, task$checkpoint_version) && isTRUE(cached$complete)) {
-    log_progress("reused")
-    return(list(index = task$index, path = task$checkpoint_path, reused = TRUE))
-  }
-  obj <- fit_task(task)
-  tmp <- paste0(task$checkpoint_path, ".tmp.", Sys.getpid())
-  saveRDS(obj, tmp, compress = FALSE)
-  if (file.exists(task$checkpoint_path)) unlink(task$checkpoint_path)
-  if (!file.rename(tmp, task$checkpoint_path)) stop("Could not install RQ2 model checkpoint")
-  log_progress("completed")
-  list(index = task$index, path = task$checkpoint_path, reused = FALSE)
-}
-
+# Legacy fits are never run here; retain their task/cache identities so existing
+# checkpoints and disabled-model exports keep the same compatibility contract.
+# The log directory is also required by the following layered context stage.
 PROGRESS_LOG <- file.path("results", "logs", "rq2_model_progress.tsv")
 dir.create(dirname(PROGRESS_LOG), recursive = TRUE, showWarnings = FALSE)
-if (RUN_MODELS) {
-  writeLines("timestamp\ttask_index\tstatus\tdimension\tcomparison_pair_id\tmetric", PROGRESS_LOG)
-}
 
 model_tasks <- lapply(seq_len(nrow(task_catalog)), function(i) {
   meta <- task_catalog[i, ]
@@ -508,21 +413,8 @@ model_tasks <- lapply(seq_len(nrow(task_catalog)), function(i) {
 })
 model_tasks <- keep(model_tasks, ~length(.x$shard_paths) > 0L)
 model_results <- vector("list", nrow(task_catalog))
-if (RUN_MODELS && length(model_tasks)) {
-  order_idx <- order(vapply(model_tasks, `[[`, numeric(1), "cost"), decreasing = TRUE)
-  scheduled <- model_tasks[order_idx]
-  message("RQ2 v5 models: ", length(scheduled), " tasks across ", RQ2_WORKERS, " PSOCK workers; participant-grouped ", RQ2_CV_FOLDS, "-fold CV only")
-  message("RQ2 model progress: ", PROGRESS_LOG, " (one line per processed task; total = ", length(scheduled), ")")
-  refs <- ms_parallel_map(
-    scheduled, fit_task_checkpoint, workers = RQ2_WORKERS, seed = MODEL_SEED,
-    packages = c("tidyverse", "nlme"),
-    exports = c("rq2_model_helpers", "fit_task_checkpoint", "fit_task", "family_predictors", "EXTERNAL", "OUTCOMES", "safe_q")
-  )
-  for (r in refs) model_results[[r$index]] <- readRDS(r$path)
-} else if (!RUN_MODELS) {
-  message("RQ2 legacy fits skipped; layered context models run in the following stage when requested")
-}
-# Load valid cached checkpoints for tasks not populated above.
+message("RQ2 legacy fits skipped; layered context models run in the following stage when requested")
+# Load valid legacy checkpoints without fitting or modifying them.
 for (task in model_tasks) {
   if (is.null(model_results[[task$index]]) && file.exists(task$checkpoint_path)) {
     obj <- tryCatch(readRDS(task$checkpoint_path), error = function(e) NULL)

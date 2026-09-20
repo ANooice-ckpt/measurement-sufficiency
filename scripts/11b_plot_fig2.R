@@ -34,9 +34,11 @@ INFERENCE_RDS <- file.path("results", "rq1", "inference", contract$artifact_file
 RQ1_SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
 OUT_DIR <- file.path("results", "rq1", "figures")
 FIG2_WIDTH_IN <- 8.2
-FIG2_HEIGHT_IN <- 7.2
+FIG2_HEIGHT_IN <- 9.0
 ms_plot_require_files(c(INFERENCE_RDS, RQ1_SUMMARY_CSV), "Fig. 2 plotting inputs")
-dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
+if (!ms_plot_prep_only()) {
+  dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
+}
 
 a <- readRDS(INFERENCE_RDS)
 if (!identical(a$artifact_type, "rq1_inferential_preservation")) {
@@ -47,7 +49,7 @@ CORE_VERSION <- ms_plot_assert_core(a$core_artifact_version)
 RQ1_VERSION <- ms_plot_one_version(a$rq1_analysis_version, "rq1_analysis_version")
 INFERENCE_VERSION <- ms_plot_one_version(a$rq1_inference_version, "rq1_inference_version")
 ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
-ms_plot_assert_prefix(INFERENCE_VERSION, "rq1_inference_v5_composition_anchor8__", "rq1_inference_version")
+ms_plot_assert_prefix(INFERENCE_VERSION, "rq1_inference_v6_signal_anchor8__", "rq1_inference_version")
 
 rq1_summary <- readr::read_csv(RQ1_SUMMARY_CSV, show_col_types = FALSE, progress = FALSE)
 ms_plot_assert_core(rq1_summary$core_artifact_version, CORE_VERSION)
@@ -67,7 +69,8 @@ ms_plot_require_columns(
   contrast,
   c("candidate_config", "contrast_label", "contrast_order", "dimension", "metric", "metric_class",
     "outcome", "outcome_domain", "inference_deviation", "rq1_distortion_A", "status",
-    "distortion_between_ms", "distortion_within_ms", "distortion_within_fraction", "D_T", "f_W"),
+    "distortion_between_ms", "distortion_within_ms", "distortion_within_fraction", "D_T", "f_W",
+    "signal_difference_outcome_sd", "signal_reference_r2", "signal_candidate_r2", "signal_correlation"),
   "inferential preservation summary"
 )
 if (nrow(anchor_map) != contract$anchor_count || n_distinct(anchor_map$candidate_config) != contract$anchor_count) {
@@ -367,6 +370,36 @@ p2a <- p2a + theme(plot.margin = margin(2, 3, 0, 3),
                   plot.subtitle = element_text(margin = margin(b = 9)))
 p2c <- p2c + theme(plot.margin = margin(2, 3, 6, 3))
 
+# Coefficient movement and fitted-signal change are different quantities. Keep
+# every finite metric/outcome/contrast point; no outcome or significance screen,
+# added regression, smoothing, bootstrap or decision threshold is needed here.
+p2d <- ggplot(contrast_plot,
+              aes(inference_deviation, signal_difference_outcome_sd,
+                  colour = metric_class, shape = dimension, size = signal_reference_r2)) +
+  geom_hline(yintercept = 0, colour = "#C8CFD3", linewidth = .25) +
+  geom_point(alpha = .45, stroke = .25, na.rm = TRUE) +
+  facet_wrap(~outcome_domain, nrow = 1) +
+  scale_color_ms_metric(guide = "none") +
+  scale_shape_manual(values = c(placement = 16, optical = 17, temporal = 1),
+                     breaks = c("placement", "optical", "temporal"),
+                     labels = c("Placement", "Optical", "Temporal"), name = NULL) +
+  scale_size_continuous(range = c(.45, 1.7), breaks = c(.1, .5),
+                        labels = scales::label_percent(), name = "Reference within R²") +
+  scale_x_continuous(trans = scales::pseudo_log_trans(sigma = .08),
+                     limits = deviation_limits, breaks = deviation_breaks) +
+  scale_y_continuous(labels = scales::label_percent(),
+                     expand = expansion(mult = c(.02, .06))) +
+  labs(title = "d  Does coefficient movement change the association signal?",
+       subtitle = paste("Same matched days and paired fits; participant intercepts removed.",
+                        "Descriptive in-sample signals, not prediction accuracy."),
+       x = "Inferential deviation (reference-bootstrap uncertainty units)",
+       y = "Signal difference / within-outcome RMS") +
+  theme_ms_axes(base_size = 6.1, legend_position = "bottom", plot_title_size = 7) +
+  theme(axis.text = element_text(size = 5), strip.text = element_text(size = 5.5),
+        axis.title = element_text(size = 5.2), legend.text = element_text(size = 5.5),
+        plot.subtitle = element_text(size = 4.6, colour = "#666A6D"),
+        plot.margin = margin(5, 3, 3, 3))
+
 metric_legend <- ms_metric_legend(text_size = 5.35, point_size = 1.55, key_width_mm = 3.5)
 right <- cowplot::plot_grid(
   p2b, p2c, ncol = 1, rel_heights = c(.50, .50),
@@ -376,27 +409,29 @@ body <- cowplot::plot_grid(
   p2a, right, ncol = 2, rel_widths = c(.43, .57)
 )
 fig2 <- cowplot::plot_grid(
-  metric_legend, body, ncol = 1, rel_heights = c(.035, 1),
+  metric_legend, body, p2d, ncol = 1, rel_heights = c(.035, 1, .38),
   align = "v", axis = "l", greedy = TRUE
 )
 
-readr::write_csv(
-  reference_plot |>
-    mutate(metric = as.character(metric), metric_class = as.character(metric_class),
-           outcome = as.character(outcome), outcome_domain = as.character(outcome_domain)),
-  file.path("results", "rq1", "inference", "fig2_reference_association_landscape.csv"), na = ""
-)
-readr::write_csv(
-  contrast_summary |>
-    mutate(outcome_domain = as.character(outcome_domain), contrast_label = as.character(contrast_label)),
-  file.path("results", "rq1", "inference", "fig2_inferential_degradation.csv"), na = ""
-)
-readr::write_csv(
-  contrast_plot |>
-    mutate(metric_class = as.character(metric_class), outcome = as.character(outcome),
-           outcome_domain = as.character(outcome_domain), contrast_label = as.character(contrast_label)),
-  file.path("results", "rq1", "inference", "fig2_distortion_inference_link.csv"), na = ""
-)
+if (!ms_plot_prep_only()) {
+  readr::write_csv(
+    reference_plot |>
+      mutate(metric = as.character(metric), metric_class = as.character(metric_class),
+             outcome = as.character(outcome), outcome_domain = as.character(outcome_domain)),
+    file.path("results", "rq1", "inference", "fig2_reference_association_landscape.csv"), na = ""
+  )
+  readr::write_csv(
+    contrast_summary |>
+      mutate(outcome_domain = as.character(outcome_domain), contrast_label = as.character(contrast_label)),
+    file.path("results", "rq1", "inference", "fig2_inferential_degradation.csv"), na = ""
+  )
+  readr::write_csv(
+    contrast_plot |>
+      mutate(metric_class = as.character(metric_class), outcome = as.character(outcome),
+             outcome_domain = as.character(outcome_domain), contrast_label = as.character(contrast_label)),
+    file.path("results", "rq1", "inference", "fig2_distortion_inference_link.csv"), na = ""
+  )
+}
 
 ms_plot_save(fig2, file.path(OUT_DIR, "Fig2_RQ1_inferential_preservation.png"), FIG2_WIDTH_IN, FIG2_HEIGHT_IN)
 ms_plot_save(p2_reference + labs(title="Reference association distributions"),
@@ -428,4 +463,4 @@ ms_plot_write_manifest(
     rq3_analysis_version = NA_character_
   )
 )
-message("Fig. 2 complete: distortion composition, inferential displacement and frozen conditional component explanation.")
+message("Fig. 2 complete: distortion composition, coefficient displacement and association-signal preservation.")

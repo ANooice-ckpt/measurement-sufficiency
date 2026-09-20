@@ -41,7 +41,9 @@ ms_plot_require_files(
   c(SUMMARY_CSV, AVAILABILITY_CSV, LOCAL_CSV, RANK_METRIC_CSV, RANK_SUMMARY_CSV, RANK_ASSOC_CSV),
   "RQ1 plotting inputs"
 )
-dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
+if (!ms_plot_prep_only()) {
+  dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
+}
 
 DIMENSIONS <- c("placement", "optical", "temporal", "duration")
 DIM_TITLES <- c(
@@ -159,9 +161,9 @@ local <- local |>
   )
 
 metric_order <- ms_metric_order(summary |> mutate(dimension = as.character(dimension)))
-readr::write_csv(metric_order, file.path("results", "rq1", "figure_metric_order.csv"), na = "")
-summary_plot <- summary |> mutate(dimension = as.character(dimension)) |> ms_add_metric_order(metric_order)
-availability_plot <- availability |> mutate(dimension = as.character(dimension)) |> ms_add_metric_order(metric_order)
+if (!ms_plot_prep_only()) {
+  readr::write_csv(metric_order, file.path("results", "rq1", "figure_metric_order.csv"), na = "")
+}
 
 # -----------------------------------------------------------------------------
 # a. Absolute versus relational preservation across measurement dimensions
@@ -790,19 +792,21 @@ local_overall <- local_display |>
     .groups = "drop"
   )
 
-readr::write_csv(
-  local_summary |>
-    mutate(metric_class = as.character(metric_class)) |>
-    select(
-      dimension, metric_class, transition, step_order, n_metrics,
-      share_median, share_q25, share_q75
-    ),
-  file.path("results", "rq1", "fig1_local_response_aggregated.csv"), na = ""
-)
-readr::write_csv(
-  local_overall,
-  file.path("results", "rq1", "fig1_local_response_overall.csv"), na = ""
-)
+if (!ms_plot_prep_only()) {
+  readr::write_csv(
+    local_summary |>
+      mutate(metric_class = as.character(metric_class)) |>
+      select(
+        dimension, metric_class, transition, step_order, n_metrics,
+        share_median, share_q25, share_q75
+      ),
+    file.path("results", "rq1", "fig1_local_response_aggregated.csv"), na = ""
+  )
+  readr::write_csv(
+    local_overall,
+    file.path("results", "rq1", "fig1_local_response_overall.csv"), na = ""
+  )
+}
 
 local_xmax <- max(c(local_summary$share_q75, local_summary$share_median,
                     local_overall$share_q75, local_overall$share_median), na.rm = TRUE) * 1.15
@@ -907,7 +911,6 @@ fig1 <- cowplot::plot_grid(
   align = "v", axis = "l", greedy = TRUE
 )
 
-ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.pdf"), FIG1_WIDTH_IN, FIG1_HEIGHT_IN)
 ms_plot_save(fig1, file.path(OUT_DIR, "Fig1_RQ1.png"), FIG1_WIDTH_IN, FIG1_HEIGHT_IN)
 
 

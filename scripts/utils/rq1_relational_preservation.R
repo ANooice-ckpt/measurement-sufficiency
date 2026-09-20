@@ -113,8 +113,10 @@ rank_base <- rank_rows |>
     rank_unavailable_reason, rank_estimand, core_artifact_version, rq1_analysis_version
   )
 readr::write_csv(rank_base, file.path(OUT, "rq1_relational_preservation.csv"), na = "")
-# Compatibility audit name retained, but it is now written by RQ1 rather than the plotter.
-readr::write_csv(rank_base, file.path(OUT, "fig1_rank_preservation.csv"), na = "")
+# MS_EXPORT_COMPAT_CSV=1 restores the legacy Fig.1 audit aliases on demand.
+if (identical(Sys.getenv("MS_EXPORT_COMPAT_CSV", unset = "0"), "1")) {
+  readr::write_csv(rank_base, file.path(OUT, "fig1_rank_preservation.csv"), na = "")
+}
 
 rank_dimension_metric <- rank_base |>
   filter(rank_preservation_available, is.finite(A_mean_absolute), is.finite(rank_loss)) |>
@@ -157,8 +159,9 @@ if (!nrow(rank_dimension_summary)) stop("No non-circular rows available for RQ1 
 readr::write_csv(rank_dimension_metric, file.path(OUT, "rq1_relational_preservation_dimension_metric.csv"), na = "")
 readr::write_csv(rank_dimension_summary, file.path(OUT, "rq1_relational_preservation_dimension_summary.csv"), na = "")
 readr::write_csv(rank_dimension_assoc, file.path(OUT, "rq1_distortion_rank_association.csv"), na = "")
-# Compatibility audit name retained; no figure code computes this table anymore.
-readr::write_csv(rank_dimension_summary, file.path(OUT, "fig1_panel_a_aggregated.csv"), na = "")
+if (identical(Sys.getenv("MS_EXPORT_COMPAT_CSV", unset = "0"), "1")) {
+  readr::write_csv(rank_dimension_summary, file.path(OUT, "fig1_panel_a_aggregated.csv"), na = "")
+}
 rm(rank_fragments, rank_rows)
 invisible(gc(FALSE))
 

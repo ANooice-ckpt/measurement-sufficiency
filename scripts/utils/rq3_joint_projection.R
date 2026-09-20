@@ -153,6 +153,22 @@ pareto_frequency <- pareto_summary |>
   )
 readr::write_csv(pareto_occupancy, file.path(OUT, "rq3_pareto_occupancy.csv"), na = "")
 readr::write_csv(pareto_summary, file.path(OUT, "rq3_pareto_frontiers.csv"), na = "")
-readr::write_csv(pareto_summary, file.path(OUT, "rq3_pareto_ever.csv"), na = "")
+# Optional legacy alias of the unchanged canonical frontier table.
+if (identical(Sys.getenv("MS_EXPORT_COMPAT_CSV", unset = "0"), "1")) {
+  readr::write_csv(pareto_summary, file.path(OUT, "rq3_pareto_ever.csv"), na = "")
+}
 readr::write_csv(pareto_frequency, file.path(OUT, "rq3_pareto_frequency.csv"), na = "")
+
+# Keep the existing pair-summary data-frame contract and filenames. The additive
+# attribute stores task decisions beside their frozen joint source; old readers
+# still see the same pair rows and columns. No missing target is silently dropped.
+task_inventory <- readxl::read_excel("external/zauner_position/data/metric_types.xlsx") |>
+  dplyr::transmute(metric = name, metric_class = metric_type)
+if (dplyr::n_distinct(task_inventory$metric) != 54L) stop("Expected 54 task target definitions")
+task_projection <- rq3_task_projection(joint, task_inventory, tol = NUMERIC_TOL)
+task_projection$core_artifact_version <- CORE_VERSION
+task_projection$rq1_analysis_version <- RQ1_VERSION
+task_projection$rq3_analysis_version <- RQ3_VERSION
+attr(joint_pair_summary, "task_projection") <- task_projection
+saveRDS(joint_pair_summary, file.path(OUT, "rq3_joint_stability.rds"), compress = "xz")
 

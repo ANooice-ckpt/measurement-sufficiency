@@ -33,7 +33,9 @@ ms_plot_require_files(c(RQ1_SUMMARY_CSV, OBSERVED_RDS, SUFFICIENCY_CSV, REQUIREM
                         UNORDERED_CSV, COVERAGE_CSV, CONVERGENCE_CSV, JOINT_CSV,
                         PARETO_OCCUPANCY_CSV),
                         "RQ3 v5 plotting inputs")
-dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
+if (!ms_plot_prep_only()) {
+  dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
+}
 
 METRIC_CLASSES <- MS_METRIC_CLASSES
 ORDERED_DIMS <- c("temporal", "duration")
@@ -102,7 +104,6 @@ if (!all(sort(unique(joint$n_days)) %in% DURATION_LEVELS)) {
 if (!grepl(ms_analysis_design_id(), RQ3_VERSION, fixed = TRUE)) {
   stop("RQ3 plotting inputs do not match the current frozen analysis design", call. = FALSE)
 }
-metric_order <- ms_metric_order(rq1_summary)
 
 safe_median <- function(x) {
   x <- x[is.finite(x)]
@@ -235,21 +236,23 @@ pair_palette <- if (length(pair_levels) <= length(MS_THREE_COLORS)) {
 } else {
   setNames(grDevices::hcl.colors(length(pair_levels), palette = "Dark 3"), pair_levels)
 }
-readr::write_csv(
-  resolved_coverage |>
-    mutate(dimension = as.character(dimension)),
-  file.path("results", "rq3", "fig4_sufficient_metric_coverage.csv"), na = ""
-)
+if (!ms_plot_prep_only()) {
+  readr::write_csv(
+    resolved_coverage |>
+      mutate(dimension = as.character(dimension)),
+    file.path("results", "rq3", "fig4_sufficient_metric_coverage.csv"), na = ""
+  )
 
-readr::write_csv(
-  requirement_summary |>
-    mutate(metric_class = as.character(metric_class), dimension = as.character(dimension)),
-  file.path("results", "rq3", "fig4_minimum_requirement_summary.csv"), na = ""
-)
-readr::write_csv(observed_display,
-                 file.path("results", "rq3", "fig4_observed_stability.csv"), na = "")
-readr::write_csv(pair_ecdf,
-                 file.path("results", "rq3", "fig4_unordered_substitutability_ecdf.csv"), na = "")
+  readr::write_csv(
+    requirement_summary |>
+      mutate(metric_class = as.character(metric_class), dimension = as.character(dimension)),
+    file.path("results", "rq3", "fig4_minimum_requirement_summary.csv"), na = ""
+  )
+  readr::write_csv(observed_display,
+                   file.path("results", "rq3", "fig4_observed_stability.csv"), na = "")
+  readr::write_csv(pair_ecdf,
+                   file.path("results", "rq3", "fig4_unordered_substitutability_ecdf.csv"), na = "")
+}
 
 
 FIG5_TOLERANCE_SLICES <- c(.10, .25, .50, .75)
@@ -548,9 +551,6 @@ pair_e50 <- pair_ecdf |>
 
 # Panel c displays frozen RQ3 substitutability only; retired recovery curves
 # and their filled markers are no longer overlaid or auto-discovered.
-recovery_overlay_used <- FALSE
-recovery_version <- NA_character_
-recovery_run_dir <- NA_character_
 p4c_subtitle <- "open points = ε50; faint vertical guides = Fig. 6 tolerance slices"
 
 p4c <- ggplot(
@@ -603,14 +603,9 @@ fig4 <- cowplot::plot_grid(
   metric_legend, fig4_body, ncol = 1,
   rel_heights = c(.042, 1), align = "v", axis = "l", greedy = TRUE
 )
-ms_plot_save(fig4, file.path(OUT_DIR, "Fig4_RQ3.pdf"), 9.0, 6.2)
 ms_plot_save(fig4, file.path(OUT_DIR, "Fig4_RQ3.png"), 9.0, 6.2)
-readr::write_csv(pair_e50, file.path("results", "rq3", "fig4_unordered_epsilon50.csv"), na = "")
-if (recovery_overlay_used) {
-  readr::write_csv(pair_recovered_ecdf,
-                   file.path("results", "rq3", "fig4_unordered_recovered_substitutability_ecdf.csv"), na = "")
-  readr::write_csv(pair_recovered_e50,
-                   file.path("results", "rq3", "fig4_unordered_recovered_epsilon50.csv"), na = "")
+if (!ms_plot_prep_only()) {
+  readr::write_csv(pair_e50, file.path("results", "rq3", "fig4_unordered_epsilon50.csv"), na = "")
 }
 
 message("RQ3 v5 figures complete: single-dimension sufficiency and joint tolerance landscapes")
@@ -619,14 +614,10 @@ ms_plot_write_manifest(
   file.path(OUT_DIR, "figure_artifact_manifest.csv"),
   tibble(
     figure = 'Fig4_RQ3',
-    input_artifact = if (recovery_overlay_used) {
-      'rq3_observed_stability+sufficiency+unordered_substitutability+rq2_recovery'
-    } else {
-      'rq3_observed_stability+sufficiency+unordered_substitutability'
-    },
+    input_artifact = 'rq3_observed_stability+sufficiency+unordered_substitutability',
     core_artifact_version = CORE_VERSION,
     rq1_analysis_version = RQ1_VERSION,
-    rq2_analysis_version = if (recovery_overlay_used) recovery_version else NA_character_,
+    rq2_analysis_version = NA_character_,
     rq3_analysis_version = RQ3_VERSION
   )
 )

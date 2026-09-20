@@ -148,7 +148,8 @@ writeLines(c(
   "Recovered after the cached nested joint-pair summary; the expensive Cartesian nested-pair stage was not recomputed.",
   "Joint temporal-duration pairs are actual nested-window comparisons.",
   "Joint A/B and R_obs are aggregated by generic (resolution, duration) configuration type within fixed support x placement x optical facets.",
-  "Pareto dominance treats coarser temporal resolution and shorter monitoring duration as lower burden inside the sufficient region."
+  "Pareto dominance treats coarser temporal resolution and shorter monitoring duration as lower burden inside the sufficient region.",
+  "Task projections are rebuilt from joint stability for all required targets; the existing joint-stability RDS carries their inventory, availability and full sufficient/Pareto intervals."
 ), file.path(OUT, "RQ3_RUN_REPORT.md"))
 
 message("RQ3 recovery: build canonical figures")

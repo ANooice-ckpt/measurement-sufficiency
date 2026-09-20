@@ -2,19 +2,80 @@
 # No raw exposure processing, recovery fitting, or RQ3 recomputation.
 source("scripts/utils/rq2_risk_models.R")
 
-# Fresh builds can export the same configuration-local dictionary without ever
-# fitting historical recovery models. Existing validated input exports are reused.
-reliability_prepare_inputs <- function() {
-  inputs<-recovery_inputs();if(length(inputs$problems))stop(paste(inputs$problems,collapse="\n"))
+# All helpers that assemble/validate the daily export participate in cache
+# invalidation. Feature counts alone cannot establish dictionary compatibility.
+reliability_input_code <- function() c(
+  "scripts/12d_rq2_recovery.R", "scripts/utils/rq1_inference.R",
+  "scripts/utils/rq1_inference_contract.R", "scripts/utils/rq1_pairwise_artifacts.R",
+  "scripts/utils/rq2_context_features.R", "scripts/utils/rq_context.R",
+  "scripts/utils/melidos_io.R", "scripts/utils/analysis_design.R",
+  "scripts/utils/artifact_validation.R", "scripts/utils/rq2_conditional_reliability.R"
+)
+
+reliability_input_provenance <- function(inputs) {
+  if(length(inputs$problems))stop(paste(inputs$problems,collapse="\n"))
   p<-list(core_artifact_version=inputs$core,rq1_analysis_version=inputs$version,
     predictors=recovery_predictors(),signature_predictors=recovery_signature_predictors(),
     temporal_predictors=recovery_temporal_predictors(),input_md5=tools::md5sum(inputs$paths),
     builder_version="conditional_reliability_daily_inputs_v1",
-    builder_code_md5=tools::md5sum(c("scripts/12d_rq2_recovery.R","scripts/utils/rq2_context_features.R",
-      "scripts/utils/rq2_conditional_reliability.R")))
+    builder_code_md5=tools::md5sum(reliability_input_code()))
+  if(anyNA(p$input_md5) || !length(p$input_md5) || anyNA(p$builder_code_md5)) {
+    stop("Cannot fingerprint current daily-input sources")
+  }
+  p
+}
+
+reliability_hashes_match <- function(recorded, current, subset = FALSE) {
+  valid <- function(x) is.character(x) && length(x)>0L && !anyNA(x) &&
+    !is.null(names(x)) && !anyNA(names(x)) && all(nzchar(names(x))) &&
+    !anyDuplicated(names(x)) && all(grepl("^[a-fA-F0-9]{32}$", x))
+  if(!valid(recorded) || !valid(current))return(FALSE)
+  if(!subset && !setequal(names(recorded),names(current)))return(FALSE)
+  identical(unname(recorded[names(current)]),unname(current))
+}
+
+reliability_input_cache_matches <- function(m, expected) {
+  if(!is.list(m) || !isTRUE(m$complete) || !is.list(m$provenance))return(FALSE)
+  p<-m$provenance
+  fields<-c("core_artifact_version","rq1_analysis_version","predictors",
+    "signature_predictors","temporal_predictors")
+  if(!all(vapply(fields,function(nm)identical(p[[nm]],expected[[nm]]),logical(1))) ||
+     !reliability_hashes_match(p$input_md5,expected$input_md5))return(FALSE)
+  if(identical(p$builder_version,expected$builder_version)) {
+    return(reliability_hashes_match(p$builder_code_md5,expected$builder_code_md5))
+  }
+  if(!is.null(p$builder_version))return(FALSE)
+  # Historical recovery exports recorded a larger code dictionary. Require all
+  # current input-building dependencies that existed on that route; the new
+  # reliability exporter itself was not used by the historical builder.
+  if(!identical(p$estimator_version,"anchored_shared_split_candidate_library_v2"))return(FALSE)
+  code<-expected$builder_code_md5
+  code<-code[names(code)!="scripts/utils/rq2_conditional_reliability.R"]
+  reliability_hashes_match(p$code_md5,code,subset=TRUE)
+}
+
+reliability_input_files <- function(m,path) {
+  if(!is.list(m) || !is.data.frame(m$statuses))return(NULL)
+  ids<-m$statuses$task_index
+  if(!is.numeric(ids) || !length(ids) || anyNA(ids) ||
+     any(!is.finite(ids) | ids<1 | ids!=floor(ids) | ids>.Machine$integer.max) ||
+     anyDuplicated(ids))return(NULL)
+  files<-file.path(path,"inputs",sprintf("task_%04d.rds",as.integer(ids)))
+  if(!all(file.exists(c(files,file.path(path,"participant_folds.csv")))))return(NULL)
+  files
+}
+
+# Fresh builds retain the same dictionary and partition seed. A matching path
+# is reusable only when its manifest and complete input set also validate.
+reliability_prepare_inputs <- function(inputs = recovery_inputs()) {
+  p<-reliability_input_provenance(inputs)
   root<-file.path("results/rq2/reliability_inputs",inputs$version,recovery_hash(p))
   dest<-file.path(root,"input_manifest.rds")
-  if(file.exists(dest))return(root)
+  if(file.exists(dest)) {
+    m<-tryCatch(readRDS(dest),error=function(e)NULL)
+    if(reliability_input_cache_matches(m,p) && !is.null(reliability_input_files(m,root)))return(root)
+    stop("Incomplete or incompatible daily-input cache: ",root)
+  }
   x<-recovery_pairs(inputs)
   signature<-recovery_signature(recovery_read_csv(inputs$paths[["unit_context"]]),inputs$core,requested=x)
   x<-recovery_join_information(x,signature,inputs$temporal)
@@ -37,27 +98,28 @@ reliability_prepare_inputs <- function() {
 }
 
 reliability_source <- function(path=Sys.getenv("RQ2_RELIABILITY_INPUT_RUN","")) {
+  # Explicit frozen-export selection is validation-only. Automatic --run input
+  # preparation retains the existing daypart build route when inputs are stale.
+  inputs<-recovery_inputs(allow_build=!nzchar(path))
+  expected<-reliability_input_provenance(inputs)
   if(!nzchar(path)) {
-    current_version<-rq1_pairwise_version(readRDS("results/rq1/rq1_pairwise_change_long.rds"))
     candidates<-c(Sys.glob("results/rq2/reliability_inputs/*/*/input_manifest.rds"),Sys.glob("results/rq2/recovery/*/*/recovery_manifest.rds"))
     candidates<-candidates[vapply(candidates,function(p){
-      m<-readRDS(p);identical(m$provenance$rq1_analysis_version,current_version) &&
-        (identical(m$provenance$builder_version,"conditional_reliability_daily_inputs_v1") ||
-         identical(m$provenance$estimator_version,"anchored_shared_split_candidate_library_v2")) && isTRUE(m$complete)
+      m<-tryCatch(readRDS(p),error=function(e)NULL)
+      reliability_input_cache_matches(m,expected) && !is.null(reliability_input_files(m,dirname(p)))
     },logical(1))]
-    if(!length(candidates))path<-reliability_prepare_inputs()
+    if(!length(candidates))path<-reliability_prepare_inputs(inputs)
     else if(length(candidates)==1L)path<-dirname(candidates)
     else stop("Set RQ2_RELIABILITY_INPUT_RUN to one immutable daily-input export")
   }
   manifest<-if(file.exists(file.path(path,"input_manifest.rds")))"input_manifest.rds" else "recovery_manifest.rds"
-  m<-readRDS(file.path(path,manifest));p<-m$provenance
-  current<-readRDS("results/rq1/rq1_pairwise_change_long.rds")
-  stopifnot(identical(p$rq1_analysis_version,rq1_pairwise_version(current)),
-    identical(p$core_artifact_version,current$core_artifact_version),
-    length(p$signature_predictors)==16L,length(c(p$predictors,p$temporal_predictors))==50L)
+  m<-readRDS(file.path(path,manifest))
+  if(!reliability_input_cache_matches(m,expected)) {
+    stop("Stale or incompatible daily-input export: ",path)
+  }
+  files<-reliability_input_files(m,path)
+  if(is.null(files))stop("Missing or invalid frozen daily task inputs/folds")
   catalog<-data.table::as.data.table(m$statuses)
-  files<-file.path(path,"inputs",sprintf("task_%04d.rds",catalog$task_index))
-  if(any(!file.exists(files)))stop("Missing frozen daily task inputs")
   list(path=path,manifest=m,catalog=catalog,files=files)
 }
 
