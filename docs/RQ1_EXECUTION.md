@@ -43,6 +43,11 @@ For ordered dimensions, state_a is the less demanding state and state_b the more
 - Temporal: all `choose(6,2)=15` pairs among the frozen primary states **10, 20, 30, 40, 60 and 120 s**; adjacent transitions are flagged separately; 10-s anchor projections are a slice, not the canonical ontology. Five minutes is a core sensitivity state only and does not enter the primary RQ1 pair map.
 - Duration: canonical rows retain every nested pair of 1–6 complete-day windows; inferential summaries project them to the 15 generic n-day comparison types, with adjacent d -> d+1 types flagged.
 
+Duration pairs and their shared scale anchors include only the primary temporal
+states. The 300-s core sensitivity values must be excluded before either step.
+The `rq1_v5_primary_duration_type_canonical__...` revision enforces this on both
+partitioned and in-memory duration inputs and does not reuse earlier pair parts.
+
 All pairs within a lattice join one standardizer. Primary scaling is SD; IQR/1.349 is sensitivity. The empirical distribution comes before A=mean(abs(z)) and B=mean(z); A >= |B| is checked.
 
 ## Downstream inferential-preservation extension

@@ -37,13 +37,18 @@ LOG="results/logs/downstream_v5.log"
 
   echo "===== SYNTHETIC ENGINEERING PREFLIGHT ====="
   Rscript --vanilla scripts/tests/validate_engineering.R
+  Rscript --vanilla scripts/tests/validate_rq1_primary_duration.R
+  Rscript --vanilla scripts/tests/validate_reliability_contract.R
 
   echo "===== STRUCTURAL PREFLIGHT ====="
   Rscript -e '
     suppressPackageStartupMessages(library(tidyverse))
     source("scripts/utils/analysis_design.R")
+    source("scripts/utils/core_artifacts.R")
+    source("scripts/utils/artifact_validation.R")
     source("scripts/utils/rq1_pairwise_artifacts.R")
     manifest <- readRDS("results/rq1/rq1_pairwise_change_long.rds")
+    ms_assert_version(manifest, "core_artifact_version", core_artifact_version())
     if (!is.list(manifest) || !identical(manifest$artifact_type, "partitioned_rq1_pairwise_change")) {
       stop("RQ1 pairwise artifact is not the required partitioned manifest")
     }

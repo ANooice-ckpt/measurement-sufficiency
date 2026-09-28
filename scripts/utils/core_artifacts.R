@@ -5,7 +5,7 @@ if (!exists("ms_primary_temporal_s", mode = "function")) {
 }
 
 core_artifact_version <- function() {
-  paste0("v4_sparse_sampling_complete_days__", ms_core_design_id())
+  paste0("v5_native10s_exact_hours__", ms_core_design_id())
 }
 
 core_site_metadata <- function() {
@@ -106,33 +106,110 @@ core_align_all_positions <- function(eye0, chest0, wrist0) {
     dplyr::rename(MEDI_eye = MEDI, LIGHT_eye = LIGHT)
 }
 
+core_source_sampling_audit <- function(light, site, placement) {
+  light |>
+    dplyr::group_by(Id) |>
+    dplyr::group_modify(~{
+      sec <- as.numeric(.x$Datetime)
+      integer_seconds <- all(is.finite(sec)) && all(abs(sec - round(sec)) <= 1e-6)
+      ordered <- sort(unique(sec[is.finite(sec)]))
+      intervals <- diff(ordered)
+      minimum <- if (length(intervals)) min(intervals) else NA_real_
+      modal <- if (length(intervals)) {
+        frequencies <- table(intervals)
+        as.numeric(names(frequencies)[which.max(frequencies)])
+      } else NA_real_
+      phase <- if (length(ordered) && integer_seconds) round(ordered[[1L]]) %% 10L else NA_real_
+      stable_phase <- integer_seconds && is.finite(phase) && all((round(sec) - phase) %% 10L == 0L)
+      # Missing source rows may create multiples of 10 s. Require positive
+      # evidence of a native 10-s step, not merely divisibility by 10 (a 60-s
+      # logger also passes the latter). Never reconstruct absent observations.
+      native_10s <- stable_phase && any(abs(intervals - 10) <= 1e-6)
+      tibble::tibble(
+        source_n_rows = length(sec), source_min_interval_s = minimum,
+        source_modal_interval_s = modal, source_grid_phase_s = phase,
+        source_available = native_10s,
+        unavailable_reason = dplyr::case_when(
+          !integer_seconds ~ "source timestamps are non-finite or not integer seconds",
+          !length(intervals) ~ "source cadence cannot be established",
+          !stable_phase ~ "source timestamps do not share a stable 10-s phase",
+          !native_10s ~ "source cadence has no native 10-s step",
+          TRUE ~ NA_character_
+        )
+      )
+    }) |>
+    dplyr::ungroup() |>
+    dplyr::mutate(site = site, placement = placement, .before = 1)
+}
+
+core_filter_native_sources <- function(sources, site, support_id) {
+  if (!"eye" %in% names(sources)) stop("Source support requires eye data")
+  audit <- dplyr::bind_rows(lapply(names(sources), function(placement) {
+    core_source_sampling_audit(sources[[placement]], site, placement)
+  }))
+  # The reference participant set is eye-specific; unavailable candidate
+  # sources affect only the supports that actually require that placement.
+  required <- tidyr::crossing(Id = unique(sources$eye$Id), placement = names(sources))
+  audit <- required |>
+    dplyr::left_join(audit, by = c("Id", "placement")) |>
+    dplyr::mutate(
+      support_id = support_id, site = site,
+      unavailable_reason = dplyr::if_else(is.na(source_available), "required placement source is absent", unavailable_reason),
+      source_available = dplyr::coalesce(source_available, FALSE)
+    ) |>
+    dplyr::group_by(Id) |>
+    dplyr::mutate(support_available = all(source_available)) |>
+    dplyr::ungroup() |>
+    dplyr::select(support_id, site, Id, placement, dplyr::everything())
+  eligible <- unique(audit$Id[audit$support_available])
+  list(
+    sources = lapply(sources, function(x) x[x$Id %in% eligible, , drop = FALSE]),
+    audit = audit
+  )
+}
+
 core_prepare_support <- function(site, support_id) {
   is_full <- grepl("_full$", support_id)
+  if (identical(site, "MPI") && !support_id %in% c("eye_medi", "eye_full")) return(NULL)
+  placements <- if (grepl("chest_wrist", support_id, fixed = TRUE)) c("eye", "chest", "wrist") else
+    if (grepl("chest", support_id, fixed = TRUE)) c("eye", "chest") else
+      if (grepl("wrist", support_id, fixed = TRUE)) c("eye", "wrist") else "eye"
+  sources <- stats::setNames(lapply(placements, function(placement) {
+    modality <- if (placement == "eye") "light_glasses" else paste0("light_", placement)
+    load_raw_file(raw_data_path(site, modality), modality)
+  }), placements)
+  checked <- core_filter_native_sources(sources, site, support_id)
+  sources <- checked$sources
+  eye0 <- sources$eye
+  finish <- function(x) {
+    attr(x, "source_sampling_audit") <- checked$audit
+    x
+  }
+  if (!nrow(eye0)) {
+    return(finish(tibble::tibble(support_id = character(), site = character(), Id = character(),
+                                 Date = as.Date(character()), Datetime = as.POSIXct(character()))))
+  }
+  eligible <- unique(eye0$Id)
+  sleep <- load_raw_file(raw_data_path(site, "sleepdiaries"), "sleepdiaries")
+  sleep <- sleep[sleep$Id %in% eligible, , drop = FALSE]
+  wear <- load_raw_file(raw_data_path(site, "wearlog"), "wearlog")
+  wear <- wear[wear$Id %in% eligible, , drop = FALSE]
+  states <- core_build_state_intervals(sleep, wear)
   if (support_id %in% c("eye_medi", "eye_full")) {
-    eye0 <- load_raw_file(raw_data_path(site, "light_glasses"), "light_glasses")
-    sleep <- load_raw_file(raw_data_path(site, "sleepdiaries"), "sleepdiaries")
-    wear <- load_raw_file(raw_data_path(site, "wearlog"), "wearlog")
-    states <- core_build_state_intervals(sleep, wear)
     x <- eye0 |>
       dplyr::transmute(site = site, Id, Datetime, MEDI_eye = MEDI, LIGHT_eye = LIGHT) |>
       core_annotate_filter(states, c("MEDI_eye", "LIGHT_eye"))
     if (is_full) {
       x <- core_apply_common_mask(x, c("MEDI_eye", "LIGHT_eye"), c("MEDI_eye", "LIGHT_eye"))
     }
-    return(core_complete_days(x) |>
+    return(finish(core_complete_days(x) |>
       dplyr::distinct(site, Id, Datetime, .keep_all = TRUE) |>
-      dplyr::mutate(support_id = support_id, .before = 1))
+      dplyr::mutate(support_id = support_id, .before = 1)))
   }
 
-  if (identical(site, "MPI")) return(NULL)
-  eye0 <- load_raw_file(raw_data_path(site, "light_glasses"), "light_glasses")
-  sleep <- load_raw_file(raw_data_path(site, "sleepdiaries"), "sleepdiaries")
-  wear <- load_raw_file(raw_data_path(site, "wearlog"), "wearlog")
-  states <- core_build_state_intervals(sleep, wear)
-
   if (grepl("chest_wrist", support_id, fixed = TRUE)) {
-    chest0 <- load_raw_file(raw_data_path(site, "light_chest"), "light_chest")
-    wrist0 <- load_raw_file(raw_data_path(site, "light_wrist"), "light_wrist")
+    chest0 <- sources$chest
+    wrist0 <- sources$wrist
     x <- core_align_all_positions(eye0, chest0, wrist0) |>
       dplyr::mutate(site = site, .before = 1)
     measure_cols <- c(
@@ -144,7 +221,7 @@ core_prepare_support <- function(site, support_id) {
     required <- if (is_full) measure_cols else c("MEDI_eye", "MEDI_chest", "MEDI_wrist")
   } else {
     position <- if (grepl("chest", support_id, fixed = TRUE)) "chest" else "wrist"
-    candidate0 <- load_raw_file(raw_data_path(site, paste0("light_", position)), paste0("light_", position))
+    candidate0 <- sources[[position]]
     x <- core_align_pair(eye0, candidate0, position) |>
       dplyr::mutate(site = site, .before = 1)
     med_nm <- paste0("MEDI_", position)
@@ -155,9 +232,9 @@ core_prepare_support <- function(site, support_id) {
   }
 
   x <- core_apply_common_mask(x, required, measure_cols)
-  core_complete_days(x) |>
+  finish(core_complete_days(x) |>
     dplyr::distinct(site, Id, Datetime, .keep_all = TRUE) |>
-    dplyr::mutate(support_id = support_id, .before = 1)
+    dplyr::mutate(support_id = support_id, .before = 1))
 }
 
 core_support_grid <- function() {
@@ -235,6 +312,9 @@ core_make_series <- function(support, placement, optical, resolution_s) {
   if (any(!is.finite(sec))) stop("Non-finite timestamp in core support")
   sec_round <- round(sec)
   if (any(abs(sec - sec_round) > 1e-6)) stop("Core source timestamps are not on integer seconds")
+  native_step <- vapply(split(sec_round, paste(x$site, x$Id, sep = "|")),
+                        function(z) any(diff(sort(unique(z))) == 10L), logical(1))
+  if (any(!native_step)) stop("Core support contains a source without native 10-s steps: ", paste(names(native_step)[!native_step], collapse = ", "))
   phase10 <- core_source_grid_phase(x$site, x$Id, sec_round)
   if (anyDuplicated(paste(x$site, x$Id, sec_round, sep = "|"))) {
     stop("Duplicate source timestamps in core_make_series")

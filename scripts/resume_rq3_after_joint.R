@@ -1,5 +1,6 @@
 suppressPackageStartupMessages(library(tidyverse))
 source("scripts/utils/analysis_design.R")
+source("scripts/utils/core_artifacts.R")
 source("scripts/utils/paths.R")
 source("scripts/utils/artifact_validation.R")
 source("scripts/utils/duration_artifacts.R")
@@ -39,6 +40,7 @@ if (!is.null(pairwise_artifact$analysis_design_id) &&
 CORE_VERSION <- unique(na.omit(c(pairwise_artifact$core_artifact_version, pair_summary$core_artifact_version)))
 if (length(CORE_VERSION) != 1L) stop("Core version mismatch")
 CORE_VERSION <- CORE_VERSION[[1]]
+ms_assert_version(pairwise_artifact, "core_artifact_version", core_artifact_version())
 ms_assert_version(duration_artifact, "core_artifact_version", CORE_VERSION)
 RQ3_VERSION <- paste0("rq3_v8_axis_composition__", RQ1_VERSION, "__", ANALYSIS_DESIGN_ID)
 single <- readr::read_csv(SINGLE_CSV, show_col_types = FALSE, progress = FALSE)

@@ -9,7 +9,7 @@ context to reconstruct signed exposure errors.
 
 For each of 52 daily metrics and eight daily anchor contrasts, D=abs(z) retains
 the frozen RQ1 scale and maximal metric-specific support. Two LIGHT-only targets
-are unavailable: 414 of 416 tasks are estimable. No human-state outcome matching
+are unavailable, leaving at most 414 of 416 structurally eligible tasks. No human-state outcome matching
 is used. Context is the existing common 18 daily + 32 daypart dictionary;
 measurement information is the candidate target plus 16 candidate-only hourly
 signatures. Neither high-information exposure state nor participant/site/date
@@ -29,17 +29,18 @@ excluding the intercept (capped at 80% of numerical rank). No outer-score tuning
 metric-specific features or transition-specific model choices are used.
 
 The measurement fit remains unchanged when a second ten-df context block is
-added. Both context features and response residuals are residualized against
-the measurement fit on training data. This is regularized residualization, not
-an exact conditional-independence test or causal orthogonal score. Extra-context
-coefficients describe a tested prediction procedure, not mutual information.
-Probabilities are clipped and projected by squared-distance isotonic projection
-to decrease with increasing tolerance. Mean risk is nonnegative.
+added. Context features are projected off the training measurement design by an
+unpenalized, rank-aware SVD projection. A ten-df ridge model fits the measurement
+response residuals using that remaining context block. This does not establish
+conditional independence or a causal orthogonal score. Extra-context coefficients
+describe a prediction procedure, not mutual information. Exceedance probabilities
+are first projected onto the nonincreasing cone, then the fitted block means are
+clipped to [0,1]; clipping inputs first changes the squared-distance projection.
+Mean risk is nonnegative.
 
 Controls are the outer-training configuration mean, outer-training site means,
-and a twenty-df measurement-only model. The last control is important: optical
-context gains over the ten-df baseline do not exceed a stronger measurement-only
-decoder. A positive context increment alone must not be called proof of unique
+and a twenty-df measurement-only model. The last control separates added context
+from the effect of increasing decoder capacity. A positive context increment alone must not be called proof of unique
 information unavailable to every measurement-based estimator.
 
 ## Validation and interpretation
@@ -76,10 +77,10 @@ Rscript scripts/13b_plot_fig4.R
 
 Workers default to 12 on Windows and 36 on Linux, bounded by physical cores and
 environment overrides. Core/RQ1/Fig.3/RQ3 are not rebuilt. No XGBoost installation
-is needed for the active analysis. The current run reuses the immutable input
-export under `results/rq2/recovery/.../bc25abee872aed4cd609ce7233fcc7a5/inputs`.
-Fresh builds can export identical inputs from frozen RQ1/Core/context without
-fitting historical recovery models. `RQ2_RELIABILITY_INPUT_RUN` selects an explicit
+is needed for the active analysis. Compatible immutable input exports may be
+reused; otherwise current inputs are exported from frozen RQ1/Core/context without
+fitting historical recovery models. The v5 Core revision requires new inputs.
+`RQ2_RELIABILITY_INPUT_RUN` selects an explicit
 export when several exist. Incompatible upstream scientific versions are rejected.
 
 Versioned outputs live under `results/rq2/reliability/<rq1_version>/<run_id>/`.
@@ -108,7 +109,16 @@ This writes full context-composition profiles, group-contrast intervals and a
 fixed first-paired-day calibration diagnostic. The latter uses later days only
 and is a different information setting, not the primary new-participant result.
 
-## Evidence and limitations of this revision
+## Historical numerical evidence — awaiting rerun
+
+The values below describe the 2026-09-14 frozen run. They predate the corrected
+context orthogonalization and bounded projection and have not been recomputed
+under the current estimator or v5 core. They must not be reported as current
+results. The current semantic version is
+`conditional_reliability_v2_orthogonal_bounded_projection__<analysis_design_id>`;
+plotting and summary-only execution reject the old v1 estimator artifacts.
+`--run` already fingerprints fitting code and selects new checkpoints after a
+numerical implementation change. See `AUDIT_FIXES_20260922.md` for rerun scope.
 
 Across three partitions context-only Brier skill is positive for all eight
 contrasts. Primary skill is 1.50–2.78%; all primary participant-bootstrap intervals

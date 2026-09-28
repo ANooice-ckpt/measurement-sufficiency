@@ -23,6 +23,11 @@ Rscript --vanilla -e 'files <- sort(list.files("scripts", pattern = "\\.R$", rec
 echo "[1/8] Restore/pin R 4.5.0 environment"
 Rscript scripts/00_setup.R
 
+echo "[preflight] Verify native cadence, exact hours and duration windows"
+Rscript scripts/tests/validate_core_sampling_hours.R
+Rscript scripts/tests/validate_duration_windows.R
+Rscript scripts/tests/validate_core_pipeline_contract.R
+
 echo "[2/8] Download/validate MeLiDos inputs, including exercise diary and trial_times"
 Rscript scripts/01_download_melidos.R
 

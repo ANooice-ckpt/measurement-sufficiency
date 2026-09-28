@@ -33,20 +33,39 @@ load_duration_metric_cube <- function(x, columns = NULL, filter_fn = NULL) {
   dplyr::bind_rows(lapply(paths, read_part))
 }
 
-duration_isiv_from_context <- function(x, hour_cols) {
-  if (!nrow(x) || !length(hour_cols)) {
+duration_decode_hourly_basis <- function(encoded) {
+  if (length(encoded) != 1L) stop("Expected one encoded hourly basis per analysis day")
+  if (is.na(encoded) || !nzchar(encoded)) return(matrix(numeric(), ncol = 3L))
+  records <- strsplit(encoded, ";", fixed = TRUE)[[1L]]
+  fields <- strsplit(records, ":", fixed = TRUE)
+  if (any(lengths(fields) != 3L)) stop("Malformed exact hourly basis")
+  values <- suppressWarnings(as.numeric(unlist(fields, use.names = FALSE)))
+  out <- matrix(values, ncol = 3L, byrow = TRUE)
+  if (any(!is.finite(out)) || any(out[, 2L] < 0 | out[, 2L] > 23 | out[, 2L] != floor(out[, 2L])) ||
+      any(diff(out[, 1L]) <= 0)) stop("Invalid exact hourly basis")
+  out
+}
+
+duration_isiv_from_context <- function(x) {
+  if (!"isiv_hourly_basis" %in% names(x)) {
+    stop("Duration IS/IV requires the exact hourly basis; rebuild core artifacts")
+  }
+  if (!nrow(x)) {
     return(tibble::tibble(metric = c("interdaily_stability", "intradaily_variability"), value = NA_real_))
   }
-  # The context already stores exactly one hourly value per Date x hour.
-  # Reproduce LightLogR's default (population-variance) IS/IV equations
-  # directly, avoiding a pivot and two dplyr regroupings for every window.
+  # Reproduce LightLogR's population-variance equations on actual hourly
+  # instants. Fall-back hours remain distinct in total variance and IV while
+  # their local clock labels are pooled only for IS's average daily pattern.
   x <- x[order(x$Date), , drop = FALSE]
-  hourly_matrix <- as.matrix(x[, hour_cols, drop = FALSE])
-  hourly_values <- as.numeric(t(hourly_matrix))
-  hourly_index <- rep(seq_along(hour_cols) - 1L, times = nrow(x))
-  keep <- !is.na(hourly_values)
-  hourly_values <- hourly_values[keep]
-  hourly_index <- hourly_index[keep]
+  basis <- x$isiv_hourly_basis
+  if (!is.list(basis)) basis <- lapply(basis, duration_decode_hourly_basis)
+  hourly <- do.call(rbind, basis)
+  if (nrow(hourly)) {
+    hourly <- hourly[order(hourly[, 1L]), , drop = FALSE]
+    if (anyDuplicated(hourly[, 1L])) stop("Duplicate hourly instants in duration window")
+  }
+  hourly_values <- hourly[, 3L]
+  hourly_index <- hourly[, 2L]
   if (length(hourly_values) < 2L) {
     vals <- c(NA_real_, NA_real_)
   } else {
@@ -75,7 +94,9 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
     tidyr::unnest_longer(member_dates, values_to = "Date") |>
     dplyr::mutate(Date = as.Date(Date))
 
-  hour_cols <- grep("^isiv_h\\d\\d$", names(unit_context), value = TRUE)
+  if (!"isiv_hourly_basis" %in% names(unit_context)) {
+    stop("Duration artifacts require the exact hourly basis; rebuild core artifacts")
+  }
   isiv_meta <- metric_types |>
     dplyr::filter(metric %in% c("interdaily_stability", "intradaily_variability")) |>
     dplyr::mutate(metric_scope = "multiday", metric_geometry = "linear")
@@ -104,6 +125,8 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
     if (is.null(metric_block) || is.null(context_block)) {
       return(list(daily = tibble::tibble(), isiv = tibble::tibble()))
     }
+    # Decode once per configuration-day, rather than once per overlapping window.
+    context_block$isiv_hourly_basis <- lapply(context_block$isiv_hourly_basis, duration_decode_hourly_basis)
 
     daily_block <- metric_block |>
       dplyr::filter(
@@ -130,17 +153,17 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
       )
 
     isiv_block <- tibble::tibble()
-    if (length(hour_cols) == 24L && nrow(isiv_meta)) {
+    if (nrow(isiv_meta)) {
       isiv_block <- context_block |>
         dplyr::filter(analysis_unit_type == "participant_day", support_id == support_value, site == site_value, !is.na(Date)) |>
-        dplyr::select(support_id, site, Id, Date, placement, optical, resolution_s, is_primary_resolution, config_id, dplyr::all_of(hour_cols)) |>
+        dplyr::select(support_id, site, Id, Date, placement, optical, resolution_s, is_primary_resolution, config_id, isiv_hourly_basis) |>
         dplyr::inner_join(block_membership, by = c("support_id", "site", "Id", "Date"), relationship = "many-to-many") |>
         dplyr::group_by(
           support_id, site, Id, run_id, window_id, window_index, n_days, window_start, window_end,
           placement, optical, resolution_s, is_primary_resolution, config_id
         ) |>
         dplyr::group_modify(~{
-          vals <- duration_isiv_from_context(.x, hour_cols)
+          vals <- duration_isiv_from_context(.x)
           if (dplyr::n_distinct(.x$Date) != dplyr::first(.y$n_days)) vals$value <- NA_real_
           vals
         }) |>
@@ -165,7 +188,7 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
     raw |>
       dplyr::mutate(
         analysis_unit_type = "participant_window", analysis_unit_id = window_id,
-        duration_artifact_version = "duration_complete_analysis_days_v1"
+        duration_artifact_version = "duration_complete_analysis_days_v2_exact_hours"
       ) |>
       dplyr::select(
         support_id, site, Id, analysis_unit_type, analysis_unit_id, run_id, window_id, window_index,
@@ -198,7 +221,14 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
       if (reuse_parts && file.exists(part_path)) {
         marker_ok <- file.exists(part_marker)
         if (marker_ok) {
-          return(list(i = i, path = part_path, rows = NA_integer_, support = support_value, site = site_value))
+          marker <- readLines(part_marker, n = 2L, warn = FALSE)
+          if (length(marker) && identical(marker[[1L]], "duration_complete_analysis_days_v2_exact_hours")) {
+            rows <- if (length(marker) >= 2L) suppressWarnings(as.integer(marker[[2L]])) else NA_integer_
+            if (!is.finite(rows) || rows < 0) rows <- nrow(readRDS(part_path))
+            if (length(rows) != 1L || !is.finite(rows)) stop("Cannot recover duration checkpoint row count: ", part_path)
+            return(list(i = i, path = part_path, rows = rows, support = support_value, site = site_value))
+          }
+          message("[duration] rebuilding checkpoint with incompatible hourly-basis marker: ", part_path)
         }
       }
       block <- build_block(block_keys[i, , drop = FALSE])
@@ -209,8 +239,8 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
       if (file.exists(part_marker)) unlink(part_marker)
       if (file.exists(part_path)) unlink(part_path)
       if (!file.rename(tmp_path, part_path)) stop("Could not atomically install duration checkpoint: ", part_path)
-      writeLines("duration_complete_analysis_days_v1", part_marker, useBytes = TRUE)
       rows <- nrow(part)
+      writeLines(c("duration_complete_analysis_days_v2_exact_hours", as.character(rows)), part_marker, useBytes = TRUE)
       rm(block, part)
       invisible(gc(FALSE))
       list(i = i, path = part_path, rows = rows, support = support_value, site = site_value)
@@ -256,7 +286,7 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
     invisible(gc())
     cube <- list(
       artifact_type = "partitioned_duration_metric_cube",
-      duration_artifact_version = "duration_complete_analysis_days_v1",
+      duration_artifact_version = "duration_complete_analysis_days_v2_exact_hours",
       part_dir = part_dir, parts = part_manifest$part,
       part_manifest = part_manifest, rows = sum(part_manifest$rows, na.rm = TRUE)
     )

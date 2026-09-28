@@ -20,6 +20,11 @@ The harmonized MeLiDos 10-s grid is the source schedule. The frozen primary temp
 
 For every r > 10 s, construct a deterministic participant/source-grid-phase-anchored systematic sparse subsample. Retained timestamps and MEDI/LIGHT values must be exact source rows. No averaging, interpolation or hidden reconstruction. Temporal resolution therefore denotes a literal logger sampling interval in this study.
 
+Source-grid membership alone does not establish native 10-s sampling: a 60-s
+record also lies on a 10-s grid. Required placement sources must contain native
+10-s steps before alignment/completeness processing. Ineligible sources are
+unavailable on the affected support and are explicitly audited.
+
 All primary temporal states retain the full target-representation system subject only to the ordinary optical/support availability rules. Pulse-derived representations are unavailable at the 5-min sensitivity state; this is one reason 5 min is excluded from the primary lattice.
 
 Support is part of the estimand. Eye–chest and eye–wrist analyses retain their comparison-specific maximal supports. Unavailable representations are unavailable, not high distortion or insufficiency.
@@ -47,6 +52,11 @@ The primary duration domain is 1–6 complete analysis days. After common core p
 trial_times metadata remains in unit_context for audit, descriptive metadata and sensitivity. It does not define primary eligibility and does not create a protocol seven-day reference.
 
 Daily-defined metric windows are aggregated from the durable daily metric cube using the existing semantics: arithmetic aggregation for linear metrics and circular aggregation for circular-time metrics. IS/IV are rebuilt on exact selected dates from the stored hourly basis.
+
+The IS/IV hourly basis retains distinct absolute hourly instants on 23/25-hour
+local dates. Repeated clock hours are combined only where the published IS
+formula requires the average daily pattern, not in the time series used for
+overall variance or successive-hour differences.
 
 ## 6. RQ2 conditionality and separability
 

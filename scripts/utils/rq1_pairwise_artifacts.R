@@ -5,6 +5,15 @@
 # keeps local execution bounded while allowing a server run to process parts
 # concurrently or materialise a flat convenience file afterwards.
 
+# Core duration blocks also contain reserve cadences. Apply the frozen primary
+# domain before constructing either pairwise changes or their shared scale.
+rq1_primary_duration_values <- function(x, primary_temporal_s = ms_primary_temporal_s()) {
+  if (!"resolution_s" %in% names(x)) stop("Duration values lack resolution_s")
+  keep <- x$resolution_s %in% primary_temporal_s
+  if (all(keep)) return(x)
+  x[keep, , drop = FALSE]
+}
+
 rq1_pairwise_is_partitioned <- function(x) {
   is.list(x) && identical(x$artifact_type, "partitioned_rq1_pairwise_change") &&
     length(x$parts) > 0L && !is.null(x$part_dir) && nzchar(as.character(x$part_dir[[1]]))

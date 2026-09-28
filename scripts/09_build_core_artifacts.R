@@ -1,6 +1,7 @@
 source("scripts/utils/melidos_io.R")
 source("scripts/utils/rq1_metrics.R")
 source("scripts/utils/core_artifacts.R")
+source("scripts/utils/artifact_validation.R")
 source("scripts/utils/core_context.R")
 source("scripts/utils/protocol_windows.R")
 source("scripts/utils/duration_artifacts.R")
@@ -141,7 +142,7 @@ write_core_manifest <- function() {
     key = c(
       "core_artifact_version", "temporal_operator", "source_grid_s",
       "primary_resolutions_s", "reserve_resolutions_s", "duration_primary_domain",
-      "duration_operator", "duration_window_artifact"
+      "duration_operator", "duration_window_artifact", "source_eligibility", "hourly_basis"
     ),
     value = c(
       CORE_VERSION,
@@ -151,7 +152,9 @@ write_core_manifest <- function() {
       paste(core_reserve_resolutions(), collapse = ","),
       "1-6 complete analysis days from consecutive complete-day runs",
       "daily metrics aggregated from participant-day cube; IS/IV rebuilt from exact selected dates using stored hourly basis",
-      "duration_window_manifest + partitioned duration_metric_cube manifest and RDS parts"
+      "duration_window_manifest + partitioned duration_metric_cube manifest and RDS parts",
+      "native 10-s evidence and stable source-grid phase for every required placement; unavailable sources audited per support",
+      "exact hourly instants, local clock labels and log-light means; repeated DST hours retained"
     )
   )
   write_core_csv(manifest, file.path(CORE_ROOT, "core_manifest.csv"))
@@ -159,21 +162,20 @@ write_core_manifest <- function() {
 
 # A killed process no longer requires re-running extraction and all support
 # blocks.  Set CORE_DURATION_ONLY=1 to resume the durable duration stage from
-# already-materialised v3 core files on either Windows or Linux.
+# already-materialised current-version core files on either Windows or Linux.
 if (identical(Sys.getenv("CORE_DURATION_ONLY", unset = "0"), "1")) {
   metric_path <- file.path(CORE_ROOT, "metric_cube.csv.gz")
   context_path <- file.path(CORE_ROOT, "unit_context.csv.gz")
   if (!file.exists(metric_path) || !file.exists(context_path)) {
     stop("CORE_DURATION_ONLY=1 requires results/core/metric_cube.csv.gz and unit_context.csv.gz")
   }
-  message("[duration-only] reading durable v3 core inputs")
+  message("[duration-only] reading durable current-version core inputs")
   metric_cube <- readr::read_csv(metric_path, show_col_types = FALSE, progress = FALSE) |>
     dplyr::mutate(Date = as.Date(Date))
   unit_context <- readr::read_csv(context_path, show_col_types = FALSE, progress = FALSE) |>
     dplyr::mutate(Date = as.Date(Date))
-  if (!all(unique(na.omit(metric_cube$core_artifact_version)) == CORE_VERSION)) {
-    stop("CORE_DURATION_ONLY inputs do not match current core version: ", CORE_VERSION)
-  }
+  ms_assert_version(metric_cube, "core_artifact_version", CORE_VERSION)
+  ms_assert_version(unit_context, "core_artifact_version", CORE_VERSION)
   duration_artifacts <- build_duration_metric_cube(metric_cube, unit_context, metric_types, max_days = 6L, part_dir = DURATION_PART_DIR, reuse_parts = !force_rebuild)
   invisible(emit_duration_artifacts(duration_artifacts))
   write_core_manifest()
@@ -226,19 +228,30 @@ support_grid <- core_support_grid()
 prepare_one <- function(i) {
   row <- support_grid[i, ]
   path <- file.path(SUPPORT_DIR, paste0(row$site, "__", row$support_id, ".rds"))
-  if (!force_rebuild && file.exists(path)) return(path)
+  sampling_path <- paste0(path, ".sampling.rds")
+  if (!force_rebuild && file.exists(path) && file.exists(sampling_path)) {
+    record <- readRDS(sampling_path)
+    return(list(path = if (record$n_support_rows > 0L) path else NA_character_,
+                sampling = record$sampling))
+  }
   message("prepare support: ", row$site, " / ", row$support_id)
   x <- core_prepare_support(row$site, row$support_id)
-  if (is.null(x)) return(NA_character_)
+  if (is.null(x)) return(list(path = NA_character_, sampling = tibble()))
+  sampling <- attr(x, "source_sampling_audit", exact = TRUE)
+  if (is.null(sampling)) stop("Missing source sampling audit: ", row$site, " / ", row$support_id)
   saveRDS(x, path, compress = FALSE)
-  path
+  saveRDS(list(n_support_rows = nrow(x), sampling = sampling), sampling_path, compress = FALSE)
+  list(path = if (nrow(x)) path else NA_character_, sampling = sampling)
 }
 idx <- seq_len(nrow(support_grid))
-support_paths <- parallel_core_lapply(
+support_records <- parallel_core_lapply(
   idx, prepare_one,
   exports = c("site_meta", "support_grid", "SUPPORT_DIR", "force_rebuild")
 )
-support_paths <- unlist(support_paths, use.names = FALSE)
+source_sampling_audit <- map_dfr(support_records, "sampling") |>
+  mutate(core_artifact_version = CORE_VERSION, .before = 1)
+write_core_csv(source_sampling_audit, file.path("results", "diagnostics", "core_source_sampling_audit.csv"))
+support_paths <- vapply(support_records, `[[`, character(1), "path")
 support_paths <- support_paths[!is.na(support_paths) & file.exists(support_paths)]
 if (!length(support_paths)) stop("No support blocks were produced")
 

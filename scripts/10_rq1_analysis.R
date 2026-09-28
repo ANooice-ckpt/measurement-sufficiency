@@ -1,5 +1,6 @@
 suppressPackageStartupMessages(library(tidyverse))
 source("scripts/utils/analysis_design.R")
+source("scripts/utils/core_artifacts.R")
 source("scripts/utils/protocol_windows.R")
 source("scripts/utils/paths.R")
 source("scripts/utils/artifact_validation.R")
@@ -63,8 +64,8 @@ if (length(core_versions) != 1L) stop("Core artifact version mismatch")
 CORE_VERSION <- core_versions[[1]]
 ms_assert_version(cube, "core_artifact_version", CORE_VERSION)
 ms_assert_version(duration_artifact, "core_artifact_version", CORE_VERSION)
-if (!identical(CORE_VERSION, paste0("v4_sparse_sampling_complete_days__", ms_core_design_id()))) {
-  stop("Core artifact does not match the active measurement design")
+if (!identical(CORE_VERSION, core_artifact_version())) {
+  stop("Core artifact does not match the current source/hourly-basis contract; rebuild core artifacts")
 }
 if (!all(PRIMARY_TEMPORAL_S %in% unique(cube$resolution_s))) stop("Primary temporal state missing")
 if (any(!duration_manifest$n_days %in% PRIMARY_DURATION_DAYS)) {
@@ -73,7 +74,7 @@ if (any(!duration_manifest$n_days %in% PRIMARY_DURATION_DAYS)) {
 metric_meta <- cube |> distinct(metric, metric_class, metric_scope, metric_geometry)
 if (n_distinct(metric_meta$metric) != 54L) stop("Expected 54 target metrics")
 RQ1_ANALYSIS_VERSION <- paste0(
-  "rq1_v5_duration_type_canonical__", CORE_VERSION, "__", ANALYSIS_DESIGN_ID
+  "rq1_v5_primary_duration_type_canonical__", CORE_VERSION, "__", ANALYSIS_DESIGN_ID
 )
 
 temporal_label <- ms_temporal_label
@@ -203,6 +204,7 @@ duration_window_pairs <- duration_manifest |>
          start_a, end_a, start_b, end_b, adjacent_transition, pair_id)
 
 build_duration_pair_chunk <- function(duration_values, window_pairs) {
+  duration_values <- rq1_primary_duration_values(duration_values, PRIMARY_TEMPORAL_S)
   if (!nrow(duration_values) || !nrow(window_pairs)) return(tibble())
   duration_a <- window_pairs |>
     select(support_id, site, Id, window_a, window_b, n_days_a, n_days_b, start_a, end_a,
@@ -261,6 +263,7 @@ duration_columns <- c("support_id", "site", "Id", "window_id", "config_id", "met
                       "analysis_unit_id", "value", "available", "unavailable_reason")
 read_duration_anchor_part <- function(part_path) {
   readRDS(part_path) |>
+    rq1_primary_duration_values(PRIMARY_TEMPORAL_S) |>
     filter(n_days == MAX_DURATION_DAYS) |>
     select(metric, metric_geometry, value)
 }
@@ -279,6 +282,7 @@ duration_anchor_values <- if (length(duration_part_paths)) {
   }
 } else {
   duration_artifact |>
+    rq1_primary_duration_values(PRIMARY_TEMPORAL_S) |>
     filter(n_days == MAX_DURATION_DAYS) |>
     select(metric, metric_geometry, value)
 }
@@ -372,7 +376,10 @@ rq1_marker_rows <- function(path) {
 rq1_process_duration_part <- function(task) {
   existing <- rq1_marker_rows(task$part_path)
   if (is.finite(existing)) return(tibble(part_index = task$part_index, part = basename(task$part_path), dimension = "duration", rows = existing, status = "reused"))
-  values <- readRDS(task$duration_path) |> select(all_of(duration_columns))
+  values <- if (!is.null(task$duration_values)) task$duration_values else readRDS(task$duration_path)
+  values <- values |>
+    rq1_primary_duration_values(PRIMARY_TEMPORAL_S) |>
+    select(all_of(duration_columns))
   keys <- values |> distinct(support_id, site)
   window_pairs <- duration_window_pairs |> semi_join(keys, by = c("support_id", "site"))
   raw <- build_duration_pair_chunk(values, window_pairs)
@@ -408,10 +415,16 @@ duration_tasks <- if (length(duration_part_paths)) {
   map2(duration_part_paths, seq_along(duration_part_paths), function(path, i) {
     list(duration_path = path, part_path = file.path(pairwise_part_dir, sprintf("rq1_pairwise_part_%03d.rds", i)), part_index = i)
   })
-} else list()
+} else {
+  list(list(duration_values = duration_artifact,
+            part_path = file.path(pairwise_part_dir, "rq1_pairwise_part_001.rds"), part_index = 1L))
+}
 pending_duration <- duration_tasks[!vapply(duration_tasks, function(task) is.finite(rq1_marker_rows(task$part_path)), logical(1))]
 if (length(pending_duration)) {
-  duration_cost <- vapply(pending_duration, function(task) as.numeric(file.info(task$duration_path)$size), numeric(1))
+  duration_cost <- vapply(pending_duration, function(task) {
+    if (!is.null(task$duration_values)) as.numeric(object.size(task$duration_values)) else
+      as.numeric(file.info(task$duration_path)$size)
+  }, numeric(1))
   pending_duration <- pending_duration[order(duration_cost, decreasing = TRUE, na.last = TRUE)]
   message("RQ1 duration parts pending: ", length(pending_duration), "/", length(duration_tasks), "; workers=", PART_WORKERS)
   rq1_part_results <- ms_parallel_map(
@@ -420,6 +433,7 @@ if (length(pending_duration)) {
     exports = c("duration_columns", "duration_window_pairs", "standardizers", "CORE_VERSION",
                 "RQ1_ANALYSIS_VERSION", "build_duration_pair_chunk", "canonicalize_pairs",
                 "rq1_write_part_atomic", "rq1_marker_rows", "rq1_process_duration_part",
+                "rq1_primary_duration_values", "PRIMARY_TEMPORAL_S",
                 "circular_delta", "MAX_DURATION_DAYS")
   )
 } else rq1_part_results <- list()

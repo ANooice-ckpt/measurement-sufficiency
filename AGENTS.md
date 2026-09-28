@@ -52,9 +52,9 @@ The human-state consequence layer remains part of RQ1; it is not a fourth resear
 - Observed exposure–human-state associations are descriptive association-preservation diagnostics. The reference configuration is not biological truth and coefficient displacement is not called causal bias.
 
 ## Artifact/cache rules
-Current core version family: `v4_sparse_sampling_complete_days__<core_design_id>`.
+Current core version family: `v5_native10s_exact_hours__<core_design_id>`.
 
-Interim core blocks are versioned under the current results/core cache hierarchy. Do not point the active core at pre-v4 cache paths. Final core artifacts carry `core_artifact_version`, and the core manifest records the temporal operator and design identity.
+Interim core blocks are versioned under the current results/core cache hierarchy. Do not point the active core at pre-v5 cache paths. Final core artifacts carry `core_artifact_version`, and the core manifest records the temporal operator and design identity. Source eligibility requires native 10-s evidence for every placement required by the support; exclusions are recorded in `core_source_sampling_audit.csv`. Duration IS/IV consume the exact hourly basis, retaining repeated DST hours.
 
 RQ1 outputs carry `rq1_analysis_version`; the inferential extension additionally carries `rq1_inference_version`. RQ2 checkpoint paths include the upstream RQ1 version. Never reuse old RQ2 checkpoints after an upstream scientific version changes.
 

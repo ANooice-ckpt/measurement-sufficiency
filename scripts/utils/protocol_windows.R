@@ -70,7 +70,7 @@ duration_window_manifest <- function(context_daily, max_days = 6L) {
         NA_character_
       ),
       adjacent_higher_window_id = dplyr::if_else(
-        n_days < 6L,
+        n_days < max_days & window_end < run_end,
         paste(support_id, site, Id, paste0("run", run_id), paste0(n_days + 1L, "d"), sprintf("w%03d", window_index), sep = "|"),
         NA_character_
       )

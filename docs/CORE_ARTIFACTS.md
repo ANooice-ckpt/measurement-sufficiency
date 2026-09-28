@@ -1,4 +1,4 @@
-# Core artifact contract — v4 sparse sampling / complete analysis days
+# Core artifact contract — v5 native 10-s sources / exact hourly basis
 
 ## Purpose
 
@@ -6,7 +6,7 @@ The core layer materializes expensive configuration-level target values once. RQ
 
 The current core version is generated from the frozen measurement design and has the form:
 
-    v4_sparse_sampling_complete_days__<core_design_id>
+    v5_native10s_exact_hours__<core_design_id>
 
 The design identifier is part of the cache key, so a temporal-lattice change cannot silently reuse an incompatible core cache.
 
@@ -46,6 +46,14 @@ Primary states: **10, 20, 30, 40, 60 and 120 s**. The only active reserve state 
 
 All primary states are below the pulse-operator availability boundary and preserve the full primary target-representation set, subject to the normal optical/support restrictions. Pulse-derived metrics are unavailable at the 5-min reserve state.
 
+Before alignment or completeness preprocessing, every placement required by a
+support must have observed native 10-s steps and a stable 10-s grid phase.
+Coarser native records cannot serve as a 10-s reference. Participants with an
+ineligible required source are excluded from that support, with the placement,
+observed cadence and unavailable reason retained in
+`results/diagnostics/core_source_sampling_audit.csv`. Other supports retain their
+own eligible participants. No source values are interpolated to establish eligibility.
+
 ## Duration artifact
 
 The primary duration domain is 1–6 complete analysis days. A complete analysis day is a day retained by the common core completeness preprocessing. For each participant and support, consecutive complete-day runs are identified. Every contiguous window of 1–6 days inside every run is enumerated; a run longer than six days contributes all legal windows and no selected “best” subset.
@@ -66,6 +74,13 @@ optical state, resolution, metric metadata, value, availability and unavailable 
 Daily-defined metrics are aggregated from durable participant-day values using the existing
 linear/circular semantics. IS/IV are rebuilt on exact selected dates from the stored hourly basis.
 
+`unit_context.isiv_hourly_basis` stores the actual hourly instants, their local
+clock-hour labels and log-light means in a CSV-safe representation. Fall-back
+days retain both occurrences of the repeated hour. The `isiv_h00`–`isiv_h23`
+clock-hour profile remains available for RQ2 candidate signatures; it is not the
+duration IS/IV reconstruction basis. Duration-only resumes require current-version
+metric and context inputs and cannot upgrade a v4 context by relabelling it.
+
 duration_metric_cube_parts.csv records the block-to-support/site mapping. A block is installed
 atomically and receives a .ok marker only after the RDS has been closed; CORE_DURATION_ONLY=1 can
 therefore resume an interrupted duration build from completed blocks. The manifest is written
@@ -76,3 +91,8 @@ only after all expected blocks are available.
 The single source of truth for the active temporal and duration domains is `scripts/utils/analysis_design.R`. `core_artifact_version()` includes the corresponding core-design identifier. RQ1, RQ2 and RQ3 also carry the analysis-design identifier in their artifact versions, preventing stale pairwise, model or sufficiency caches from being reused after a design change.
 
 Every main artifact carries `core_artifact_version`. A change to measurement-state semantics, duration semantics, schema or output paths requires a normal core-version change. No parallel hash/contract system is used.
+
+The v5 revision invalidates v4 support, metric, context and duration caches because
+native-source eligibility and the durable hourly schema changed. All downstream
+scientific versions inherit this new core identity. See `AUDIT_FIXES_20260922.md`
+for the distinction between code fixes and frozen outputs awaiting execution.

@@ -1,6 +1,8 @@
 # Context-conditioned reliability from immutable daily anchor inputs.
 # No raw exposure processing, recovery fitting, or RQ3 recomputation.
 source("scripts/utils/rq2_risk_models.R")
+source("scripts/utils/rq2_reliability_contract.R")
+if (!exists("core_artifact_version", mode = "function")) source("scripts/utils/core_artifacts.R")
 
 # All helpers that assemble/validate the daily export participate in cache
 # invalidation. Feature counts alone cannot establish dictionary compatibility.
@@ -268,12 +270,12 @@ reliability_summarize <- function(paths,prov,out) {
 
 reliability_finalize <- function(out=Sys.getenv("RQ2_RELIABILITY_RUN_DIR","")) {
   if(!nzchar(out))stop("Set RQ2_RELIABILITY_RUN_DIR for --summarize")
-  prov<-readRDS(file.path(out,"provenance.rds"));paths<-Sys.glob(file.path(out,"checkpoints","task_*.rds"))
+  prov<-readRDS(file.path(out,"provenance.rds"))
+  current<-readRDS("results/rq1/rq1_pairwise_change_long.rds")
+  rq2_reliability_assert_provenance(prov,current,core_artifact_version())
+  paths<-Sys.glob(file.path(out,"checkpoints","task_*.rds"))
   if(length(paths)!=length(prov$input_md5))stop("Incomplete checkpoint set")
   for(p in paths){o<-readRDS(p);if(!isTRUE(o$complete)||!identical(o$run_id,basename(out)))stop("Invalid checkpoint ",p)}
-  current<-readRDS("results/rq1/rq1_pairwise_change_long.rds")
-  stopifnot(identical(prov$rq1_analysis_version,rq1_pairwise_version(current)),
-    identical(prov$core_artifact_version,current$core_artifact_version))
   summaries<-reliability_summarize(paths,prov,out)
   artifact<-c(list(complete=TRUE,run_id=basename(out),provenance=prov,checkpoints=paths,run_dir=out,
     summary_code_md5=tools::md5sum("scripts/utils/rq2_conditional_reliability.R")),summaries)
@@ -291,8 +293,9 @@ reliability_run <- function() {
     z<-copy(pm);set.seed(20260913+r);z[,fold:=sample(rep(1:5,length.out=.N)),by=site];z[,repeat_id:=r];maps[[r]]<-z
   }
   folds<-data.table::rbindlist(maps)
-  code<-c("scripts/12d_rq2_recovery.R","scripts/utils/rq2_conditional_reliability.R","scripts/utils/rq2_risk_models.R")
-  prov<-list(rq2_analysis_version="conditional_reliability_v1",rq1_analysis_version=src$manifest$provenance$rq1_analysis_version,
+  code<-c("scripts/12d_rq2_recovery.R","scripts/utils/rq2_conditional_reliability.R",
+    "scripts/utils/rq2_risk_models.R","scripts/utils/rq2_reliability_contract.R")
+  prov<-list(rq2_analysis_version=rq2_reliability_version(),rq1_analysis_version=src$manifest$provenance$rq1_analysis_version,
     core_artifact_version=src$manifest$provenance$core_artifact_version,source_run=normalizePath(src$path,winslash="/"),
     input_md5=tools::md5sum(src$files),code_md5=tools::md5sum(code),folds=folds,epsilon=c(.05,.1,.2,.3,.5,1),
     context=c(src$manifest$provenance$predictors,src$manifest$provenance$temporal_predictors),
@@ -302,6 +305,8 @@ reliability_run <- function() {
     loss="Brier score averaged equally across the six declared tolerance slices and then equally across available metrics",
     model="uniform additive natural-spline ridge; orthogonal context block preserves measurement baseline; monotone probability projection",
     R=R.version.string,packages=sapply(c("data.table","splines"),function(p)as.character(utils::packageVersion(p))))
+  current<-readRDS("results/rq1/rq1_pairwise_change_long.rds")
+  rq2_reliability_assert_provenance(prov,current,core_artifact_version())
   id<-recovery_hash(prov);out<-file.path("results/rq2/reliability",prov$rq1_analysis_version,id)
   dir.create(file.path(out,"checkpoints"),recursive=TRUE,showWarnings=FALSE)
   saveRDS(prov,file.path(out,"provenance.rds"));data.table::fwrite(folds,file.path(out,"participant_folds.csv"))

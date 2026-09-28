@@ -1,5 +1,26 @@
 # Configuration-level participant-day context and final metric-cube metadata.
 
+core_isiv_hourly_basis <- function(series) {
+  # Keep actual hourly instants separate on 25-hour fall-back days. The local
+  # clock-hour label is also needed by IS; UTC instants alone lose that label.
+  # A text column survives both RDS and CSV without flattening list columns.
+  series |>
+    dplyr::transmute(site, Id, Date, Datetime, log_light = LightLogR::log_zero_inflated(MEDI)) |>
+    dplyr::filter(is.finite(log_light)) |>
+    dplyr::mutate(hour_start = lubridate::floor_date(Datetime, "1 hour")) |>
+    dplyr::group_by(site, Id, Date, hour_start) |>
+    dplyr::summarise(value = mean(log_light), .groups = "drop") |>
+    dplyr::arrange(site, Id, Date, hour_start) |>
+    dplyr::group_by(site, Id, Date) |>
+    dplyr::summarise(
+      isiv_hourly_basis = paste(
+        sprintf("%.17g", as.numeric(hour_start)), lubridate::hour(hour_start),
+        sprintf("%.17g", value), sep = ":", collapse = ";"
+      ),
+      .groups = "drop"
+    )
+}
+
 core_config_daily_context <- function(support_path) {
   support <- readRDS(support_path)
   support_id <- unique(support$support_id)
@@ -47,7 +68,10 @@ core_config_daily_context <- function(support_path) {
   for (i in seq_len(nrow(cfgs))) {
     cfg <- cfgs[i, ]
     series <- core_make_series(support, cfg$placement, cfg$optical, cfg$resolution_s)
+    exact_hourly <- core_isiv_hourly_basis(series)
 
+    # These 24 local-clock projections remain candidate-signature inputs only.
+    # Duration IS/IV uses exact_hourly, retaining repeated local clock hours.
     hourly <- series |>
       dplyr::transmute(site, Id, Date, Datetime, log_light = LightLogR::log_zero_inflated(MEDI)) |>
       dplyr::filter(is.finite(log_light)) |>
@@ -79,6 +103,7 @@ core_config_daily_context <- function(support_path) {
       }) |>
       dplyr::ungroup() |>
       dplyr::left_join(hourly, by = c("site", "Id", "Date")) |>
+      dplyr::left_join(exact_hourly, by = c("site", "Id", "Date")) |>
       dplyr::left_join(participant_meta, by = c("site", "Id")) |>
       dplyr::left_join(day_index, by = c("site", "Id", "Date")) |>
       dplyr::mutate(
