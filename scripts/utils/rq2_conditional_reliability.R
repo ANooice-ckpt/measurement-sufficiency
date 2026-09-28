@@ -200,6 +200,21 @@ reliability_task <- function(task) {
   task$output
 }
 
+reliability_improvement <- function(new_loss, baseline_loss) {
+  out <- rep(NA_real_, length(new_loss))
+  ok <- is.finite(new_loss) & is.finite(baseline_loss) & baseline_loss > 0
+  out[ok] <- 100 * (1 - new_loss[ok] / baseline_loss[ok])
+  out
+}
+
+reliability_equal_metric_boot <- function(num, den, weights) {
+  loss <- (num %*% weights) / (den %*% weights)
+  valid <- colSums(!is.finite(loss)) == 0L
+  out <- rep(NA_real_, ncol(loss))
+  if (any(valid)) out[valid] <- colMeans(loss[, valid, drop = FALSE])
+  out
+}
+
 reliability_summarize <- function(paths,prov,out) {
   paths<-as.character(unlist(paths,use.names=FALSE))
   scores<-people<-profiles<-curves<-audit<-metadata<-timing<-list()
@@ -234,8 +249,10 @@ reliability_summarize <- function(paths,prov,out) {
   data.table::fwrite(data.table::rbindlist(timing),file.path(out,"task_status.csv"))
   pair_scores<-scores[startsWith(target,"exceed_"),.(mse=mean(mse)),by=.(comparison_pair_id,repeat_id,state)]
   pair_scores<-data.table::dcast(pair_scores,comparison_pair_id+repeat_id~state,value.var="mse")
-  pair_scores[,`:=`(context_skill=100*(1-context/null),context_increment=100*(1-joint/measurement),
-    capacity_control=100*(1-joint/measurement_capacity),site_control=100*(1-context/site_prior))]
+  pair_scores[,`:=`(context_skill=reliability_improvement(context,null),
+    context_increment=reliability_improvement(joint,measurement),
+    capacity_control=reliability_improvement(joint,measurement_capacity),
+    site_control=reliability_improvement(context,site_prior))]
   data.table::fwrite(pair_scores,file.path(out,"repeat_scores.csv"))
   # Fixed-prediction, site-stratified participant bootstrap. Repeated refits above
   # separately assess fold instability; this is not a refit bootstrap CI.
@@ -250,12 +267,17 @@ reliability_summarize <- function(paths,prov,out) {
     for(st in unique(d$state)){
       zz<-d[state==st];num<-den<-matrix(0,length(tasks),nrow(pm));idx<-cbind(match(zz$task_index,tasks),match(zz$participant_key,pm$participant_key))
       num[idx]<-zz$sse;den[idx]<-zz$n
-      boot[[st]]<-colMeans((num%*%w)/(den%*%w),na.rm=TRUE);point[st]<-mean(rowSums(num)/rowSums(den))
+      boot[[st]]<-reliability_equal_metric_boot(num,den,w)
+      task_loss<-rowSums(num)/rowSums(den)
+      point[st]<-if(all(is.finite(task_loss)))mean(task_loss) else NA_real_
     }
     for(nm in names(comparisons)){
-      cmp<-comparisons[[nm]];v<-100*(1-boot[[cmp[1]]]/boot[[cmp[2]]]);j<-j+1L
-      ci[[j]]<-data.table::data.table(comparison_pair_id=pair,contrast=nm,estimate=100*(1-point[cmp[1]]/point[cmp[2]]),
-        lo=quantile(v,.025),hi=quantile(v,.975))
+      cmp<-comparisons[[nm]];v<-reliability_improvement(boot[[cmp[1]]],boot[[cmp[2]]]);valid<-is.finite(v);j<-j+1L
+      ci[[j]]<-data.table::data.table(comparison_pair_id=pair,contrast=nm,
+        estimate=reliability_improvement(point[cmp[1]],point[cmp[2]]),
+        lo=if(any(valid))unname(quantile(v[valid],.025)) else NA_real_,
+        hi=if(any(valid))unname(quantile(v[valid],.975)) else NA_real_,
+        bootstrap_valid=sum(valid),bootstrap_requested=length(v))
     }
   }
   ci<-data.table::rbindlist(ci);data.table::fwrite(ci,file.path(out,"information_value_ci.csv"))

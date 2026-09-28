@@ -1,5 +1,5 @@
 suppressPackageStartupMessages(library(data.table))
-source("scripts/utils/rq2_risk_models.R")
+source("scripts/utils/rq2_conditional_reliability.R")
 # Boundary/tied knots, missing features and unseen extremes must be handled using
 # training data only; test values must not alter the fitted training design.
 tr<-data.frame(x=c(rep(0,15),1:5),binary=rep(0:1,10),missing=c(rep(NA,10),1:10),empty=NA_real_)
@@ -27,12 +27,20 @@ x <- matrix(seq(-1,1,length.out=100), ncol=1)
 low <- list(train=cbind(x,x), test=cbind(x,x))
 ctx <- list(train=x, test=x)
 stopifnot(identical(rq2_risk_predict(low,x,10), rq2_risk_increment(low,ctx,x,10)))
-# Load only the pure display helper: never execute the plotting entrypoint.
+# Bootstrap replicates keep a fixed metric set: if one metric has no sampled
+# support, invalidate the whole replicate rather than silently reweight metrics.
+num<-matrix(c(.1,0,0,.2),nrow=2,byrow=TRUE);den<-diag(2)
+weights<-cbind(c(1,1),c(1,0));fixed<-reliability_equal_metric_boot(num,den,weights)
+stopifnot(abs(fixed[1]-.15)<1e-12,is.na(fixed[2]),
+  is.na(reliability_improvement(0,0)),
+  abs(reliability_improvement(.1,.2)-50)<1e-12)
+# Load only the pure display helpers: never execute the plotting entrypoint.
 plot_code<-parse("scripts/13b_plot_fig4.R",encoding="UTF-8")
-display_helper<-Filter(function(e)is.call(e) && identical(e[[1]],as.name("<-")) &&
-  identical(e[[2]],as.name("fig4_increment_display")),as.list(plot_code))
-stopifnot(length(display_helper)==1L)
-eval(display_helper[[1]])
+for(helper_name in c("fig4_increment_display","fig4_risk_scatter_summary")){
+  helper<-Filter(function(e)is.call(e) && identical(e[[1]],as.name("<-")) &&
+    identical(e[[2]],as.name(helper_name)),as.list(plot_code))
+  stopifnot(length(helper)==1L);eval(helper[[1]])
+}
 scores<-CJ(task_index=1:2,repeat_id=1:3,target=c("exceed_0.1","exceed_0.5"),
   state=c("measurement","measurement_capacity","joint"))
 scores[,`:=`(metric=paste0("metric_",task_index),metric_class="level",dimension="placement",
@@ -49,6 +57,16 @@ stopifnot(identical(scores,unchanged),nrow(value)==24L,
   abs(value[task_index==2 & repeat_id==1 & epsilon==.5 & baseline=="measurement"]$brier_reduction-.005)<1e-12,
   all(value[task_index==2 & baseline=="measurement_capacity"]$brier_reduction<0),
   inherits(try(fig4_increment_display(rbind(scores,scores[1])),silent=TRUE),"try-error"))
+risk_profiles<-data.table(
+  task_index=c(1L,1L,2L),metric=c("m1","m1","m2"),dimension="placement",
+  comparison_pair_id="chest_vs_eye",target="exceed_0.1",
+  context_group=c("Lower","Higher","Lower"),observed=c(.1,.3,.2))
+risk<-fig4_risk_scatter_summary(risk_profiles)
+stopifnot(all(c("Lower","Higher")%in%names(risk$cloud)),nrow(risk$spread)==1L,
+  risk$spread$n_paired==1L,abs(risk$spread$x-.1)<1e-12,abs(risk$spread$y-.3)<1e-12)
+lower_only<-fig4_risk_scatter_summary(risk_profiles[context_group=="Lower"])
+stopifnot("Higher"%in%names(lower_only$cloud),all(is.na(lower_only$cloud$Higher)),
+  nrow(lower_only$spread)==0L)
 # Compile just the new atlas with synthetic frozen scores, without sourcing the
 # plotting entrypoint or creating any image/result file.
 local({

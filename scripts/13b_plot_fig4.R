@@ -16,6 +16,23 @@ fig4_increment_display <- function(scores) {
   out[]
 }
 
+fig4_risk_scatter_summary <- function(metric_profiles) {
+  d<-data.table::as.data.table(metric_profiles)[startsWith(target,"exceed_") &
+    context_group%in%c("Lower","Higher")]
+  cloud<-data.table::dcast(d,task_index+metric+dimension+comparison_pair_id+target~
+    context_group,value.var="observed")
+  for(g in c("Lower","Higher"))if(!g%in%names(cloud))cloud[,(g):=NA_real_]
+  cloud[,`:=`(epsilon=as.numeric(sub("exceed_","",target)),
+    axis=factor(dimension,levels=c("placement","optical","temporal"),
+      labels=c("Placement","Optical","Temporal")))]
+  cloud[,slice:=factor(epsilon,levels=sort(unique(epsilon)),
+    labels=paste0("ε = ",sort(unique(epsilon))))]
+  spread<-cloud[is.finite(Lower)&is.finite(Higher),.(x=median(Lower),y=median(Higher),
+    xlo=quantile(Lower,.25),xhi=quantile(Lower,.75),
+    ylo=quantile(Higher,.25),yhi=quantile(Higher,.75),n_paired=.N),by=.(slice,axis)]
+  list(cloud=cloud,spread=spread)
+}
+
 options(encoding="UTF-8")
 if(.Platform$OS.type=="windows")invisible(suppressWarnings(Sys.setlocale("LC_CTYPE","English_United States.utf8")))
 suppressPackageStartupMessages({library(data.table);library(ggplot2);library(cowplot)})
@@ -47,7 +64,8 @@ mp<-as.data.table(z$metric_profiles)[target=="mean_risk"]
 raw<-mp[,.(raw_A=weighted.mean(observed,n)),by=.(task_index,comparison_pair_id)]
 mp<-merge(mp,raw,by=c("task_index","comparison_pair_id"))
 display<-mp[,.(conditional_A=mean(observed),raw_A=mean(raw_A),n_metrics=.N,n_days=sum(n)),by=.(comparison_pair_id,context_group)]
-display[,`:=`(ratio=conditional_A/raw_A,pair=pair_factor(comparison_pair_id))]
+display[,`:=`(ratio=ifelse(is.finite(raw_A)&raw_A>0,conditional_A/raw_A,NA_real_),
+  pair=pair_factor(comparison_pair_id))]
 metric<-mp[context_group%in%c("Lower","Higher") & raw_A>1e-8]
 metric[,`:=`(ratio=observed/raw_A,pair=pair_factor(comparison_pair_id))]
 group_colors<-c(Lower="#3A7C88",Middle="#A5ADB2",Higher="#B16C42")
@@ -94,14 +112,9 @@ foot<-ggdraw()+draw_label(
 # Preserve the established supplementary output; no new supplementary figure.
 previous_figure<-plot_grid(plot_grid(pa,pb,nrow=1,rel_widths=c(.49,.51)),pc,foot,ncol=1,rel_heights=c(.47,.45,.08))
 # Keep the existing risk-scatter audit tables and their output contracts.
-tail<-as.data.table(z$metric_profiles)[startsWith(target,"exceed_") & context_group %in% c("Lower","Higher")]
-cloud<-dcast(tail,task_index+metric+dimension+comparison_pair_id+target~context_group,value.var="observed")
-cloud[,`:=`(epsilon=as.numeric(sub("exceed_","",target)),
-  axis=factor(dimension,levels=c("placement","optical","temporal"),labels=c("Placement","Optical","Temporal")))]
-cloud[,slice:=factor(epsilon,levels=sort(unique(epsilon)),labels=paste0("ε = ",sort(unique(epsilon))))]
-spread<-cloud[,.(x=median(Lower),y=median(Higher),
-  xlo=quantile(Lower,.25),xhi=quantile(Lower,.75),
-  ylo=quantile(Higher,.25),yhi=quantile(Higher,.75)),by=.(slice,axis)]
+risk_scatter<-fig4_risk_scatter_summary(z$metric_profiles)
+cloud<-risk_scatter$cloud
+spread<-risk_scatter$spread
 
 # The main atlas reveals the incremental-value structure before any pooling.
 # Every frozen split remains in `increment`; choose the declared primary split,
