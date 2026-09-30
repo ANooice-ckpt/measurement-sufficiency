@@ -297,14 +297,24 @@ source("scripts/utils/fig6_redesign.R")
 # placement/optical facet. All bundles, facets and tolerance intervals are frozen
 # in task_projection; selecting a slice never reconstructs a sufficient set.
 task_slice5 <- task_projection$frontiers |>
-  filter(task_id %in% c("level", "timing", "temporal dynamics"),
+  filter(task_id %in% c("level", "temporal dynamics", "all_targets"),
          placement == "eye", optical == "MEDI",
          epsilon_interval_start <= .50 + NUMERIC_TOL,
          epsilon_interval_end > .50 + NUMERIC_TOL | terminal_endpoint) |>
   group_by(task_id, placement, optical, config_id) |>
   slice_max(epsilon_interval_start, n = 1, with_ties = FALSE) |> ungroup() |>
   mutate(resolution_rank = match(resolution_s, fig5_res_levels),
-         task_id = factor(task_id, levels = c("level", "timing", "temporal dynamics")))
+         task_id = factor(task_id, levels = c("level", "temporal dynamics", "all_targets")),
+         # Display only: scheduled sample count relative to 10 s x 6 d.
+         nominal_sample_reduction = (6 / 10) / (n_days / resolution_s))
+if (!ms_plot_prep_only()) {
+  readr::write_csv(
+    task_slice5 |>
+      select(task_id, n_required, resolution_s, n_days, status, sufficient, pareto,
+             nominal_sample_reduction),
+    file.path("results", "rq3", "fig6b_eye_medi_epsilon_0.50_display_slice.csv"), na = ""
+  )
+}
 fig6_display <- ms_fig6_redesign(entry_grid, task_slice5, class_grid5,
                                 fig5_res_labels_compact, fig5_days, composition_summary,
                                 prep_only = ms_plot_prep_only())

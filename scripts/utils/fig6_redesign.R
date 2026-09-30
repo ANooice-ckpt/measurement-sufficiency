@@ -52,13 +52,14 @@ ms_fig6_redesign <- function(entry, tasks, classes, resolution_labels, days, com
   tasks$decision <- factor(ifelse(is.na(tasks$sufficient), NA_character_,
     ifelse(tasks$pareto, "Pareto", ifelse(tasks$sufficient, "Sufficient", "Not sufficient"))),
     levels = c("Not sufficient", "Sufficient", "Pareto"))
-  task_names <- c(level = "Level", timing = "Timing", `temporal dynamics` = "Temporal dynamics")
+  task_names <- c(level = "Level", `temporal dynamics` = "Temporal dynamics", all_targets = "All targets")
   tasks$task_label <- paste0(unname(task_names[as.character(tasks$task_id)]), " (", tasks$n_required, " targets)")
   tasks$task_label <- factor(tasks$task_label, levels = unique(tasks$task_label[order(tasks$task_id)]))
   b <- ggplot(tasks, aes(resolution_rank, n_days)) +
     geom_tile(aes(fill = decision), colour = "white", width = .97, height = .97, linewidth = .3) +
-    geom_point(data = tasks[which(tasks$pareto), ], shape = 21, fill = "white",
-               colour = "#31586A", size = 1.65, stroke = .45) +
+    geom_text(data = tasks[which(tasks$sufficient & tasks$pareto), ],
+      aes(label = sprintf("%g\u00d7", nominal_sample_reduction)),
+      colour = "white", size = 2, fontface = "bold") +
     geom_text(data = tasks[tasks$status != "resolved", ],
       aes(label = ifelse(status == "unavailable", "NA", "U")), size = 2, colour = muted) +
     scale_fill_manual(values = c(`Not sufficient` = "#FCFDFD", Sufficient = "#CCDDE0", Pareto = "#5F8B9E"),
@@ -160,7 +161,8 @@ ms_fig6_redesign <- function(entry, tasks, classes, resolution_labels, days, com
   }
   headers <- cowplot::plot_grid(
     header("a  Joint stability landscape", "Lower entry tolerance = greater stability"),
-    header("b  Sufficient designs for required target bundles", "Eye/MEDI; epsilon = 0.50; every target must pass; circles: Pareto"),
+    header("b  Target bundles: sufficient and Pareto designs",
+           "Eye/MEDI; epsilon = 0.50; Pareto labels: nominal scheduled sample reduction vs 10 s \u00d7 6 d"),
     nrow = 1, rel_widths = c(.36, .64)
   )
   top <- cowplot::plot_grid(plotlist = aligned, nrow = 1, rel_widths = c(.36, .64))

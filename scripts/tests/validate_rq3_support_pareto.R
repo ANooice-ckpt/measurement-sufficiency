@@ -136,11 +136,13 @@ published_classes <- readxl::read_excel("external/zauner_position/data/metric_ty
 stopifnot(all(c("level", "timing", "temporal dynamics") %in% published_classes))
 source("scripts/utils/fig6_redesign.R")
 plot_tasks <- rq3_task_projection(task_joint, inventory,
-  list(level = c("mean_MEDI", "dose"), timing = "mean_MEDI", `temporal dynamics` = "crossings"))$frontiers |>
+  list(level = c("mean_MEDI", "dose"), `temporal dynamics` = "crossings",
+       all_targets = inventory$metric))$frontiers |>
   filter(placement == "eye", optical == "MEDI", epsilon_interval_start <= .4,
          epsilon_interval_end > .4 | terminal_endpoint) |>
   mutate(resolution_rank = match(resolution_s, c(120, 60, 10)),
-         task_id = factor(task_id, levels = c("level", "timing", "temporal dynamics")))
+         task_id = factor(task_id, levels = c("level", "temporal dynamics", "all_targets")),
+         nominal_sample_reduction = (6 / 10) / (n_days / resolution_s))
 plot_env <- new.env(parent = environment())
 plot_env$tasks <- plot_tasks
 plot_env$base <- ggplot2::theme_void()
@@ -156,5 +158,10 @@ panel <- ggplot2::ggplot_build(plot_env$b)
 stopifnot(nrow(panel$data[[1L]]) == nrow(plot_tasks),
   length(unique(panel$data[[1L]]$PANEL)) == 3L,
   nrow(panel$data[[2L]]) == sum(plot_tasks$pareto, na.rm = TRUE),
-  nrow(panel$data[[3L]]) == sum(plot_tasks$status != "resolved"))
+  nrow(panel$data[[3L]]) == sum(plot_tasks$status != "resolved"),
+  all(panel$data[[2L]]$label == "36\u00d7"),
+  identical(levels(plot_env$tasks$task_label),
+            c("Level (2 targets)", "Temporal dynamics (1 targets)", "All targets (4 targets)")),
+  identical(plot_env$tasks[c("status", "sufficient", "pareto")],
+            plot_tasks[c("status", "sufficient", "pareto")]))
 cat("RQ3 maximal-support, task-set completeness and sufficient/Pareto contracts passed\n")

@@ -502,36 +502,43 @@ p4a <- ggplot() +
 
 # R_obs stays on its original linear scale; only the background raw points carry
 # the long tail. The highest observed boundary is unresolved and omitted, so the
-# rank axis ends at the highest resolved observed requirement.
+# axis ends at the highest resolved observed requirement. A display-only offset
+# lets each facet label the existing ranks in its own units on a free x scale.
+fig5b_display <- observed_display |>
+  mutate(x_pos = x_pos + if_else(dimension == "Monitoring duration", ORDERED_MAX_RANK, 0L))
+fig5b_summary <- observed_summary |>
+  mutate(x_pos = x_pos + if_else(dimension == "Monitoring duration", ORDERED_MAX_RANK, 0L))
 p4b <- ggplot() +
   geom_point(
-    data = observed_display,
+    data = fig5b_display,
     aes(x_pos, R_obs, color = metric_class),
     position = position_jitter(width = .018, height = 0, seed = 91),
     size = .45, alpha = .12
   ) +
   geom_linerange(
-    data = observed_summary,
+    data = fig5b_summary,
     aes(x_pos, ymin = R_q25, ymax = R_q75, color = metric_class),
     linewidth = .42, alpha = .46
   ) +
   geom_point(
-    data = observed_summary,
+    data = fig5b_summary,
     aes(x_pos, R_median, color = metric_class),
     shape = 18, size = 1.6
   ) +
-  facet_wrap(~dimension, nrow = 1, labeller = as_labeller(FIG4_DIM_LABELS)) +
+  facet_wrap(~dimension, nrow = 1, scales = "free_x", labeller = as_labeller(FIG4_DIM_LABELS)) +
   scale_color_ms_metric(guide = "none") +
   scale_x_continuous(
-    breaks = seq_len(FIG4B_MAX_RESOLVED_RANK),
-    limits = c(.65, FIG4B_MAX_RESOLVED_RANK + .35),
-    labels = as.character(seq_len(FIG4B_MAX_RESOLVED_RANK))
+    breaks = c(seq_len(FIG4B_MAX_RESOLVED_RANK),
+               ORDERED_MAX_RANK + seq_len(FIG4B_MAX_RESOLVED_RANK)),
+    labels = c(paste(RES_LEVELS[seq_len(FIG4B_MAX_RESOLVED_RANK)], "s"),
+               paste(DURATION_LEVELS[seq_len(FIG4B_MAX_RESOLVED_RANK)], "d")),
+    expand = expansion(add = .1)
   ) +
   scale_y_continuous(breaks = scales::breaks_extended(n = 5)) +
   labs(
     title = "b  Residual instability contracts as measurement burden increases",
     subtitle = "highest observed boundary is unresolved and omitted",
-    x = "requirement rank (low → high burden)", y = "R_obs = max A to higher observed states"
+    x = "Temporal resolution / monitoring days (low → high burden)", y = "R_obs = max A to higher observed states"
   ) +
   theme_rq3(base_size = 6.35) +
   theme(

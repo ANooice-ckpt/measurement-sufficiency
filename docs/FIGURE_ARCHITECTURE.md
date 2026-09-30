@@ -237,7 +237,8 @@ analysis and `RQ2_INFORMATION_EXPERIMENTS.md` for the experiment/failed-route lo
   class; non-threshold-like or otherwise unresolved states remain explicitly
   unresolved rather than being forced into a requirement rank;
 - Fig. 5b: empirical residual instability `R_obs` across increasing ordered-axis
-  measurement burden, with the unresolved upper boundary omitted;
+  measurement burden, labeled with temporal resolution / monitoring days and
+  with the unresolved upper boundary omitted;
 - Fig. 5c: empirical placement/optical substitutability curves as tolerance
   relaxes, including the 50% substitutability entry point where observed. Its
   vertical tolerance guides refer to the joint tolerance slices in Fig. 6.
@@ -252,8 +253,12 @@ candidate lattice:
 
 - Fig. 6a: the joint entry-tolerance landscape based on metric-equal pooling of
   resolved `epsilon_entry`, with boundary-unresolved cells marked explicitly;
-- Fig. 6b: Pareto occupancy at explicit tolerance slices using the frozen
-  interval-level Pareto flags rather than a refitted optimization surface;
+- Fig. 6b: Level / Temporal dynamics / All targets bundles at eye/MEDI and
+  epsilon=.50, selected directly from the frozen `task_projection` frontiers.
+  Only sufficient Pareto cells carry nominal scheduled-sample reduction labels
+  relative to 10 s x 6 d: `(6 / 10) / (n_days / resolution_s)`. This display
+  quantity does not enter sufficiency or Pareto decisions. The displayed cells
+  are exported to `results/rq3/fig6b_eye_medi_epsilon_0.50_display_slice.csv`;
 - Fig. 6c: failure of single-axis sufficiency composition. A cell map at the
   existing epsilon=.25 slice shows joint failures / single-axis passes, alongside
   failure-rate profiles at .05/.10/.20/.25/.30/.50/1 by placement/optical facet.
