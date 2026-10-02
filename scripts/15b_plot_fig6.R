@@ -307,11 +307,16 @@ task_slice5 <- task_projection$frontiers |>
          task_id = factor(task_id, levels = c("level", "temporal dynamics", "all_targets")),
          # Display only: scheduled sample count relative to 10 s x 6 d.
          nominal_sample_reduction = (6 / 10) / (n_days / resolution_s))
+task_slice5 <- ms_fig6_task_explanation(task_slice5, task_projection$inventory |>
+                                        distinct(metric, metric_class))
 if (!ms_plot_prep_only()) {
   readr::write_csv(
     task_slice5 |>
       select(task_id, n_required, resolution_s, n_days, status, sufficient, pareto,
-             nominal_sample_reduction),
+             nominal_sample_reduction, R_task, limiting_targets, limiting_target_classes,
+             frontier_limiting_targets, comparison_task, comparison_relation,
+             required_days_at_interval, required_interval_at_days_s,
+             extra_days_vs_comparison_at_interval, sampling_rate_ratio_vs_comparison_at_days),
     file.path("results", "rq3", "fig6b_eye_medi_epsilon_0.50_display_slice.csv"), na = ""
   )
 }

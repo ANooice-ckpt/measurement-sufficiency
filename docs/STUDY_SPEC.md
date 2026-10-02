@@ -154,6 +154,24 @@ Models are separate by domain and geometry. Shared participant bootstrap draws
 recompute both D_T and f_W; zero-total distortion has undefined f_W and is excluded.
 The coefficient is a conditional composition association, not a causal effect.
 
+On the same matched rows, RQ1 also describes participant-demeaned exposure
+pattern preservation. Linear targets retain signed `rho_within` and
+`within_shape_loss = 1 - rho_within^2`. For circular targets the latter is the
+squared residual norm of the demeaned reference sin/cos design projected onto
+the demeaned candidate design, divided by the reference squared norm. This
+directional design-space quantity uses no additional outcome model. Zero loss
+permits rescaling, sign reversal or a rotation of circular coordinates; it does
+not mean equal exposure values. Fig.2 compares it descriptively with the existing
+same-sample association-signal displacement, separately by geometry and domain.
+
+The existing RQ3 resource-allocation Monte Carlo additionally records
+`J = sum_i J_i`, with `J_i` the squared norm of each participant's demeaned
+exposure design, and `N_eff = J^2 / sum_i J_i^2` (undefined when J is zero).
+Linear J uses the fixed reference-SD basis; circular J uses the sin/cos trace.
+These describe exposure contrast and its concentration within each target,
+not outcome-noise-adjusted Fisher information or a guarantee of association
+precision. The existing R_obs_3d link remains a descriptive bridge.
+
 RQ3 tests single-axis rule composition within each joint placement/optical/support/
 metric facet. For the same starting (r,d), R_T uses only finer cadences at d and
 R_D only longer windows at r, all on the joint scale. Where both axes have higher

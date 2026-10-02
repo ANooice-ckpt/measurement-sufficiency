@@ -284,6 +284,7 @@ rq1_run_inference <- function() {
   distortion_components <- contrast_summary |>
     select(all_of(contrast_keys), basis, n_matched_days, n_participants,
            starts_with("distortion_"), D_T, f_W, rq1_distortion_A, inference_deviation, status,
+           rho_within, within_shape_loss, signal_difference_outcome_sd,
            core_artifact_version, rq1_analysis_version, rq1_inference_version)
 
   out <- file.path(rq_root("rq1"), "inference")
@@ -314,6 +315,11 @@ rq1_run_inference <- function() {
       "signal_difference_outcome_sd = RMS(u_candidate-u_reference) / RMS(demeaned outcome);",
       "signal_*_r2 = sum(u^2) / sum(demeaned outcome^2); native-unit RMS and signal correlation retained;",
       "descriptive in-sample preservation, not held-out prediction; no additional fitting or testing"),
+    within_shape = paste("Participant-demeaned exposure designs on the same matched rows;",
+      "rho_within is the signed pooled within-person correlation for linear targets only;",
+      "within_shape_loss = ||reference - projection onto candidate design||^2 / ||reference||^2;",
+      "equals 1-rho_within^2 for linear targets; circular targets retain the sin/cos pair;",
+      "zero loss permits rescaling/sign reversal or clock rotation, not equal exposure values"),
     analysis_scope = "three human-state domains across eight single-axis frozen RQ1 anchor contrasts; duration and multi-axis combinations excluded",
     exposure_input = "frozen RQ1 participant-day pair values (state_a candidate; state_b eye/MEDI/10-s reference)",
     scale = "reference SD on matched repeated-measures support, fixed across paired bootstrap draws; circular sin/cos unscaled",

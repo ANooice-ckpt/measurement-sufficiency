@@ -17,6 +17,11 @@
 # allocations; MC participants are sampled WITHOUT replacement within site.
 # Positive broad-minus-concentrated deviation means more days performed better.
 # Quantiles describe allocation Monte Carlo spread, NOT confidence intervals.
+# Each existing draw also records exposure contrast J and its participant
+# effective count N_eff. J is reference-SD squared for linear targets and the
+# trace of the demeaned sin/cos cross-product for circular targets; compare
+# allocations within a target, not J across these geometries. This is exposure
+# design information, not outcome-noise-adjusted Fisher information.
 # The duration link is a descriptive Spearman correlation across metrics, kept
 # separate by geometry; correlated metrics are not independent inferential units.
 
@@ -170,9 +175,14 @@ resource_allocation_main <- function(
     # The helper supplies the exact current FE fit and site-cluster bootstrap.
     fit <- rq1_inference_fit(g, B = bootstrap, seed = seed + 1L)
     status <- fit$task_summary$status[[1]]
-    if (identical(status, "estimated") && is.finite(fit$task_summary$inference_deviation[[1]])) {
+    reference_estimable <- identical(status, "estimated") &&
+      is.finite(fit$task_summary$inference_deviation[[1]])
+    information <- effective <- matrix(NA_real_, nrow(designs), replicates)
+    if (reference_estimable) {
       beta <- fit$summary$reference_beta
       covariance <- fit$component_blocks$reference_covariance[[1]]
+    } else if (identical(status, "estimated")) status <- "reference_covariance_unavailable"
+    if (is.finite(fit$summary$reference_scale[[1]])) {
       r <- g$reference_value
       X <- if (tasks$metric_geometry[t] == "circular_time") {
         cbind(sin(2 * pi * r / 86400), cos(2 * pi * r / 86400))
@@ -180,25 +190,35 @@ resource_allocation_main <- function(
       blocks <- lapply(plan$windows, function(idx) {
         rq1_inference_stats(X[idx, , drop = FALSE], g$outcome_value[idx], rep("one", length(idx)))[[1]]
       })
+      window_J <- vapply(blocks, function(z) sum(diag(z$xx)), numeric(1))
       within_y <- vapply(plan$windows, function(idx) {
         y <- g$outcome_value[idx]; sum((y - mean(y))^2)
       }, numeric(1))
       for (j in seq_len(nrow(designs))) for (b in seq_len(replicates)) {
         idx <- plan$draws[[j]][, b]
-        if (sum(within_y[idx]) < 1e-12) next
+        Ji <- window_J[idx]
+        information[j, b] <- sum(Ji)
+        effective[j, b] <- if (sum(Ji) > 0) sum(Ji)^2 / sum(Ji^2) else NA_real_
+        if (!reference_estimable || sum(within_y[idx]) < 1e-12) next
         candidate <- rq1_inference_solve(blocks[idx], rep(1L, length(idx)))
         deviations[t, j, b] <- rq1_inference_quadnorm(candidate - beta, covariance)
       }
-    } else if (identical(status, "estimated")) status <- "reference_covariance_unavailable"
+    }
     delta <- deviations[t, 3L, ] - deviations[t, 1L, ]
     comparison <- resource_allocation_summary(delta)
     rows[[t]] <- bind_rows(lapply(seq_len(nrow(designs)), function(j) {
       s <- resource_allocation_summary(deviations[t, j, ])
+      js <- resource_allocation_summary(information[j, ])
+      ns <- resource_allocation_summary(effective[j, ])
       bind_cols(designs[j, ], tasks[t, ], tibble(
         status = if (status != "estimated") status else if (!s["valid"]) "mc_not_estimable"
           else if (s["valid"] < replicates) "mc_partially_estimable" else "estimated",
         deviation_mean = s["mean"], deviation_median = s["median"],
         deviation_q025 = s["q025"], deviation_q975 = s["q975"], mc_valid = as.integer(s["valid"]),
+        J_mean = js["mean"], J_q025 = js["q025"], J_q975 = js["q975"],
+        N_eff_mean = ns["mean"], N_eff_q025 = ns["q025"], N_eff_q975 = ns["q975"],
+        information_mc_valid = as.integer(js["valid"]), N_eff_mc_valid = as.integer(ns["valid"]),
+        information_basis = if (tasks$metric_geometry[t] == "linear") "reference_SD_squared" else "sin_cos_trace",
         task_broad_minus_concentrated = comparison["mean"],
         task_difference_q025 = comparison["q025"], task_difference_q975 = comparison["q975"],
         paired_mc_valid = as.integer(comparison["valid"]),
@@ -233,7 +253,7 @@ resource_allocation_main <- function(
   result <- result |> left_join(overall, by = "design") |> mutate(
     reference_config = contract$reference_config, eligible_N = pool_n, eligible_days = nrow(calendar),
     mc_requested = replicates, bootstrap_requested = bootstrap, seed = seed,
-    resource_allocation_version = "resource_allocation_v1",
+    resource_allocation_version = "resource_allocation_v2_within_information",
     core_artifact_version = a$core_artifact_version, rq1_inference_version = a$rq1_inference_version,
     rq3_analysis_version = expected_rq3, inference_md5 = hashes[1], duration_md5 = hashes[2])
   dir.create(dirname(output_path), recursive = TRUE, showWarnings = FALSE)

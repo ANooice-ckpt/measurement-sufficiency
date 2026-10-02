@@ -157,21 +157,24 @@ Fig. 2 presents:
   shown as horizontal metric–outcome point distributions with domain-level
   median and interquartile range. Placement, optical and temporal groups are
   separated visually; all eight contrasts retain the eye/MEDI/10-s reference;
-- Fig. 2c: frozen coefficients and conditional participant-bootstrap intervals
-  for the added within-person share predictor in a descriptive model of
-  log1p(inferential deviation), adjusting for log1p(matched-support total RMS), log1p(frozen RQ1 A), contrast and
-  outcome. Fits are separate for each domain and exposure geometry. Coefficients
-  are expressed per primary-task SD of within share; missing/unreliable
-  estimates are not represented as zero.
+- Fig. 2c: within-person pattern loss versus the existing association-signal
+  displacement, separately by domain and geometry. Linear loss is
+  `1 - rho_within^2`; circular loss is the unexplained fraction of the demeaned
+  reference sin/cos design after projection onto the candidate design. Signed
+  linear correlation remains in the existing inference tables. Points show
+  descriptive task-level relationships without another fitted model. The
+  previous conditional composition model remains in the frozen analysis outputs.
+- Fig. 2d: the existing coefficient-displacement versus association-signal
+  displacement panel, with signal RMS normalized by within-outcome RMS. These
+  are same-sample FE signals, not held-out predictions.
 
 Fig. 2b retains its original pseudo-log deviation scale. The original reference
 landscape and pooled A-displacement scatter move to supplementary figures,
 together with within-contrast correlations stratified by exposure geometry.
-The established tall-left/two-right composition is retained. Panel b's summary
-lane offset is categorical spacing only. No plot refits the component model.
-The left column is widened and the figure is 8.2 x 7.2 inches to accommodate
-both tracks; total RMS uses a pseudo-log axis and geometry-specific ranges.
-The conditional forest distinguishes unreliable-bootstrap estimates with crosses.
+The established tall-left/two-right composition and the existing full-width
+panel d are retained. Panel b's summary lane offset is categorical spacing only.
+The figure remains 8.2 x 9.0 inches; total RMS uses a pseudo-log axis and
+geometry-specific ranges. No plot refits a model.
 
 Frozen RQ1 A remains the upstream magnitude covariate and the pooled supplement's
 x-axis. Matched-support squared-error components are newly declared explanatory
@@ -273,6 +276,18 @@ states. It does not concatenate Fig.5's separately defined single-axis summaries
 Original maximal pairwise supports remain in use; failure is a design-rule
 disagreement in the observed comparison system, not proof of a statistical
 interaction. Fig.3c's Q and R/Q remain a separate cross-axis description.
+
+Fig.6b's existing display CSV also retains `R_task`, `limiting_targets`, their
+metric classes and the union of limiting targets across each frozen frontier.
+These identify the metrics attaining entry tolerance at those cells. Conditional
+axis requirements report minimum sufficient days at each fixed interval and
+the coarsest sufficient interval at each fixed duration. Differences compare
+Temporal dynamics with Level (alternative goals), then All targets with Temporal
+dynamics (an expanded target set). Positive extra days or a sampling-rate ratio
+above one indicate the corresponding increased requirement. NA means no observed
+sufficient choice on that slice (or no comparison bundle); the two conditional
+minima must not be combined into an invented joint optimum. Full sufficient and
+Pareto flags remain unchanged; no new bundle or sufficiency calculation is added.
 
 Display counts pool unique metric/configuration states across their respective
 maximal supports within each placement/optical facet; support-specific counts

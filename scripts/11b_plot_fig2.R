@@ -49,7 +49,7 @@ CORE_VERSION <- ms_plot_assert_core(a$core_artifact_version)
 RQ1_VERSION <- ms_plot_one_version(a$rq1_analysis_version, "rq1_analysis_version")
 INFERENCE_VERSION <- ms_plot_one_version(a$rq1_inference_version, "rq1_inference_version")
 ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
-ms_plot_assert_prefix(INFERENCE_VERSION, "rq1_inference_v6_signal_anchor8__", "rq1_inference_version")
+ms_plot_assert_prefix(INFERENCE_VERSION, "rq1_inference_v7_shape_anchor8__", "rq1_inference_version")
 
 rq1_summary <- readr::read_csv(RQ1_SUMMARY_CSV, show_col_types = FALSE, progress = FALSE)
 ms_plot_assert_core(rq1_summary$core_artifact_version, CORE_VERSION)
@@ -70,7 +70,8 @@ ms_plot_require_columns(
   c("candidate_config", "contrast_label", "contrast_order", "dimension", "metric", "metric_class",
     "outcome", "outcome_domain", "inference_deviation", "rq1_distortion_A", "status",
     "distortion_between_ms", "distortion_within_ms", "distortion_within_fraction", "D_T", "f_W",
-    "signal_difference_outcome_sd", "signal_reference_r2", "signal_candidate_r2", "signal_correlation"),
+    "signal_difference_outcome_sd", "signal_reference_r2", "signal_candidate_r2", "signal_correlation",
+    "rho_within", "within_shape_loss"),
   "inferential preservation summary"
 )
 if (nrow(anchor_map) != contract$anchor_count || n_distinct(anchor_map$candidate_config) != contract$anchor_count) {
@@ -340,27 +341,23 @@ p2_total <- ggplot(component_plot,aes(D_T,display_row)) +
     axis.text=element_text(size=5.2),plot.subtitle=element_text(size=4.8,colour="#666A6D"))
 p2a <- cowplot::plot_grid(p2_total,p2a,ncol=1,rel_heights=c(1.06,1),align="v",axis="lr")
 
-# Read the frozen conditional comparison; never fit it in the figure script.
-component_link <- tibble::as_tibble(a$component_link$summary)
-ms_plot_require_columns(component_link,c("outcome_domain","metric_geometry","beta_within",
-  "beta_lower","beta_upper","incremental_r2","n_tasks","status","rq1_inference_version"),"component-link summary")
-ms_assert_version(component_link,"rq1_inference_version",INFERENCE_VERSION)
-component_link <- component_link |>
-  mutate(outcome_domain=factor(outcome_domain,levels=rev(DOMAIN_LEVELS)),
-         geometry_label=if_else(metric_geometry=="linear","Linear","Circular sin/cos"))
-p2c <- ggplot(component_link,aes(beta_within,outcome_domain)) +
-  geom_vline(xintercept=0,colour="#9BA6AD",linewidth=.3,linetype=2) +
-  geom_linerange(aes(xmin=beta_lower,xmax=beta_upper),orientation="y",linewidth=.5,
-                 colour="#354953",na.rm=TRUE) +
-  geom_point(aes(shape=status),fill="white",colour="#354953",size=2,stroke=.5,na.rm=TRUE) +
-  scale_shape_manual(values=c(estimated=21,bootstrap_unreliable=4,not_estimable=4),guide="none") +
-  geom_text(data=filter(component_link,!is.finite(beta_within)),
-            aes(x=0,label="Not estimable"),size=1.8,colour="#666A6D") +
-  facet_wrap(~geometry_label,nrow=1) +
-  labs(title="c  Composition effect at controlled total distortion",
-    subtitle=paste0("Adjusted for matched total RMS, frozen A, contrast and outcome\n",
-      "Bars: conditional 95% intervals; crosses: unreliable bootstrap"),
-    x="Change in log(1 + deviation) per SD of within share",y=NULL) +
+# Replace the composition forest with frozen pattern/signal pairs. The existing
+# component model remains in the analysis artifact; this panel adds no fit.
+shape_plot <- contrast_plot |>
+  filter(is.finite(within_shape_loss), is.finite(signal_difference_outcome_sd)) |>
+  mutate(geometry_label = factor(if_else(metric_geometry == "linear", "Linear", "Circular sin/cos"),
+                                 levels = c("Linear", "Circular sin/cos")))
+p2c <- ggplot(shape_plot, aes(within_shape_loss, signal_difference_outcome_sd,
+                             colour = metric_class, shape = dimension)) +
+  geom_point(size = .8, alpha = .4, stroke = .2) +
+  scale_color_ms_metric(guide = "none") +
+  scale_shape_manual(values = c(placement = 16, optical = 17, temporal = 1), guide = "none") +
+  scale_x_continuous(limits = c(0, 1), breaks = c(0, .5, 1)) +
+  scale_y_continuous(labels = scales::label_percent()) +
+  facet_grid(outcome_domain ~ geometry_label) +
+  labs(title="c  Within-person pattern and association signal",
+    subtitle="Linear: 1 - rho-within squared; circular: design projection loss\nSame matched days; descriptive points, no fitted relation",
+    x="Reference pattern unexplained by candidate", y="Signal difference / within-outcome RMS") +
   theme_ms_axes(base_size=5.9,legend_position="none",plot_title_size=6.8) +
   theme(axis.text=element_text(size=4.8),axis.title=element_text(size=4.7),
         strip.text=element_text(size=5),plot.subtitle=element_text(size=4.35,colour="#666A6D"))
@@ -463,4 +460,4 @@ ms_plot_write_manifest(
     rq3_analysis_version = NA_character_
   )
 )
-message("Fig. 2 complete: distortion composition, coefficient displacement and association-signal preservation.")
+message("Fig. 2 complete: distortion composition, within-person pattern and association-signal preservation.")

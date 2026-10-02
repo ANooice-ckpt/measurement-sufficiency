@@ -1,5 +1,42 @@
 # Fig. 6 display only. Inputs are frozen joint/task decisions and display grids.
 # No new pooling, sufficiency classification, Pareto calculation or fitting.
+# Explain a single frozen facet/tolerance slice in its existing display table.
+# Axis requirements are conditional slices, not coordinates of one optimum.
+ms_fig6_task_explanation <- function(tasks, inventory) {
+  classes <- stats::setNames(inventory$metric_class, inventory$metric)
+  collect_targets <- function(x) paste(sort(unique(unlist(strsplit(x[nzchar(x)], ";", fixed = TRUE)))), collapse = ";")
+  target_classes <- function(x) paste(sort(unique(unname(classes[strsplit(x, ";", fixed = TRUE)[[1L]]]))), collapse = ";")
+  by_interval <- tasks |> dplyr::group_by(task_id, resolution_s) |>
+    dplyr::summarise(required_days_at_interval = if (any(sufficient %in% TRUE))
+      min(n_days[sufficient %in% TRUE]) else NA_real_, .groups = "drop")
+  by_days <- tasks |> dplyr::group_by(task_id, n_days) |>
+    dplyr::summarise(required_interval_at_days_s = if (any(sufficient %in% TRUE))
+      max(resolution_s[sufficient %in% TRUE]) else NA_real_, .groups = "drop")
+  limits <- tasks |> dplyr::group_by(task_id) |>
+    dplyr::summarise(frontier_limiting_targets = collect_targets(limiting_targets[pareto %in% TRUE]),
+                     .groups = "drop")
+  tasks |>
+    dplyr::mutate(
+      limiting_target_classes = vapply(limiting_targets, target_classes, character(1)),
+      # Level and dynamics are alternative goals, not nested target sets.
+      comparison_task = unname(c(`temporal dynamics` = "level", all_targets = "temporal dynamics")[as.character(task_id)]),
+      comparison_relation = dplyr::case_when(task_id == "temporal dynamics" ~ "alternative_target_bundle",
+        task_id == "all_targets" ~ "expanded_target_bundle", TRUE ~ NA_character_)
+    ) |>
+    dplyr::left_join(limits, by = "task_id") |>
+    dplyr::left_join(by_interval, by = c("task_id", "resolution_s")) |>
+    dplyr::left_join(by_days, by = c("task_id", "n_days")) |>
+    dplyr::left_join(dplyr::rename(by_interval, comparison_days = required_days_at_interval),
+      by = c("comparison_task" = "task_id", "resolution_s")) |>
+    dplyr::left_join(dplyr::rename(by_days, comparison_interval_s = required_interval_at_days_s),
+      by = c("comparison_task" = "task_id", "n_days")) |>
+    dplyr::mutate(
+      extra_days_vs_comparison_at_interval = required_days_at_interval - comparison_days,
+      sampling_rate_ratio_vs_comparison_at_days = comparison_interval_s / required_interval_at_days_s
+    ) |>
+    dplyr::select(-comparison_days, -comparison_interval_s)
+}
+
 ms_fig6_redesign <- function(entry, tasks, classes, resolution_labels, days, composition,
                              prep_only = FALSE) {
   ink <- "#30363B"
