@@ -36,10 +36,10 @@ LOG="results/logs/downstream_v5.log"
   '
 
   echo "===== SYNTHETIC ENGINEERING PREFLIGHT ====="
-  Rscript --vanilla scripts/tests/validate_engineering.R
-  Rscript --vanilla scripts/tests/validate_rq1_primary_duration.R
-  Rscript --vanilla scripts/tests/validate_reliability_contract.R
-  Rscript --vanilla scripts/tests/validate_rq2_reliability.R
+  Rscript scripts/tests/validate_engineering.R
+  Rscript scripts/tests/validate_rq1_primary_duration.R
+  Rscript scripts/tests/validate_reliability_contract.R
+  Rscript scripts/tests/validate_rq2_reliability.R
 
   echo "===== STRUCTURAL PREFLIGHT ====="
   Rscript -e '
