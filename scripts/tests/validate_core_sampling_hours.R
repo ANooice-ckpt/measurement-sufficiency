@@ -25,7 +25,8 @@ stopifnot(nrow(wrist_checked$sources$eye) == 0L,
           all(!wrist_checked$audit$support_available),
           nrow(checked$sources$eye) > 0L)
 missing_checked <- core_filter_native_sources(list(eye = eye, chest = chest[chest$Id == "minute", ]), "test", "eye_chest_medi")
-stopifnot(any(missing_checked$audit$unavailable_reason == "required placement source is absent", na.rm = TRUE))
+stopifnot(any(missing_checked$audit$unavailable_reason == "required placement source is absent", na.rm = TRUE),
+          all(missing_checked$audit$site == "test"))
 gapped <- source_fixture("gapped")[-c(2L, 10:30), ]
 stopifnot(core_source_sampling_audit(gapped, "test", "eye")$source_available)
 bad_phase <- gapped; bad_phase$Datetime[2L] <- bad_phase$Datetime[2L] + 1
