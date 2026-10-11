@@ -447,8 +447,9 @@ p2d_curves <- ggplot(participant_display, aes(target_fraction, centre, group=ser
                                              colour=series, linetype=series)) +
   geom_ribbon(aes(ymin=q25, ymax=q75, fill=series), alpha=.10, colour=NA, linetype=0, na.rm=TRUE) +
   geom_line(linewidth=.4, na.rm=TRUE) + geom_point(size=.55, show.legend=FALSE, na.rm=TRUE) +
-  geom_text(data=filter(participant_display, target_fraction == .5, series == "total_mean", n_tasks == 0L),
-    aes(x=.625, y=0, label="Unavailable"), inherit.aes=FALSE, size=1.9, colour="#657078") +
+  geom_text(data=filter(participant_display, target_fraction == .5, series == "total_mean"),
+    aes(x=.625, y=0, label=if_else(n_tasks == 0L, "Unavailable", "")),
+    inherit.aes=FALSE, size=1.9, colour="#657078") +
   facet_grid(contrast_short ~ outcome_domain, drop=FALSE) +
   scale_x_continuous(breaks=c(.25, .5, .75, 1), labels=c("25", "50", "75", "100"), limits=c(.22,1.03)) +
   scale_y_continuous(labels=scales::label_percent(), breaks=scales::breaks_pretty(n=2),
