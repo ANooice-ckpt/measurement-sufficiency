@@ -1,3 +1,15 @@
+# Select a frozen decision on its breakpoint interval; do not re-evaluate
+# sufficient sets or the minimum-burden rule in a plotting entrypoint.
+fig5_requirement_lookup <- function(requirement, epsilon, tol = 1e-12) {
+  requirement <- requirement[order(requirement$epsilon), , drop = FALSE]
+  out <- rep(NA_real_, length(epsilon))
+  if (!nrow(requirement)) return(out)
+  index <- findInterval(epsilon + tol, requirement$epsilon)
+  found <- index > 0L
+  out[found] <- requirement$minimum_rank[index[found]]
+  out
+}
+
 # Canonical RQ3 plotting source. All accepted display refinements are consolidated here.
 options(encoding = "UTF-8")
 if (.Platform$OS.type == "windows") invisible(suppressWarnings(Sys.setlocale("LC_CTYPE", "English_United States.utf8")))
@@ -60,13 +72,13 @@ ms_plot_require_columns(rq1_summary, c("metric", "metric_class", "dimension", "A
                         "rq1_pairwise_summary.csv")
 ms_plot_require_columns(observed,
   c("core_artifact_version", "rq1_analysis_version", "rq3_analysis_version", "dimension",
-    "metric", "metric_class", "state_label", "requirement_rank", "R_obs", "status"),
+    "metric", "metric_class", "state_id", "state_label", "requirement_rank", "R_obs", "status"),
   "rq3_sufficiency_long.rds")
 ms_plot_require_columns(sufficiency,
   c("dimension", "metric", "metric_class", "epsilon", "sufficient", "status"),
   "rq3_sufficiency_long.csv")
 ms_plot_require_columns(requirement,
-  c("dimension", "metric", "epsilon", "sufficient_states", "sufficient_set_threshold_like"),
+  c("dimension", "metric", "epsilon", "sufficient_states", "sufficient_set_threshold_like", "least_demanding_sufficient_state"),
   "rq3_single_dimension_requirement.csv")
 ms_plot_require_columns(unordered,
   c("dimension", "comparison_pair_id", "config_a_label", "config_b_label", "metric", "metric_class",
@@ -93,8 +105,8 @@ RQ1_VERSION <- ms_plot_one_version(c(observed$rq1_analysis_version, joint$rq1_an
 RQ3_VERSION <- ms_plot_one_version(c(observed$rq3_analysis_version, joint$rq3_analysis_version),
                                    "rq3_analysis_version")
 CORE_VERSION <- ms_plot_assert_core(c(observed$core_artifact_version, joint$core_artifact_version))
-ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
-ms_plot_assert_prefix(RQ3_VERSION, "rq3_v8_", "rq3_analysis_version")
+ms_plot_assert_prefix(RQ1_VERSION, "rq1_v6_", "rq1_analysis_version")
+ms_plot_assert_prefix(RQ3_VERSION, "rq3_v9_", "rq3_analysis_version")
 if (!all(sort(unique(joint$resolution_s)) %in% sort(ms_primary_temporal_s()))) {
   stop("RQ3 joint artifact contains temporal states outside the frozen primary design", call. = FALSE)
 }
@@ -137,61 +149,16 @@ observed_display <- observed |>
     x_pos = requirement_rank + class_offset
   )
 
-# a. Re-evaluate each metric on the pooled observed epsilon breakpoints within
-# dimension. This is a display inversion of the existing R_obs thresholds only;
-# it does not create a new sufficiency estimand.
-requirement_grid <- bind_rows(lapply(ORDERED_DIMS, function(dim) {
-  d <- observed |>
-    filter(dimension == dim, status == "resolved", is.finite(R_obs), is.finite(requirement_rank))
-  eps <- sort(unique(c(0, d$R_obs[is.finite(d$R_obs)])))
-  metrics <- d |> distinct(metric, metric_class)
-  bind_rows(lapply(seq_len(nrow(metrics)), function(i) {
-    m <- metrics$metric[[i]]
-    mc <- metrics$metric_class[[i]]
-    g <- d |> filter(metric == m)
-    rank_at <- vapply(eps, function(e) {
-      ok <- g$requirement_rank[g$R_obs <= e + NUMERIC_TOL]
-      if (length(ok)) min(ok) else NA_real_
-    }, numeric(1))
-    tibble(
-      dimension = dim, metric = m, metric_class = mc,
-      epsilon = eps, least_rank = rank_at
-    )
-  }))
-})) |>
-  mutate(metric_class = factor(metric_class, levels = METRIC_CLASSES))
-
-requirement_summary <- requirement_grid |>
-  group_by(dimension, metric_class, epsilon) |>
-  summarise(
-    n_metrics = n_distinct(metric),
-    coverage = mean(is.finite(least_rank)),
-    rank_median = safe_median(least_rank),
-    rank_q25 = safe_q(least_rank, .25),
-    rank_q75 = safe_q(least_rank, .75),
-    .groups = "drop"
-  ) |>
-  mutate(
-    dimension = factor(dimension, levels = ORDERED_DIMS,
-                       labels = unname(ORDERED_TITLES[ORDERED_DIMS]))
-  )
-
-epsilon_values <- c(requirement_summary$epsilon, unordered$epsilon_entry)
+# Map frozen minimum-state IDs to display ranks once, including unresolved NA.
+requirement_display <- requirement |>
+  left_join(observed |> distinct(dimension, metric, state_id, requirement_rank),
+    by = c("dimension", "metric", "least_demanding_sufficient_state" = "state_id"),
+    relationship = "many-to-one") |>
+  rename(minimum_rank = requirement_rank)
+epsilon_values <- c(requirement$epsilon, unordered$epsilon_entry)
 epsilon_values <- epsilon_values[is.finite(epsilon_values) & epsilon_values >= 0]
 epsilon_limit <- if (length(epsilon_values)) max(epsilon_values) * 1.02 else 1
 if (!is.finite(epsilon_limit) || epsilon_limit <= 0) epsilon_limit <- 1
-
-resolved_coverage <- requirement_grid |>
-  group_by(dimension, epsilon) |>
-  summarise(
-    n_metrics = n_distinct(metric),
-    coverage = mean(is.finite(least_rank)),
-    .groups = "drop"
-  ) |>
-  mutate(
-    dimension = factor(dimension, levels = ORDERED_DIMS,
-                       labels = unname(ORDERED_TITLES[ORDERED_DIMS]))
-  )
 
 # b. Distribution of the empirical entry threshold R_obs at each ordered state.
 observed_summary <- observed_display |>
@@ -210,23 +177,13 @@ observed_summary <- observed_display |>
   )
 FIG4B_MAX_RESOLVED_RANK <- max(observed_summary$requirement_rank, na.rm = TRUE)
 
-# c. Unordered dimensions are empirical substitutability curves. Reconstruct the
-# all-metric ECDF directly from epsilon_entry so metric-class-specific source
-# curves do not get accidentally connected together.
-pair_ecdf <- unordered |>
-  filter(dimension %in% c("placement", "optical"), is.finite(epsilon_entry)) |>
-  mutate(pair = paste(config_a_label, "→", config_b_label)) |>
-  group_by(dimension, comparison_pair_id, pair) |>
-  group_modify(function(g, key) {
-    eps <- sort(unique(c(0, g$epsilon_entry[is.finite(g$epsilon_entry)])))
-    tibble(
-      epsilon = eps,
-      fraction_metrics_substitutable = vapply(
-        eps, function(e) mean(g$epsilon_entry <= e + NUMERIC_TOL, na.rm = TRUE), numeric(1)
-      )
-    )
-  }) |>
-  ungroup() |>
+# c. Display canonical all-metric substitutability curves unchanged.
+pair_ecdf <- coverage |>
+  filter(dimension %in% c("placement", "optical")) |>
+  left_join(unordered |> distinct(dimension, comparison_pair_id, config_a_label, config_b_label) |>
+    mutate(pair = paste(config_a_label, "→", config_b_label)) |>
+    select(dimension, comparison_pair_id, pair),
+    by = c("dimension", "comparison_pair_id"), relationship = "many-to-one") |>
   mutate(dimension = factor(dimension, levels = c("placement", "optical"),
                             labels = c("Placement", "Optical representation")))
 
@@ -237,17 +194,6 @@ pair_palette <- if (length(pair_levels) <= length(MS_THREE_COLORS)) {
   setNames(grDevices::hcl.colors(length(pair_levels), palette = "Dark 3"), pair_levels)
 }
 if (!ms_plot_prep_only()) {
-  readr::write_csv(
-    resolved_coverage |>
-      mutate(dimension = as.character(dimension)),
-    file.path("results", "rq3", "fig4_sufficient_metric_coverage.csv"), na = ""
-  )
-
-  readr::write_csv(
-    requirement_summary |>
-      mutate(metric_class = as.character(metric_class), dimension = as.character(dimension)),
-    file.path("results", "rq3", "fig4_minimum_requirement_summary.csv"), na = ""
-  )
   readr::write_csv(observed_display,
                    file.path("results", "rq3", "fig4_observed_stability.csv"), na = "")
   readr::write_csv(pair_ecdf,
@@ -272,24 +218,14 @@ epsilon_log1p <- scales::trans_new(
   inverse = base::expm1,
   domain = c(0, Inf)
 )
-epsilon_tick_candidates <- c(0, .1, .2, .5, 1, 2, 3, 5, 7, 10)
-epsilon_tick_labels <- c("0", "0.1", "0.2", "0.5", "1", "2", "3", "5", "7", "10")
-epsilon_tick_keep <- epsilon_tick_candidates <= epsilon_limit + NUMERIC_TOL
-epsilon_ticks <- epsilon_tick_candidates[epsilon_tick_keep]
-epsilon_labels <- epsilon_tick_labels[epsilon_tick_keep]
-
 FIG4_DIM_LABELS <- c(
   "Temporal resolution" = paste0("Temporal resolution · ", RES_LABELS[[1]], " → ", tail(RES_LABELS, 1)),
   "Monitoring duration" = paste0("Monitoring duration · ", min(DURATION_LEVELS), " d → ", max(DURATION_LEVELS), " d")
 )
 fig5_slice_guides <- FIG5_TOLERANCE_SLICES[FIG5_TOLERANCE_SLICES <= epsilon_limit + NUMERIC_TOL]
 
-# a. Class-wise distribution ribbons. Each metric contributes one minimum
-# sufficient state at each pooled observed R_obs breakpoint. The threshold-like
-# check is retained from the frozen RQ3 requirement rule: a non-threshold-like
-# sufficient set is displayed as unresolved rather than being forced into a
-# least-demanding state. This is a display inversion of frozen R_obs values only;
-# it does not create a new sufficiency estimand.
+# a. Class-wise distribution of the frozen minimum-state decisions.
+# Non-threshold-like sets already have an unresolved decision in RQ3.
 p4a_class_order <- c(
   "timing", "duration", "level", "temporal dynamics", "exposure history", "spectrum"
 )
@@ -329,21 +265,6 @@ p4a_state_key <- function(dimension, rank) {
   paste0(prefix, p4a_state_labels[[dimension]][[as.integer(rank)]])
 }
 
-p4a_min_rank <- function(g, epsilon) {
-  z <- g |>
-    filter(status == "resolved", is.finite(R_obs), is.finite(requirement_rank)) |>
-    arrange(requirement_rank)
-  if (!nrow(z)) return(NA_real_)
-
-  is_sufficient <- z$R_obs <= epsilon + NUMERIC_TOL
-  # The RQ3 estimand reports a least-demanding state only when the resolved
-  # sufficient set is threshold-like in increasing burden order.
-  if (!any(is_sufficient) || any(diff(as.integer(is_sufficient)) < 0L)) {
-    return(NA_real_)
-  }
-  min(z$requirement_rank[is_sufficient])
-}
-
 p4a_epsilon_limit <- max(
   c(.75, observed$R_obs[observed$dimension %in% ORDERED_DIMS & is.finite(observed$R_obs)]),
   na.rm = TRUE
@@ -374,18 +295,36 @@ p4a_metric_states <- bind_rows(lapply(ORDERED_DIMS, function(dim) {
     pull(epsilon)
   bind_rows(lapply(seq_len(nrow(metrics)), function(i) {
     m <- metrics$metric[[i]]
-    g <- observed |>
+    g <- requirement_display |>
       filter(dimension == dim, metric == m)
     tibble(
       dimension = dim,
       metric = m,
       metric_class = metrics$metric_class[[i]],
       epsilon = eps,
-      minimum_rank = vapply(eps, function(e) p4a_min_rank(g, e), numeric(1))
+      minimum_rank = fig5_requirement_lookup(g, eps, NUMERIC_TOL)
     )
   }))
 })) |>
   mutate(row_key = metric_class)
+# Retain the existing display-table exports, using the same frozen assignments
+# as panel a instead of a second implementation of the decision rule.
+requirement_grid <- p4a_metric_states |> rename(least_rank = minimum_rank)
+requirement_summary <- requirement_grid |>
+  group_by(dimension, metric_class, epsilon) |>
+  summarise(n_metrics = n_distinct(metric), coverage = mean(is.finite(least_rank)),
+    rank_median = safe_median(least_rank), rank_q25 = safe_q(least_rank, .25),
+    rank_q75 = safe_q(least_rank, .75), .groups = "drop")
+resolved_coverage <- requirement_grid |>
+  group_by(dimension, epsilon) |>
+  summarise(n_metrics = n_distinct(metric), coverage = mean(is.finite(least_rank)), .groups = "drop")
+if (!ms_plot_prep_only()) {
+  display_labels <- function(x) x |> mutate(dimension = unname(ORDERED_TITLES[dimension]))
+  readr::write_csv(display_labels(resolved_coverage),
+    file.path("results", "rq3", "fig4_sufficient_metric_coverage.csv"), na = "")
+  readr::write_csv(display_labels(requirement_summary),
+    file.path("results", "rq3", "fig4_minimum_requirement_summary.csv"), na = "")
+}
 p4a_metric_states$state_key <- vapply(
   seq_len(nrow(p4a_metric_states)),
   function(i) p4a_state_key(
@@ -460,9 +399,10 @@ p4a <- ggplot() +
   ) +
   facet_grid(. ~ dimension, scales = "fixed", space = "fixed") +
   scale_fill_manual(
-    values = p4a_fill_values, breaks = p4a_fill_breaks,
-    labels = sub("Temporal: ", "T: ", sub("Duration: ", "D: ", p4a_fill_breaks, fixed = TRUE), fixed = TRUE),
-    drop = FALSE, name = "Requirement state\nT: temporal · D: duration"
+    values = p4a_fill_values,
+    breaks = c(paste0("Temporal: ", p4a_state_labels$temporal), "unresolved / no resolved sufficient state"),
+    labels = c(paste(p4a_state_labels$temporal, p4a_state_labels$duration, sep = " / "), "Unresolved"),
+    drop = FALSE, name = "Interval / duration"
   ) +
   scale_x_continuous(
     trans = epsilon_log1p,
@@ -477,7 +417,8 @@ p4a <- ggplot() +
   labs(
     title = "a  Tolerance sets the minimum sufficient measurement burden",
     subtitle = "100% stacked distribution of minimum sufficient states within each metric group; grey = unresolved / no resolved sufficient state",
-    x = "tolerance epsilon", y = NULL
+    x = "Tolerance epsilon", y = NULL,
+    caption = "Each row: distribution of minimum sufficient states."
   ) +
   theme_rq3(base_size = 6.0, legend_position = "bottom") +
   theme(
@@ -530,15 +471,16 @@ p4b <- ggplot() +
   scale_x_continuous(
     breaks = c(seq_len(FIG4B_MAX_RESOLVED_RANK),
                ORDERED_MAX_RANK + seq_len(FIG4B_MAX_RESOLVED_RANK)),
-    labels = c(paste(RES_LEVELS[seq_len(FIG4B_MAX_RESOLVED_RANK)], "s"),
-               paste(DURATION_LEVELS[seq_len(FIG4B_MAX_RESOLVED_RANK)], "d")),
+    labels = c(as.character(RES_LEVELS[seq_len(FIG4B_MAX_RESOLVED_RANK)]),
+               as.character(DURATION_LEVELS[seq_len(FIG4B_MAX_RESOLVED_RANK)])),
     expand = expansion(add = .1)
   ) +
   scale_y_continuous(breaks = scales::breaks_extended(n = 5)) +
   labs(
     title = "b  Residual instability contracts as measurement burden increases",
     subtitle = "highest observed boundary is unresolved and omitted",
-    x = "Temporal resolution / monitoring days (low → high burden)", y = "R_obs = max A to higher observed states"
+    x = "Sampling interval (s) / monitoring days", y = "R_obs = max A to higher observed states",
+    caption = "Highest observed boundary: unresolved; omitted."
   ) +
   theme_rq3(base_size = 6.35) +
   theme(
@@ -579,15 +521,16 @@ p4c <- ggplot(
   scale_color_manual(values = pair_palette, breaks = pair_levels, name = NULL) +
   scale_x_continuous(
     trans = epsilon_log1p,
-    breaks = epsilon_ticks,
-    labels = epsilon_labels,
+    breaks = c(0, .5, 1, 2, 3, 5),
+    labels = as.character,
     expand = expansion(mult = c(0, .01))
   ) +
   scale_y_continuous(limits = c(0, 1), labels = scales::label_percent(accuracy = 25)) +
   labs(
     title = "c  Substitutability increases as tolerance relaxes",
     subtitle = p4c_subtitle,
-    x = "tolerance ε", y = "fraction of metrics substitutable"
+    x = "Tolerance ε", y = "Fraction of metrics substitutable",
+    caption = "Open points: 50% of targets substitutable."
   ) +
   theme_rq3(base_size = 6.3, legend_position = "bottom") +
   theme(

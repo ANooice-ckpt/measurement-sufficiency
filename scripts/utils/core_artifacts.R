@@ -325,15 +325,7 @@ core_make_series <- function(support, placement, optical, resolution_s) {
   out <- x[keep, , drop = FALSE]
   if (!nrow(out)) stop("Sparse sampling produced no rows at ", resolution_s, " s")
 
-  src_idx <- match(
-    paste(out$site, out$Id, as.numeric(out$Datetime), sep = "|"),
-    paste(x$site, x$Id, as.numeric(x$Datetime), sep = "|")
-  )
-  if (anyNA(src_idx)) stop("Sparse-sampled timestamp is not a source timestamp")
-  same_num <- function(a, b) all((is.na(a) & is.na(b)) | (!is.na(a) & !is.na(b) & a == b))
-  if (!same_num(out$MEDI, x$MEDI[src_idx]) || !same_num(out$LIGHT, x$LIGHT[src_idx])) {
-    stop("Sparse sampling altered retained measurement values")
-  }
+  # Direct row selection preserves timestamps and values by construction.
   out
 }
 

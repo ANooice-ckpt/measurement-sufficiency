@@ -11,6 +11,17 @@ The first pair defines the canonical representation-change analysis. The second 
 
 `10_rq1_analysis.R` reads the durable core metric and duration artifacts. `11_plot_fig1.R` reads only frozen RQ1 outputs. `10b_rq1_inferential_preservation.R` reuses participant-day candidate/reference values from the frozen RQ1 pairwise artifact, joins harmonized sleep diaries and current-conditions EMA, and writes an independent versioned inference artifact. It does not reopen or recompute Core. `11b_plot_fig2.R` reads only those frozen results and does not refit models.
 
+The v8 geometry inference artifact additionally freezes `within_linear_gain`,
+`signal_geometry_bound` and participant sufficient statistics for fixed-support
+signal evaluation. After 10b, `Rscript scripts/14b_rq3_resource_allocation.R
+--compensation` writes `results/rq3/rq3_configuration_participant_curve.csv`.
+The downstream server runner includes this step; `RQ3_RESOURCE_MC` controls its
+replicates (default 500). It runs before Fig. 2, whose panel d appends a
+participant-count curve band below the original scatter. Each row identifies the coefficient or signal space;
+`configuration_*`, `sampling_*`, `total_*` and `cross_ms` retain the exact
+displacement decomposition. Unavailable tasks remain explicit. The existing
+14b command without this flag retains the duration-allocation experiment.
+
 Main PNG figures are redirected by the shared plot contract to `results/figures/`, while the RQ1 figure manifest remains under `results/rq1/`.
 
 ## Canonical pairwise object
@@ -45,8 +56,11 @@ For ordered dimensions, state_a is the less demanding state and state_b the more
 
 Duration pairs and their shared scale anchors include only the primary temporal
 states. The 300-s core sensitivity values must be excluded before either step.
-The `rq1_v5_primary_duration_type_canonical__...` revision enforces this on both
-partitioned and in-memory duration inputs and does not reuse earlier pair parts.
+The `rq1_v6_maximal_duration_support__...` revision also selects one maximal
+support per placement/optical/metric configuration for both pairs and scale
+anchors, excluding reserve intersections and duplicate narrower supports.
+It applies to partitioned and in-memory inputs and does not reuse earlier pair
+parts. Core remains v5; dependent RQ2 checkpoints follow the new RQ1 identity.
 
 All pairs within a lattice join one standardizer. Primary scaling is SD; IQR/1.349 is sensitivity. The empirical distribution comes before A=mean(abs(z)) and B=mean(z); A >= |B| is checked.
 

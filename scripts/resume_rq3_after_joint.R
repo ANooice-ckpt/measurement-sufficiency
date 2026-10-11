@@ -42,7 +42,7 @@ if (length(CORE_VERSION) != 1L) stop("Core version mismatch")
 CORE_VERSION <- CORE_VERSION[[1]]
 ms_assert_version(pairwise_artifact, "core_artifact_version", core_artifact_version())
 ms_assert_version(duration_artifact, "core_artifact_version", CORE_VERSION)
-RQ3_VERSION <- paste0("rq3_v8_axis_composition__", RQ1_VERSION, "__", ANALYSIS_DESIGN_ID)
+RQ3_VERSION <- paste0("rq3_v9_unresolved_decisions__", RQ1_VERSION, "__", ANALYSIS_DESIGN_ID)
 single <- readr::read_csv(SINGLE_CSV, show_col_types = FALSE, progress = FALSE)
 ms_assert_version(single, "rq3_analysis_version", RQ3_VERSION)
 ms_assert_version(single, "core_artifact_version", CORE_VERSION)
@@ -101,7 +101,7 @@ for (i in seq_along(duration_part_paths)) {
            available, is.finite(value)) |>
     select(support_id, metric, metric_geometry, value)
   state_parts[[i]] <- z |>
-    rq3_support_filter() |>
+    ms_maximal_configuration_support() |>
     filter(available, is.finite(value)) |>
     distinct(support_id, placement, optical, resolution_s, n_days, metric, metric_class, metric_geometry)
   if (i %% 8L == 0L || i == length(duration_part_paths)) message("  state catalogue ", i, "/", length(duration_part_paths))

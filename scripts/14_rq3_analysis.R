@@ -53,7 +53,7 @@ if (length(CORE_VERSION) != 1L) stop("Core version mismatch")
 CORE_VERSION <- CORE_VERSION[[1]]
 ms_assert_version(pairwise_artifact, "core_artifact_version", core_artifact_version())
 ms_assert_version(duration_artifact, "core_artifact_version", CORE_VERSION)
-RQ3_VERSION <- paste0("rq3_v8_axis_composition__", RQ1_VERSION, "__", ANALYSIS_DESIGN_ID)
+RQ3_VERSION <- paste0("rq3_v9_unresolved_decisions__", RQ1_VERSION, "__", ANALYSIS_DESIGN_ID)
 NUMERIC_TOL <- 1e-12
 DUAL <- c("MDER", "nvRD")
 
@@ -137,7 +137,8 @@ sufficiency_long <- single |>
   group_modify(function(g, key) {
     eps <- sort(unique(c(0, g$R_obs[is.finite(g$R_obs)])))
     tidyr::crossing(g, epsilon = eps) |>
-      mutate(sufficient = status == "resolved" & is.finite(R_obs) & R_obs <= epsilon + NUMERIC_TOL)
+      mutate(sufficient = if_else(status == "resolved" & is.finite(R_obs),
+                                  R_obs <= epsilon + NUMERIC_TOL, NA))
   }) |>
   ungroup()
 readr::write_csv(sufficiency_long, file.path(OUT, "rq3_sufficiency_long.csv"), na = "")
@@ -167,7 +168,7 @@ unordered <- pair_summary |>
     dimension, comparison_pair_id, config_a_id, config_b_id, config_a_label, config_b_label,
     orientation_type, orientation_basis, metric, metric_class, metric_geometry,
     epsilon_entry = A_mean_absolute, A = A_mean_absolute, B = B_mean_signed,
-    substitutable_at_epsilon_zero = is.finite(epsilon_entry) & epsilon_entry <= 0 + NUMERIC_TOL,
+    substitutable_at_epsilon_zero = if_else(is.finite(epsilon_entry), epsilon_entry <= NUMERIC_TOL, NA),
     core_artifact_version, rq1_analysis_version, rq3_analysis_version = RQ3_VERSION
   )
 readr::write_csv(unordered, file.path(OUT, "rq3_unordered_substitutability.csv"), na = "")
@@ -220,7 +221,7 @@ for (i in seq_along(duration_part_paths)) {
     filter(placement == "eye", optical == "MEDI", resolution_s == 10L, n_days == max(PRIMARY_DURATION_DAYS), available, is.finite(value)) |>
     select(support_id, metric, metric_geometry, value)
   state_parts[[i]] <- z |>
-    rq3_support_filter() |>
+    ms_maximal_configuration_support() |>
     filter(available, is.finite(value)) |>
     distinct(support_id, placement, optical, resolution_s, n_days, metric, metric_class, metric_geometry)
   rm(z); invisible(gc(FALSE))
@@ -238,7 +239,7 @@ rm(anchor_parts, state_parts)
 invisible(gc())
 
 build_joint_part <- function(path) {
-  z <- rq3_support_filter(read_duration_primary(path))
+  z <- ms_maximal_configuration_support(read_duration_primary(path))
   groups <- z |> group_by(support_id, site, Id, placement, optical, metric) |> group_split(.keep = TRUE)
   partial <- bind_rows(lapply(groups, function(g) {
     if (nrow(g) < 2L) return(tibble())
@@ -284,7 +285,7 @@ ord <- order(cost, decreasing = TRUE, na.last = TRUE)
 partials_scheduled <- ms_parallel_map(
   duration_part_paths[ord], build_joint_part, workers = RQ3_PART_WORKERS,
   packages = "tidyverse",
-  exports = c("build_joint_part", "read_duration_primary", "rq3_support_filter", "PRIMARY_TEMPORAL_S", "PRIMARY_DURATION_DAYS",
+  exports = c("build_joint_part", "read_duration_primary", "ms_maximal_configuration_support", "PRIMARY_TEMPORAL_S", "PRIMARY_DURATION_DAYS",
               "DUAL", "joint_anchor", "circular_delta")
 )
 partials <- partials_scheduled[order(ord)]

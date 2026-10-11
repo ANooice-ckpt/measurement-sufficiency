@@ -74,7 +74,7 @@ if (any(!duration_manifest$n_days %in% PRIMARY_DURATION_DAYS)) {
 metric_meta <- cube |> distinct(metric, metric_class, metric_scope, metric_geometry)
 if (n_distinct(metric_meta$metric) != 54L) stop("Expected 54 target metrics")
 RQ1_ANALYSIS_VERSION <- paste0(
-  "rq1_v5_primary_duration_type_canonical__", CORE_VERSION, "__", ANALYSIS_DESIGN_ID
+  "rq1_v6_maximal_duration_support__", CORE_VERSION, "__", ANALYSIS_DESIGN_ID
 )
 
 temporal_label <- ms_temporal_label
@@ -433,7 +433,7 @@ if (length(pending_duration)) {
     exports = c("duration_columns", "duration_window_pairs", "standardizers", "CORE_VERSION",
                 "RQ1_ANALYSIS_VERSION", "build_duration_pair_chunk", "canonicalize_pairs",
                 "rq1_write_part_atomic", "rq1_marker_rows", "rq1_process_duration_part",
-                "rq1_primary_duration_values", "PRIMARY_TEMPORAL_S",
+                "rq1_primary_duration_values", "ms_maximal_configuration_support", "PRIMARY_TEMPORAL_S",
                 "circular_delta", "MAX_DURATION_DAYS")
   )
 } else rq1_part_results <- list()
@@ -451,6 +451,9 @@ all_part_records <- bind_rows(
 ) |>
   arrange(part_index)
 if (any(!is.finite(all_part_records$rows))) stop("RQ1 part manifest contains incomplete parts")
+# Reserve-support blocks can be empty after primary support selection. Their
+# zero-row checkpoints remain reusable, but downstream readers consume pairs only.
+all_part_records <- all_part_records |> filter(rows > 0L)
 readr::write_csv(all_part_records, file.path(pairwise_part_dir, "part_manifest.csv"), na = "")
 
 pairwise_manifest <- list(

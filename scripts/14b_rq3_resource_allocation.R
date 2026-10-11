@@ -1,5 +1,7 @@
 # Standalone design translation; run from the repository root with Rscript.
-# Reads two frozen outputs and writes ONE CSV. Does not run upstream analyses.
+# Default: reads two frozen outputs and writes ONE allocation CSV.
+# --compensation: reads only frozen RQ1 sufficient statistics and writes the
+# configuration x participant-count curve. Does not run upstream analyses.
 # Optional runtime controls: RQ3_RESOURCE_MC (500), RQ3_RESOURCE_BOOT (1000),
 # RQ3_RESOURCE_SEED (20260930). No RQ3 estimand/version is changed.
 #
@@ -110,11 +112,11 @@ resource_allocation_main <- function(
   ms_assert_version(a, "core_artifact_version", core_artifact_version())
   ms_assert_version(a, "analysis_design_id", ms_analysis_design_id())
   rq1_version <- rq1_pairwise_version(a)
-  ms_assert_version(a, "rq1_analysis_version", paste0("rq1_v5_primary_duration_type_canonical__",
+  ms_assert_version(a, "rq1_analysis_version", paste0("rq1_v6_maximal_duration_support__",
                                                      core_artifact_version(), "__", ms_analysis_design_id()))
   ms_assert_version(a, "rq1_inference_version", rq1_inference_version(rq1_version))
   duration <- readr::read_csv(duration_path, show_col_types = FALSE, progress = FALSE)
-  expected_rq3 <- paste0("rq3_v8_axis_composition__", rq1_version, "__", ms_analysis_design_id())
+  expected_rq3 <- paste0("rq3_v9_unresolved_decisions__", rq1_version, "__", ms_analysis_design_id())
   ms_assert_version(duration, "core_artifact_version", a$core_artifact_version)
   ms_assert_version(duration, "rq1_analysis_version", rq1_version)
   ms_assert_version(duration, "rq3_analysis_version", expected_rq3)
@@ -262,4 +264,129 @@ resource_allocation_main <- function(
   invisible(result)
 }
 
-if (sys.nframe() == 0L) resource_allocation_main()
+# Whole participants are sampled without replacement on EACH contrast/task's
+# matched support. The full-support scale, reference covariance and signal
+# evaluation rows stay fixed as N changes. This is a finite-cohort experiment.
+resource_compensation_curve <- function(blocks, replicates, seed,
+    sizes = unique(pmax(4L, as.integer(ceiling(nrow(blocks) * c(.25, .5, .75, 1)))))) {
+  stopifnot(nrow(blocks) >= 4L, replicates >= 2L, all(sizes >= 4L & sizes <= nrow(blocks)))
+  blocks <- arrange(blocks, site, participant)
+  sr <- Map(function(xx, xy) list(xx=xx, xy=xy), blocks$reference_xx, blocks$reference_xy)
+  sc <- Map(function(xx, xy) list(xx=xx, xy=xy), blocks$candidate_xx, blocks$candidate_xy)
+  br_full <- rq1_inference_solve(sr, rep(1L, nrow(blocks)))
+  covariance <- blocks$reference_covariance[[1]]
+  precision <- if (is.finite(rq1_inference_quadnorm(br_full * 0, covariance))) solve(covariance)
+    else matrix(NA_real_, length(br_full), length(br_full))
+  rr <- Reduce(`+`, blocks$reference_xx)
+  cc <- Reduce(`+`, blocks$candidate_xx)
+  rc <- Reduce(`+`, blocks$reference_candidate_xx)
+  signal_gram <- rbind(cbind(rr, rc), cbind(t(rc), cc)) / sum(blocks$outcome_within_ss)
+
+  # Nested proportional site quotas, including integer rounding. No duplicated
+  # participant and no new day/window selection; paired fits use identical rows.
+  strata <- split(seq_len(nrow(blocks)), blocks$site)
+  capacity <- lengths(strata)
+  used <- integer(length(strata))
+  schedule <- integer(nrow(blocks))
+  for (i in seq_along(schedule)) {
+    deficit <- i * capacity / sum(capacity) - used
+    deficit[used == capacity] <- -Inf
+    s <- which.max(deficit)
+    schedule[i] <- s
+    used[s] <- used[s] + 1L
+  }
+  set.seed(seed)
+  orders <- replicate(replicates, {
+    shuffled <- lapply(strata, function(idx) idx[sample.int(length(idx))])
+    used <- integer(length(strata))
+    vapply(schedule, function(s) {
+      used[s] <<- used[s] + 1L
+      shuffled[[s]][used[s]]
+    }, integer(1))
+  })
+  squared <- function(x, M) pmax(0, colSums(x * (M %*% x)))
+  bind_rows(lapply(sizes, function(N) {
+    weights <- matrix(0L, nrow(blocks), replicates)
+    weights[cbind(as.vector(orders[seq_len(N),,drop=FALSE]), rep(seq_len(replicates), each=N))] <- 1L
+    br <- rq1_inference_solve_draws(sr, weights)
+    bc <- rq1_inference_solve_draws(sc, weights)
+    valid <- colSums(!is.finite(br) | !is.finite(bc)) == 0L &
+      as.vector(blocks$outcome_within_ss %*% weights) >= 1e-12
+    br[, !valid] <- bc[, !valid] <- NA_real_
+    sampling <- br - br_full
+    # Coefficient vectors add exactly. In signal space the same identity is
+    # evaluated on the full matched support, never on a changing sample of days.
+    spaces <- list(
+      coefficient_reference_uncertainty = list(a=bc-br, b=sampling, M=precision),
+      signal_full_support_outcome_sd = list(a=rbind(-br, bc), b=rbind(sampling, sampling*0), M=signal_gram))
+    bind_rows(lapply(names(spaces), function(space) {
+      z <- spaces[[space]]
+      q <- list(configuration=squared(z$a, z$M), sampling=squared(z$b, z$M),
+                total=squared(z$a+z$b, z$M))
+      cross <- 2 * colSums(z$a * (z$M %*% z$b))
+      ok <- is.finite(q$total) & is.finite(q$configuration) & is.finite(q$sampling)
+      stats <- unlist(lapply(names(q), function(name) {
+        s <- resource_allocation_summary(sqrt(q[[name]][ok]))
+        c(setNames(s[c("mean", "median", "q025", "q975")], paste0(name, "_", c("mean", "median", "q025", "q975"))),
+          setNames(if (any(ok)) mean(q[[name]][ok]) else NA_real_, paste0(name, "_ms")))
+      }), use.names=TRUE)
+      bind_cols(tibble(N=N, participant_fraction=N/nrow(blocks), eligible_N=nrow(blocks),
+        eligible_days=sum(blocks$n_days), matched_days_mean=mean(as.vector(blocks$n_days %*% weights)),
+        space=space, mc_valid=sum(ok),
+        curve_status=if (!any(ok)) "mc_not_estimable" else if (all(ok)) "estimated" else "mc_partially_estimable",
+        cross_ms=if (any(ok)) mean(cross[ok]) else NA_real_,
+        site_allocation=paste(names(strata), tabulate(head(schedule, N), nbins=length(strata)), sep=":", collapse=";")),
+        tibble::as_tibble_row(as.list(stats)))
+    }))
+  }))
+}
+
+resource_compensation_main <- function(
+    inference_path = file.path("results", "rq1", "inference", rq1_inference_contract()$artifact_filename),
+    output_path = "results/rq3/rq3_configuration_participant_curve.csv",
+    replicates = as.integer(Sys.getenv("RQ3_RESOURCE_MC", "500")),
+    seed = as.integer(Sys.getenv("RQ3_RESOURCE_SEED", "20260930"))) {
+  stopifnot(length(replicates) == 1L, is.finite(replicates), replicates >= 2L,
+            length(seed) == 1L, is.finite(seed), seed >= 0L)
+  a <- readRDS(inference_path)
+  ms_assert_version(a, "artifact_type", "rq1_inferential_preservation")
+  ms_assert_version(a, "core_artifact_version", core_artifact_version())
+  ms_assert_version(a, "analysis_design_id", ms_analysis_design_id())
+  rq1_version <- paste0("rq1_v6_maximal_duration_support__", core_artifact_version(), "__", ms_analysis_design_id())
+  ms_assert_version(a, "rq1_analysis_version", rq1_version)
+  ms_assert_version(a, "rq1_inference_version", rq1_inference_version(rq1_version))
+  keys <- c("candidate_config", "metric", "outcome")
+  tasks <- a$contrast_summary |>
+    select(all_of(keys), support_id, metric_geometry, outcome_domain, status,
+           rq1_distortion_A, within_linear_gain, signal_geometry_bound) |>
+    arrange(candidate_config, metric, outcome) |> mutate(task_index=row_number())
+  ms_assert_unique(tasks, keys)
+  stopifnot(seed + nrow(tasks) < .Machine$integer.max,
+            all(tasks$candidate_config %in% rq1_inference_anchor_map()$candidate_config))
+  blocks <- left_join(a$component_blocks, select(tasks, all_of(keys), task_index), by=keys)
+  required <- c("reference_candidate_xx", "outcome_within_ss", "reference_covariance")
+  if (!all(required %in% names(blocks))) stop("Missing frozen compensation statistics; rerun 10b")
+  ms_assert_unique(blocks, c(keys, "participant"))
+  by_task <- split(blocks, factor(blocks$task_index, levels=seq_len(nrow(tasks))))
+  rows <- lapply(seq_len(nrow(tasks)), function(i) {
+    b <- by_task[[i]]
+    curve <- if (tasks$status[i] == "estimated" && nrow(b) >= 4L) {
+      resource_compensation_curve(b, replicates, seed+i)
+    } else tibble(N=NA_integer_, curve_status=tasks$status[i])
+    if (i %% 100L == 0L) message("Participant-count curves: ", i, "/", nrow(tasks))
+    bind_cols(select(tasks[i, ], -task_index), curve)
+  })
+  result <- bind_rows(rows) |> mutate(reference_config=rq1_inference_contract()$reference_config,
+    mc_requested=replicates, seed=seed, compensation_version="configuration_participants_v1",
+    core_artifact_version=a$core_artifact_version, rq1_analysis_version=rq1_version,
+    rq1_inference_version=a$rq1_inference_version, inference_md5=unname(tools::md5sum(inference_path)))
+  dir.create(dirname(output_path), recursive=TRUE, showWarnings=FALSE)
+  readr::write_csv(result, output_path, na="NA")
+  message("Wrote ", nrow(result), " configuration/participant-count rows to ", output_path)
+  invisible(result)
+}
+
+if (sys.nframe() == 0L) {
+  if ("--compensation" %in% commandArgs(trailingOnly=TRUE)) resource_compensation_main()
+  else resource_allocation_main()
+}

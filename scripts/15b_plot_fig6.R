@@ -100,8 +100,8 @@ RQ1_VERSION <- ms_plot_one_version(c(observed$rq1_analysis_version, joint$rq1_an
 RQ3_VERSION <- ms_plot_one_version(c(observed$rq3_analysis_version, joint$rq3_analysis_version),
                                    "rq3_analysis_version")
 CORE_VERSION <- ms_plot_assert_core(c(observed$core_artifact_version, joint$core_artifact_version))
-ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
-ms_plot_assert_prefix(RQ3_VERSION, "rq3_v8_", "rq3_analysis_version")
+ms_plot_assert_prefix(RQ1_VERSION, "rq1_v6_", "rq1_analysis_version")
+ms_plot_assert_prefix(RQ3_VERSION, "rq3_v9_", "rq3_analysis_version")
 ms_assert_version(composition_summary,"rq3_analysis_version",RQ3_VERSION)
 ms_assert_version(composition_summary,"rq1_analysis_version",RQ1_VERSION)
 ms_assert_version(composition_summary,"core_artifact_version",CORE_VERSION)
@@ -316,7 +316,11 @@ if (!ms_plot_prep_only()) {
              nominal_sample_reduction, R_task, limiting_targets, limiting_target_classes,
              frontier_limiting_targets, comparison_task, comparison_relation,
              required_days_at_interval, required_interval_at_days_s,
-             extra_days_vs_comparison_at_interval, sampling_rate_ratio_vs_comparison_at_days),
+             extra_days_vs_comparison_at_interval, sampling_rate_ratio_vs_comparison_at_days,
+             shorter_n_days, shorter_status, shorter_sufficient, shorter_R_task,
+             shorter_blocking_targets, shorter_blocker_key,
+             coarser_resolution_s, coarser_status, coarser_sufficient, coarser_R_task,
+             coarser_blocking_targets, coarser_blocker_key),
     file.path("results", "rq3", "fig6b_eye_medi_epsilon_0.50_display_slice.csv"), na = ""
   )
 }
@@ -325,7 +329,7 @@ fig6_display <- ms_fig6_redesign(entry_grid, task_slice5, class_grid5,
                                 prep_only = ms_plot_prep_only())
 fig6_redesigned <- fig6_display$plot
 p5a <- fig6_display$a; p5b <- fig6_display$b; p5c <- fig6_display$c
-ms_plot_save(fig6_redesigned, file.path(OUT_DIR, "Fig5_RQ3.png"), 7.40, 6.10)
+ms_plot_save(fig6_redesigned, file.path(OUT_DIR, "Fig5_RQ3.png"), MS_FIG_WIDTH_IN, 6.10)
 ms_plot_save(fig6_display$class_profiles,
   file.path(OUT_DIR,"FigS_RQ3_class_sufficiency_profiles.png"),7.4,2.8)
 ms_plot_save(fig6_display$composition_facets,

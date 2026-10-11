@@ -32,10 +32,13 @@ source("scripts/utils/rq1_inference_contract.R")
 contract <- rq1_inference_contract()
 INFERENCE_RDS <- file.path("results", "rq1", "inference", contract$artifact_filename)
 RQ1_SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
+PARTICIPANT_CSV <- file.path("results", "rq3", "rq3_configuration_participant_curve.csv")
 OUT_DIR <- file.path("results", "rq1", "figures")
-FIG2_WIDTH_IN <- 8.2
-FIG2_HEIGHT_IN <- 9.0
-ms_plot_require_files(c(INFERENCE_RDS, RQ1_SUMMARY_CSV), "Fig. 2 plotting inputs")
+FIG2_WIDTH_IN <- MS_FIG_WIDTH_IN
+FIG2_ORIGINAL_HEIGHT_IN <- 8.8
+FIG2_CURVE_HEIGHT_IN <- 3.6
+FIG2_HEIGHT_IN <- FIG2_ORIGINAL_HEIGHT_IN + FIG2_CURVE_HEIGHT_IN
+ms_plot_require_files(c(INFERENCE_RDS, RQ1_SUMMARY_CSV, PARTICIPANT_CSV), "Fig. 2 plotting inputs")
 if (!ms_plot_prep_only()) {
   dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 }
@@ -48,8 +51,8 @@ ms_assert_version(a, "analysis_design_id", ms_analysis_design_id())
 CORE_VERSION <- ms_plot_assert_core(a$core_artifact_version)
 RQ1_VERSION <- ms_plot_one_version(a$rq1_analysis_version, "rq1_analysis_version")
 INFERENCE_VERSION <- ms_plot_one_version(a$rq1_inference_version, "rq1_inference_version")
-ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
-ms_plot_assert_prefix(INFERENCE_VERSION, "rq1_inference_v7_shape_anchor8__", "rq1_inference_version")
+ms_plot_assert_prefix(RQ1_VERSION, "rq1_v6_", "rq1_analysis_version")
+ms_plot_assert_prefix(INFERENCE_VERSION, "rq1_inference_v8_geometry_anchor8__", "rq1_inference_version")
 
 rq1_summary <- readr::read_csv(RQ1_SUMMARY_CSV, show_col_types = FALSE, progress = FALSE)
 ms_plot_assert_core(rq1_summary$core_artifact_version, CORE_VERSION)
@@ -80,6 +83,47 @@ if (nrow(anchor_map) != contract$anchor_count || n_distinct(anchor_map$candidate
 if (n_distinct(reference$metric) != contract$daily_metric_count ||
     !setequal(unique(reference$outcome), contract$outcomes)) {
   stop("Fig. 2 reference association landscape does not match the frozen daily metric/outcome contract", call. = FALSE)
+}
+
+participant_curves <- readr::read_csv(PARTICIPANT_CSV, show_col_types=FALSE, progress=FALSE)
+ms_plot_require_columns(participant_curves,
+  c("candidate_config", "metric", "outcome", "outcome_domain", "space", "N", "eligible_N",
+    "participant_fraction", "total_mean", "sampling_mean", "mc_valid", "mc_requested", "inference_md5"),
+  "participant-count curves")
+ms_assert_version(participant_curves, "compensation_version", "configuration_participants_v1")
+ms_assert_version(participant_curves, "core_artifact_version", CORE_VERSION)
+ms_assert_version(participant_curves, "rq1_analysis_version", RQ1_VERSION)
+ms_assert_version(participant_curves, "rq1_inference_version", INFERENCE_VERSION)
+ms_assert_version(participant_curves, "inference_md5", unname(tools::md5sum(INFERENCE_RDS)))
+
+# Display summaries only. Keep the same tasks at all four requested fractions
+# and for both curves; duplicated minimum-four-person designs reuse frozen rows.
+# Actual fractions/counts remain in the display table. No interpolation or fit.
+fig2_participant_display <- function(curves, anchors) {
+  keys <- c("candidate_config", "metric", "outcome", "outcome_domain")
+  x <- curves |> filter(space == "signal_full_support_outcome_sd", is.finite(N))
+  ms_assert_unique(x, c(keys, "N"))
+  full <- x |> filter(N == eligible_N, is.finite(total_mean), is.finite(sampling_mean)) |>
+    count(candidate_config, outcome_domain, name="n_full_tasks")
+  planned <- tidyr::crossing(distinct(x, across(all_of(keys)), eligible_N),
+                            target_fraction=c(.25, .5, .75, 1)) |>
+    mutate(N=pmax(4L, ceiling(eligible_N * target_fraction))) |>
+    left_join(x |> select(-eligible_N), by=c(keys, "N"), relationship="many-to-one") |>
+    group_by(across(all_of(keys))) |>
+    filter(all(is.finite(total_mean) & is.finite(sampling_mean) &
+                 !is.na(mc_valid) & !is.na(mc_requested) & mc_valid == mc_requested)) |>
+    ungroup()
+  display <- planned |>
+    pivot_longer(c(total_mean, sampling_mean), names_to="series", values_to="displacement") |>
+    group_by(candidate_config, outcome_domain, target_fraction, series) |>
+    summarise(centre=median(displacement), q25=quantile(displacement,.25), q75=quantile(displacement,.75),
+      n_tasks=n(), n_metrics=n_distinct(metric), N_min=min(N), N_max=max(N),
+      actual_fraction_min=min(participant_fraction), actual_fraction_max=max(participant_fraction), .groups="drop")
+  tidyr::crossing(candidate_config=anchors$candidate_config, outcome_domain=c("Sleep", "Alertness", "Affect"),
+                  target_fraction=c(.25, .5, .75, 1), series=c("total_mean", "sampling_mean")) |>
+    left_join(display, by=c("candidate_config", "outcome_domain", "target_fraction", "series")) |>
+    left_join(full, by=c("candidate_config", "outcome_domain")) |>
+    mutate(n_tasks=coalesce(n_tasks, 0L), n_metrics=coalesce(n_metrics, 0L), n_full_tasks=coalesce(n_full_tasks, 0L))
 }
 
 OUTCOME_LEVELS <- contract$outcomes
@@ -339,7 +383,7 @@ p2_total <- ggplot(component_plot,aes(D_T,display_row)) +
   theme_ms_axes(base_size=6.3,legend_position="none",plot_title_size=7) +
   theme(panel.grid.major.y=element_blank(),strip.text=element_text(size=5.5),
     axis.text=element_text(size=5.2),plot.subtitle=element_text(size=4.8,colour="#666A6D"))
-p2a <- cowplot::plot_grid(p2_total,p2a,ncol=1,rel_heights=c(1.06,1),align="v",axis="lr")
+p2_within <- p2a
 
 # Replace the composition forest with frozen pattern/signal pairs. The existing
 # component model remains in the analysis artifact; this panel adds no fit.
@@ -361,11 +405,6 @@ p2c <- ggplot(shape_plot, aes(within_shape_loss, signal_difference_outcome_sd,
   theme_ms_axes(base_size=5.9,legend_position="none",plot_title_size=6.8) +
   theme(axis.text=element_text(size=4.8),axis.title=element_text(size=4.7),
         strip.text=element_text(size=5),plot.subtitle=element_text(size=4.35,colour="#666A6D"))
-
-# Retain the established tall-left / two-right panel composition.
-p2a <- p2a + theme(plot.margin = margin(2, 3, 0, 3),
-                  plot.subtitle = element_text(margin = margin(b = 9)))
-p2c <- p2c + theme(plot.margin = margin(2, 3, 6, 3))
 
 # Coefficient movement and fitted-signal change are different quantities. Keep
 # every finite metric/outcome/contrast point; no outcome or significance screen,
@@ -397,18 +436,63 @@ p2d <- ggplot(contrast_plot,
         plot.subtitle = element_text(size = 4.6, colour = "#666A6D"),
         plot.margin = margin(5, 3, 3, 3))
 
-metric_legend <- ms_metric_legend(text_size = 5.35, point_size = 1.55, key_width_mm = 3.5)
-right <- cowplot::plot_grid(
-  p2b, p2c, ncol = 1, rel_heights = c(.50, .50),
-  align = "v", axis = "lr", greedy = FALSE
-)
-body <- cowplot::plot_grid(
-  p2a, right, ncol = 2, rel_widths = c(.43, .57)
-)
-fig2 <- cowplot::plot_grid(
-  metric_legend, body, p2d, ncol = 1, rel_heights = c(.035, 1, .38),
-  align = "v", axis = "l", greedy = TRUE
-)
+# d continues below the unchanged scatter: two curves per configuration/domain.
+# Ribbons are task heterogeneity (IQR), not Monte Carlo confidence intervals.
+participant_display <- fig2_participant_display(participant_curves, anchor_map) |>
+  left_join(select(anchor_map, candidate_config, contrast_label, contrast_order), by="candidate_config") |>
+  mutate(outcome_domain=factor(outcome_domain, levels=DOMAIN_LEVELS),
+    contrast_short=factor(unname(contrast_short[contrast_label]), levels=unname(contrast_short)),
+    series=factor(series, levels=c("total_mean", "sampling_mean")))
+p2d_curves <- ggplot(participant_display, aes(target_fraction, centre, group=series,
+                                             colour=series, linetype=series)) +
+  geom_ribbon(aes(ymin=q25, ymax=q75, fill=series), alpha=.10, colour=NA, linetype=0, na.rm=TRUE) +
+  geom_line(linewidth=.4, na.rm=TRUE) + geom_point(size=.55, show.legend=FALSE, na.rm=TRUE) +
+  geom_text(data=filter(participant_display, target_fraction == .5, series == "total_mean", n_tasks == 0L),
+    aes(x=.625, y=0, label="Unavailable"), inherit.aes=FALSE, size=1.9, colour="#657078") +
+  facet_grid(contrast_short ~ outcome_domain, drop=FALSE) +
+  scale_x_continuous(breaks=c(.25, .5, .75, 1), labels=c("25", "50", "75", "100"), limits=c(.22,1.03)) +
+  scale_y_continuous(labels=scales::label_percent(), breaks=scales::breaks_pretty(n=2),
+                     expand=expansion(mult=c(.02,.08))) +
+  scale_colour_manual(values=c(total_mean="#354953", sampling_mean="#8B9298"),
+    labels=c("Candidate: total displacement", "Reference: sampling only"), name=NULL) +
+  scale_fill_manual(values=c(total_mean="#354953", sampling_mean="#8B9298"), guide="none") +
+  scale_linetype_manual(values=c(total_mean="solid", sampling_mean="22"),
+    labels=c("Candidate: total displacement", "Reference: sampling only"), name=NULL) +
+  labs(x="Target cohort fraction (%)", y="Signal difference / within-outcome RMS",
+    caption="Medians and IQR across the same tasks at every fraction; at least 4 participants per task. Full-support signal evaluation.") +
+  theme_ms_axes(base_size=6, legend_position="bottom")
+p2d_curves <- ms_style_plot(p2d_curves, dense=TRUE) +
+  theme(panel.spacing.y=grid::unit(.6,"mm"), strip.text.y=element_text(angle=0, size=6),
+        strip.text.x=element_text(size=7), legend.key.width=grid::unit(7,"mm"),
+        legend.key.height=grid::unit(2,"mm"), legend.box.spacing=grid::unit(.5,"mm"),
+        plot.caption=element_text(size=5.8, hjust=0, margin=margin(t=2)))
+
+# Align the four actual plotting fields before adding common-height headers.
+# Panel a retains its two tracks; data and panel identities are unchanged.
+p2_total <- ms_style_plot(p2_total) + labs(title=NULL, x=expression(D[T]~"(total RMS)"))
+p2_within <- ms_style_plot(p2_within) + labs(title=NULL)
+p2b <- ms_style_plot(p2b) + labs(title=NULL, x="Inferential deviation\n(reference uncertainty units)") +
+  scale_x_continuous(trans=scales::pseudo_log_trans(sigma=.08),limits=deviation_limits,breaks=c(0,.3,1,5))
+p2c <- ms_style_plot(p2c) + labs(title=NULL, x="Within-person pattern loss", y="Signal difference /\nwithin-outcome RMS")
+p2d_display <- ms_style_plot(p2d) + labs(title=NULL, x="Inferential deviation (reference uncertainty units)",
+  y="Signal difference /\nwithin-outcome RMS")
+left_fields <- cowplot::align_plots(p2_total,p2_within,p2d_display,align="v",axis="l")
+right_fields <- cowplot::align_plots(p2b,p2c,align="v",axis="lr")
+upper_fields <- cowplot::align_plots(left_fields[[1]],right_fields[[1]],align="h",axis="tb")
+lower_fields <- cowplot::align_plots(left_fields[[2]],right_fields[[2]],align="h",axis="tb")
+upper <- cowplot::plot_grid(ms_panel_frame(upper_fields[[1]],"a  Distortion magnitude"),
+  ms_panel_frame(upper_fields[[2]],"b  Inferential displacement"),nrow=1,rel_widths=c(.43,.57))
+lower <- cowplot::plot_grid(ms_panel_frame(lower_fields[[1]],"Within-person composition"),
+  ms_panel_frame(lower_fields[[2]],"c  Pattern and association signal"),nrow=1,rel_widths=c(.43,.57))
+body <- cowplot::plot_grid(upper,lower,ncol=1,rel_heights=c(1,1))
+fig2 <- cowplot::plot_grid(ms_metric_legend(),body,
+  ms_panel_frame(left_fields[[3]],"d  Coefficient displacement and association signal"),
+  ncol=1,rel_heights=c(.035,1,.38))
+# Preserve the entire original 8.8-inch composition at its original size.
+fig2_original <- fig2
+fig2 <- cowplot::plot_grid(fig2_original,
+  ms_panel_frame(p2d_curves, "Participant count and association signal", style=FALSE),
+  ncol=1, rel_heights=c(FIG2_ORIGINAL_HEIGHT_IN, FIG2_CURVE_HEIGHT_IN))
 
 if (!ms_plot_prep_only()) {
   readr::write_csv(
@@ -428,6 +512,8 @@ if (!ms_plot_prep_only()) {
              outcome_domain = as.character(outcome_domain), contrast_label = as.character(contrast_label)),
     file.path("results", "rq1", "inference", "fig2_distortion_inference_link.csv"), na = ""
   )
+  readr::write_csv(participant_display,
+    file.path("results", "rq1", "inference", "fig2_participant_count_display.csv"), na="")
 }
 
 ms_plot_save(fig2, file.path(OUT_DIR, "Fig2_RQ1_inferential_preservation.png"), FIG2_WIDTH_IN, FIG2_HEIGHT_IN)
@@ -451,7 +537,7 @@ ms_plot_write_manifest(
     figure = c("Fig1_RQ1", "Fig2_RQ1_inferential_preservation"),
     input_artifact = c(
       "rq1_pairwise_change_long + rq1_pairwise_summary + rq1_local_transition_summary",
-      "rq1_inferential_preservation_domains_anchor8 + rq1_pairwise_summary"
+      "rq1_inferential_preservation_domains_anchor8 + rq1_pairwise_summary + rq3_configuration_participant_curve"
     ),
     core_artifact_version = CORE_VERSION,
     rq1_analysis_version = RQ1_VERSION,

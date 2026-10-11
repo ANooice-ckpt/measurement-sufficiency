@@ -62,8 +62,13 @@ the runner or plot-contract dispatch.
 
 Across Fig. 1–6:
 
-- panel labels and titles are left aligned and bold with one consistent visual
-  hierarchy; explanatory subtitles use a smaller neutral-grey level;
+- panel labels and titles are left aligned and bold, with no grey explanatory
+  subtitle below individual panel titles; essential definitions belong in axes,
+  legends or short dark figure notes;
+- `figure_style.R` owns the shared font and physical sizes: 7.4-inch figure
+  width, 8-pt panel titles, 7-pt facet/subpanel headings, 6.5-pt axes, 6.2-pt
+  legends and 5.8-pt dense labels. `ms_panel_frame()` reserves a fixed 7-mm
+  title band, independent of a panel's relative height;
 - metric-class color remains defined only by `MS_METRIC_COLORS`; neutral raw
   observations, reference guides and overall summaries remain visually
   subordinate to class-level structure;
@@ -71,15 +76,19 @@ Across Fig. 1–6:
   detail rather than collapsing the result to class means alone;
 - linetype is used only where it carries a categorical distinction already
   defined by the figure, not as decoration;
-- nested layouts should form an approximately rectangular outer footprint;
+- nested layouts align actual plot fields before adding title bands: upper and
+  lower edges within rows, and corresponding axis gutters within columns;
 - subplot spacing is controlled at the composition level rather than by adding
   arbitrary whitespace inside individual plotting panels.
 
-Fig. 1 retains its established preservation geometry. Fig. 2 intentionally uses
-an asymmetric information-dense layout: a tall distortion-composition panel on the left
-and two downstream-consequence panels on the right. Figs. 3–6 retain their mature
-layouts and refinement/polish helpers; canonical file numbering is now identical
-to manuscript numbering.
+Fig. 1 retains its established preservation geometry. Fig. 2 retains two
+distortion-composition tracks on the left, panels b/c on the right and panel d
+across the full width. Its two upper rows are assembled from aligned fields.
+Figs. 3–6 retain their panel identities and existing refinement/polish helpers;
+Fig. 6 uses matching 30:70 column widths across both rows. Canonical file
+numbering is identical to manuscript numbering. Figure heights (Fig. 1–6) are
+5.8, 12.4, 7.5, 9.0, 6.5 and 6.1 inches; height accommodates content density
+without changing the series-wide physical font sizes.
 
 ## Frozen inputs and output locations
 
@@ -166,14 +175,27 @@ Fig. 2 presents:
   previous conditional composition model remains in the frozen analysis outputs.
 - Fig. 2d: the existing coefficient-displacement versus association-signal
   displacement panel, with signal RMS normalized by within-outcome RMS. These
-  are same-sample FE signals, not held-out predictions.
+  are same-sample FE signals, not held-out predictions. A 3.6-inch continuation
+  below this unchanged scatter shows the frozen participant-count experiment:
+  eight configuration rows by three outcome-domain columns compare candidate
+  total displacement with reference sampling displacement on full-support signal
+  space. Curves are medians and ribbons are IQR across metric-outcome tasks,
+  not confidence intervals. The identical task set is used for both curves at
+  all four target fractions, requiring estimability in every frozen MC draw.
+  Fractions are requested cohort fractions with a minimum of four participants;
+  repeated rounded sizes reuse the same frozen result. Actual fractions/counts,
+  plotted-task counts and full-cohort task counts are retained in
+  `results/rq1/inference/fig2_participant_count_display.csv`. Empty facets are
+  marked unavailable. The new geometric bound and gain are not added to the figure.
 
 Fig. 2b retains its original pseudo-log deviation scale. The original reference
 landscape and pooled A-displacement scatter move to supplementary figures,
 together with within-contrast correlations stratified by exposure geometry.
 The established tall-left/two-right composition and the existing full-width
 panel d are retained. Panel b's summary lane offset is categorical spacing only.
-The figure remains 8.2 x 9.0 inches; total RMS uses a pseudo-log axis and
+The figure is 7.4 x 12.4 inches: the original 8.8-inch composition keeps its
+physical size and all encodings, with the curve continuation added below it.
+Total RMS uses a pseudo-log axis and
 geometry-specific ranges. No plot refits a model.
 
 Frozen RQ1 A remains the upstream magnitude covariate and the pooled supplement's
@@ -221,7 +243,9 @@ this frozen artifact only. Its three panels present:
   diamonds and horizontal/vertical bars show marginal medians and IQRs. The
   identity line indicates equal risk. IQRs describe heterogeneity, not uncertainty.
 
-Fig.3 is rendered at 7.4 × 6.88 inches (20% shorter than the earlier 8.6-inch version).
+Fig.3 is rendered at 7.4 × 7.5 inches. Predictor labels and the narrow coefficient
+columns use the common dense-label size; the predictor-label column is wider
+and the strength scale uses endpoint ticks to avoid label collisions.
 
 The 52 daily targets and eight anchor contrasts retain metric-specific supports.
 There is no outcome matching. The figures do not claim universal sufficiency,
@@ -261,7 +285,19 @@ candidate lattice:
   Only sufficient Pareto cells carry nominal scheduled-sample reduction labels
   relative to 10 s x 6 d: `(6 / 10) / (n_days / resolution_s)`. This display
   quantity does not enter sufficiency or Pareto decisions. The displayed cells
-  are exported to `results/rq3/fig6b_eye_medi_epsilon_0.50_display_slice.csv`;
+  are exported to `results/rq3/fig6b_eye_medi_epsilon_0.50_display_slice.csv`.
+  Small D/S labels on Pareto cells identify the metrics preventing an immediate
+  reduction: D is one fewer day at the same cadence; S is the next slower primary
+  interval at the same duration. Numbers refer to exact limiting target sets in
+  the panel's key, including ties. They read the lower-burden neighbour's frozen
+  FALSE sufficiency decision and limiting metrics, not the current cell's maximum.
+  Missing, unavailable or unresolved neighbours receive no blocker label.
+  Dashed boxes overlay the comparison bundle's
+  complete frozen frontier: Level in the Temporal dynamics map, and Temporal
+  dynamics in the All targets map. This makes horizontal/vertical frontier
+  displacement visible without choosing or connecting arbitrary optimum points.
+  Level to Temporal dynamics changes goals; Temporal dynamics to All targets
+  expands the required target set. Exact limiting metrics remain in the CSV;
 - Fig. 6c: failure of single-axis sufficiency composition. A cell map at the
   existing epsilon=.25 slice shows joint failures / single-axis passes, alongside
   failure-rate profiles at .05/.10/.20/.25/.30/.50/1 by placement/optical facet.
@@ -288,6 +324,12 @@ above one indicate the corresponding increased requirement. NA means no observed
 sufficient choice on that slice (or no comparison bundle); the two conditional
 minima must not be combined into an invented joint optimum. Full sufficient and
 Pareto flags remain unchanged; no new bundle or sufficiency calculation is added.
+
+The same CSV retains `shorter_*` and `coarser_*` neighbour coordinates, statuses,
+frozen sufficient flags, R_task, blocking targets and figure keys. These identify
+the largest residual-instability metrics at a rejected adjacent reduction; they
+are not an exhaustive list of failing targets or a claim that removing the named
+targets alone would enable that reduction. No step skips a missing lattice cell.
 
 Display counts pool unique metric/configuration states across their respective
 maximal supports within each placement/optical facet; support-specific counts
@@ -334,6 +376,7 @@ domain is 10–120 s.
 ```text
 Fig. 1 from frozen RQ1
 → RQ1 inferential-preservation analysis
+→ Configuration / participant-count analysis from frozen RQ1 (14b --compensation)
 → Fig. 2
 → RQ2 analysis
 → Fig. 3
@@ -355,3 +398,11 @@ artifact `results/rq1/inference/rq1_inferential_preservation.rds` and the
 intermediate sleep-only `rq1_inferential_preservation_anchor8.rds` are retired.
 Pre-insertion figure IDs may still appear inside mature refinement helpers and
 audit filenames, but there are no duplicate plotting entrypoint files.
+
+## Frozen-decision display maintenance (2026-10-11)
+
+RQ1 v6 excludes reserve/duplicate duration supports; RQ3 v9 exports unresolved
+single-target sufficient/Pareto decisions as NA. Core v5 remains unchanged.
+Fig. 5a queries the frozen single-dimension requirement table at its existing
+breakpoints, and Fig. 5c reads frozen substitutability coverage. Neither panel
+reimplements sufficiency. The original layout and display-table exports remain.

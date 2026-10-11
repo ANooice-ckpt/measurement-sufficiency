@@ -35,6 +35,12 @@ local({
                       if_else(n_days == 1L, -1e8, 1e8), value)
     )
   input_path <- file.path(root, "duration_core.rds")
+  # The same configurations on narrower/duplicate supports must influence
+  # neither the primary duration changes nor their shared standardizer.
+  values <- bind_rows(values,
+    mutate(values, support_id = "eye_full", value = value + 1e7),
+    mutate(values, support_id = "eye_chest_medi", value = value + 2e7),
+    mutate(values, support_id = "eye_chest_wrist_medi", value = value + 3e7))
   saveRDS(values, input_path)
   before <- tools::md5sum(input_path)
   windows <- tibble(
@@ -45,6 +51,10 @@ local({
     start_b = as.Date("2025-01-01"), end_b = as.Date("2025-01-06"),
     adjacent_transition = FALSE, pair_id = c("P1_1__to__P1_6", "P2_1__to__P2_6")
   )
+  windows <- bind_rows(windows,
+    mutate(windows, support_id = "eye_full"),
+    mutate(windows, support_id = "eye_chest_medi"),
+    mutate(windows, support_id = "eye_chest_wrist_medi"))
 
   run_case <- function(partitioned, primary) {
     e <- new.env(parent = globalenv())
@@ -61,13 +71,14 @@ local({
                    "read_duration_anchor_part", "build_duration_pair_chunk",
                    "canonicalize_pairs", "rq1_marker_rows", "rq1_process_duration_part",
                    "rq1_summary_projection")) eval(assignment(name), envir = e)
-    stopifnot(startsWith(e$RQ1_ANALYSIS_VERSION, "rq1_v5_primary_duration_type_canonical__"))
+    stopifnot(startsWith(e$RQ1_ANALYSIS_VERSION, "rq1_v6_maximal_duration_support__"))
     e$pairwise_part_dir <- file.path(root, paste(partitioned, paste(primary, collapse = "_")),
                                    e$RQ1_ANALYSIS_VERSION)
 
     # Evaluate both real top-level input branches without executing the runner.
     eval(assignment("duration_anchor_values"), envir = e)
-    expected_values <- values$value[values$n_days == 6L & values$resolution_s %in% primary]
+    expected_values <- values$value[values$support_id == "eye_medi" &
+      values$n_days == 6L & values$resolution_s %in% primary]
     stopifnot(identical(sort(e$duration_anchor_values$value), sort(expected_values)))
     e$anchor_values <- e$duration_anchor_values |>
       transmute(comparison_lattice = "duration", metric, metric_geometry, value,
@@ -89,6 +100,11 @@ local({
     stopifnot(written$status == "written", written$rows == nrow(raw),
               nrow(output) == nrow(raw), !anyDuplicated(output$pair_key),
               all(output$available), !any(grepl("__300s", output$config_a_id, fixed = TRUE)))
+    stopifnot(all(output$support_id == "eye_medi"))
+    empty_task <- list(duration_values = filter(values, support_id == "eye_chest_wrist_medi"),
+      part_path = file.path(e$pairwise_part_dir, "reserve.rds"), part_index = 2L)
+    stopifnot(e$rq1_process_duration_part(empty_task)$rows == 0L,
+              e$rq1_process_duration_part(empty_task)$status == "reused")
 
     # Retained source values stay exact. Each synthetic primary change equals
     # cadence / 100; this independent oracle also detects scale contamination.

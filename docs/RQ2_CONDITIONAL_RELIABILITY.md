@@ -1,5 +1,16 @@
 # Active RQ2 conditional-reliability analysis
 
+The active commands remain `12d_rq2_recovery.R --run`, `--summarize`,
+`--check-inputs` and `--build-context`. Historical reconstruction estimators,
+their `--legacy-run`/`--smoke-test` commands and obsolete estimator tests are
+retired. Shared daily-anchor, signature and daypart builders remain in 12d;
+their synthetic checks are retained in `validate_recovery_paths.R`.
+
+The base RQ2 stage now caches conditional distribution fragments only. Active
+model inputs are written once by 12c; superseded base-model shards/checkpoint
+readers are retired. `RQ2_RUN_MODELS=0` emits empty model tables and never loads
+historical fits. Existing result/cache files are not deleted by this cleanup.
+
 The scientific question is: **can available context identify when a candidate
 representation is more or less reliable at a specified tolerance?** This extends
 Fig.3's contextual structure to held-out reliability, rather than requiring

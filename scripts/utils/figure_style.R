@@ -9,6 +9,8 @@ if (MS_STRICT_FONT && !MS_FONT_AVAILABLE) {
   stop("Requested manuscript font is unavailable: ", MS_FONT_REQUESTED, call. = FALSE)
 }
 MS_FONT <- if (MS_FONT_AVAILABLE) MS_FONT_REQUESTED else "sans"
+ggplot2::update_geom_defaults("text", list(family = MS_FONT))
+ggplot2::update_geom_defaults("label", list(family = MS_FONT))
 
 MS_PRIMARY <- "#2F5D7E"
 MS_SECONDARY <- "#C67C2E"
@@ -17,6 +19,63 @@ MS_TWO_COLORS <- c(primary = MS_PRIMARY, secondary = MS_SECONDARY)
 MS_THREE_COLORS <- c(MS_PRIMARY, MS_SECONDARY, "#5F8F84")
 MS_RASTER_DPI <- suppressWarnings(as.integer(Sys.getenv("MS_FIG_DPI", unset = "600")))
 if (!is.finite(MS_RASTER_DPI) || MS_RASTER_DPI < 300) MS_RASTER_DPI <- 600L
+
+# Physical sizes shared by all six main figures. Headers occupy millimetres,
+# not a proportion of the panel height, so short and tall panels match.
+MS_FIG_WIDTH_IN <- 7.4
+MS_FIG_TITLE_PT <- 8
+MS_FIG_STRIP_PT <- 7
+MS_FIG_AXIS_PT <- 6.5
+MS_FIG_LEGEND_PT <- 6.2
+MS_FIG_DENSE_PT <- 5.8
+MS_FIG_HEADER_MM <- 7
+
+ms_style_plot <- function(plot, dense = FALSE, subpanel = FALSE) {
+  if (!inherits(plot, "ggplot")) return(plot)
+  axis_size <- if (dense) MS_FIG_DENSE_PT else MS_FIG_AXIS_PT
+  text_theme <- ggplot2::theme(
+    text = ggplot2::element_text(family = MS_FONT, colour = "#30363B"),
+    plot.title = ggplot2::element_text(size = if (subpanel) MS_FIG_STRIP_PT else MS_FIG_TITLE_PT,
+      face = "bold", hjust = 0, margin = ggplot2::margin(b = 5)),
+    plot.subtitle = ggplot2::element_blank(),
+    plot.caption = ggplot2::element_text(size = MS_FIG_DENSE_PT, hjust = 0, lineheight = 1.05),
+    strip.text = ggplot2::element_text(size = MS_FIG_STRIP_PT, face = "bold"),
+    strip.text.x = ggplot2::element_text(size = MS_FIG_STRIP_PT, face = "bold"),
+    strip.text.y = ggplot2::element_text(size = MS_FIG_STRIP_PT, face = "bold"),
+    legend.text = ggplot2::element_text(size = MS_FIG_LEGEND_PT),
+    legend.margin = ggplot2::margin(0, 0, 0, 0),
+    legend.box.margin = ggplot2::margin(0, 0, 0, 0),
+    legend.box.spacing = grid::unit(2, "mm"),
+    plot.margin = ggplot2::margin(2, 3, 2, 3),
+    panel.spacing = grid::unit(3, "mm")
+  )
+  # Preserve intentionally blank axes and existing text angles/alignment.
+  for (nm in c("axis.text.x", "axis.text.y", "axis.title.x", "axis.title.y")) {
+    if (!inherits(ggplot2::calc_element(nm, plot$theme), "element_blank")) {
+      text_theme[[nm]] <- ggplot2::element_text(size = axis_size, family = MS_FONT, colour = "#30363B")
+    }
+  }
+  if (!inherits(ggplot2::calc_element("legend.title", plot$theme), "element_blank")) {
+    text_theme$legend.title <- ggplot2::element_text(size = MS_FIG_LEGEND_PT)
+  }
+  plot + ggplot2::labs(subtitle = NULL) + text_theme
+}
+
+ms_panel_frame <- function(plot, title = NULL, style = TRUE) {
+  if (inherits(plot, "ggplot")) {
+    if (is.null(title)) title <- plot$labels$title
+    if (style) plot <- ms_style_plot(plot)
+    plot <- plot + ggplot2::labs(title = NULL, subtitle = NULL)
+  }
+  g <- cowplot::as_grob(plot, device = function(width, height) grDevices::pdf(NULL, width, height))
+  if (is.null(title) || !nzchar(title)) return(g)
+  g <- gtable::gtable_add_rows(g, grid::unit(MS_FIG_HEADER_MM, "mm"), pos = 0)
+  gtable::gtable_add_grob(g, grid::textGrob(title,
+    x = grid::unit(1, "mm"), y = grid::unit(1, "npc") - grid::unit(1, "mm"),
+    just = c("left", "top"), gp = grid::gpar(fontfamily = MS_FONT,
+      fontsize = MS_FIG_TITLE_PT, fontface = "bold", col = "#151515")),
+    t = 1, l = 1, r = ncol(g), clip = "off", name = "ms-panel-heading")
+}
 
 MS_METRIC_CLASSES <- c(
   "duration", "exposure history", "level",
@@ -143,6 +202,7 @@ ms_symmetric_limit <- function(..., pad = 1.04, fallback = 1) {
 
 # One reusable manuscript metric-class legend. Returned object is a cowplot grob.
 ms_metric_legend <- function(text_size = 5.35, point_size = 1.55, key_width_mm = 3.5) {
+  text_size <- max(text_size, MS_FIG_LEGEND_PT)
   legend_source <- ggplot2::ggplot(
     data.frame(
       metric_class = factor(MS_METRIC_CLASSES, levels = MS_METRIC_CLASSES),

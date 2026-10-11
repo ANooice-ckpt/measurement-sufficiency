@@ -34,9 +34,11 @@ Main plot scripts read frozen outputs only and must not silently refit/recompute
 - Temporal primary levels: **10, 20, 30, 40, 60 and 120 s**. Reserve sensitivity: 300 s. 15 s is prohibited.
 - Coarse temporal configurations are **systematic sparse subsamples of the 10-s grid**, not bin means. Retained source values cannot change.
 - Monitoring duration uses consecutive complete analysis days and enumerates every contiguous 1–6 d window in each valid run. `trial_times` remains audit/descriptive metadata and does not define primary eligibility.
+- RQ1 duration pairs and scale anchors use the same unique maximal support per placement/optical/metric configuration; reserve all-position intersections and duplicate narrower supports are excluded. RQ1 v6 invalidates earlier duration parts and dependent RQ2 checkpoints without rebuilding Core.
 - Unavailable configurations are unavailable, not high-distortion/insufficient.
 - RQ2 contextual models may consume the existing ERA5/unit-context variables and harmonized MeLiDos diaries, but must not redefine core weather ingestion, measurement configurations or target representations.
 - RQ3 Pareto dominance applies only to justified ordered dimensions (temporal resolution, duration). Placement/optical are incomparable facets.
+- Unresolved RQ3 states retain explicit status and `NA` sufficient/Pareto decisions in exports; resolved-target counts define Pareto frequency denominators.
 - Multidimensional RQ3 uses facet-specific maximal supports, not a gratuitous eye+chest+wrist full-support intersection.
 
 ## RQ1 downstream-inference extension

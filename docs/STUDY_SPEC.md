@@ -53,6 +53,13 @@ trial_times metadata remains in unit_context for audit, descriptive metadata and
 
 Daily-defined metric windows are aggregated from the durable daily metric cube using the existing semantics: arithmetic aggregation for linear metrics and circular aggregation for circular-time metrics. IS/IV are rebuilt on exact selected dates from the stored hourly basis.
 
+Duration contrasts and their shared scale use one maximal stored support per
+placement/optical/metric configuration: eye, eye–chest or eye–wrist respectively;
+MEDI-only support for ordinary MEDI targets, full support for LIGHT or MDER/nvRD.
+LIGHT-only MDER/nvRD remain unavailable. Reserve all-position intersections and
+duplicate configurations on narrower supports do not enter either calculation.
+Pooling over primary configurations and nested duration-window pairs is unchanged.
+
 The IS/IV hourly basis retains distinct absolute hourly instants on 23/25-hour
 local dates. Repeated clock hours are combined only where the published IS
 formula requires the average daily pattern, not in the time series used for
@@ -123,6 +130,10 @@ over all higher observed states c'. If no higher observed state exists:
 
 No boundary is assigned zero. Boundary convergence is described by the adjacent G sequence.
 
+Unresolved states retain `NA` sufficient/Pareto decisions and their explicit
+status in exported tables. Pareto frequency denominators count resolved targets;
+a cell with none has an undefined frequency, not zero.
+
 For each epsilon, a resolved state is observed sufficient when R_obs <= epsilon. The full sufficient set is retained. A least-demanding requirement is reported only when the observed set is threshold-like; no monotonicity is imposed.
 
 Placement and optical are empirical substitutability facets: a pair is substitutable at epsilon when its A <= epsilon.
@@ -164,6 +175,15 @@ permits rescaling, sign reversal or a rotation of circular coordinates; it does
 not mean equal exposure values. Fig.2 compares it descriptively with the existing
 same-sample association-signal displacement, separately by geometry and domain.
 
+Two additional geometric quantities use these same demeaned designs W_r/W_c.
+`within_linear_gain = <W_r,W_c>/||W_r||^2` retains signed linear rescaling.
+`signal_geometry_bound = ||P_c-P_r||_2`, computed from the largest principal
+angle, bounds `signal_difference_outcome_sd` for any outcome with nonzero
+within-participant variance on the same rows, with the same FE and day weights. Its square equals
+`within_shape_loss` for linear targets; circular targets retain the existing
+directional loss separately. This is a conditional design-space bound, not
+a biological equivalence claim or a bound for a new population.
+
 The existing RQ3 resource-allocation Monte Carlo additionally records
 `J = sum_i J_i`, with `J_i` the squared norm of each participant's demeaned
 exposure design, and `N_eff = J^2 / sum_i J_i^2` (undefined when J is zero).
@@ -171,6 +191,22 @@ Linear J uses the fixed reference-SD basis; circular J uses the sin/cos trace.
 These describe exposure contrast and its concentration within each target,
 not outcome-noise-adjusted Fisher information or a guarantee of association
 precision. The existing R_obs_3d link remains a descriptive bridge.
+
+The separate configuration x participant-count experiment reuses the eight
+RQ1 anchors, 52 daily metrics and six outcomes, each on its own matched support.
+It samples whole participants without replacement within site using nested
+proportional quotas at 25/50/75/100% of the eligible cohort (ceiling, minimum
+four, duplicate sizes removed). All matched days of each selected person are
+retained. Reference exposure scale and reference-bootstrap covariance stay
+fixed at the full matched cohort F. For subset S, coefficient displacement is
+decomposed exactly as `(beta_c(S)-beta_r(S)) + (beta_r(S)-beta_r(F))`.
+The same decomposition is evaluated for association signals on the fixed full
+matched support, normalized by its within-outcome RMS. Squared configuration,
+sampling and total distances retain the cross term: total MS = configuration
+MS + sampling MS + cross MS. Monte Carlo quantiles describe finite-cohort
+allocation spread, not confidence intervals or an infinite-N error floor.
+The geometric bound applies to the full-support FE projections, not generally
+to subset-fitted signals evaluated on F. No common all-task support is imposed.
 
 RQ3 tests single-axis rule composition within each joint placement/optical/support/
 metric facet. For the same starting (r,d), R_T uses only finer cadences at d and

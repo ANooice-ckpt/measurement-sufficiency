@@ -122,23 +122,23 @@ for (g in joint |> group_by(support_id, placement, optical, metric) |> group_spl
     pr <- pr + 1L
     pareto_rows[[pr]] <- g |>
       transmute(
-        support_id, placement, optical, metric, metric_class, resolution_s, n_days, config_id,
+        support_id, placement, optical, metric, metric_class, resolution_s, n_days, config_id, status,
         epsilon_entry = R_obs, epsilon_interval_start = lo, epsilon_interval_end = hi,
         epsilon_interval_width = hi - lo, epsilon_midpoint = (lo + hi) / 2,
         terminal_endpoint = terminal,
         core_artifact_version = CORE_VERSION, rq1_analysis_version = RQ1_VERSION,
         rq3_analysis_version = RQ3_VERSION,
-        sufficient = status == "resolved" & is.finite(R_obs) & R_obs <= ep + NUMERIC_TOL,
-        pareto = config_id %in% front
+        sufficient = if_else(status == "resolved" & is.finite(R_obs), R_obs <= ep + NUMERIC_TOL, NA),
+        pareto = if_else(status == "resolved" & is.finite(R_obs), config_id %in% front, NA)
       )
   }
 }
 pareto_occupancy <- bind_rows(pareto_rows)
 pareto_summary <- pareto_occupancy |>
-  group_by(support_id, placement, optical, metric, metric_class, resolution_s, n_days, config_id, epsilon_entry) |>
+  group_by(support_id, placement, optical, metric, metric_class, resolution_s, n_days, config_id, status, epsilon_entry) |>
   summarise(
     ever_pareto = any(pareto),
-    pareto_tolerance_width = sum(epsilon_interval_width[pareto]),
+    pareto_tolerance_width = if (all(is.na(pareto))) NA_real_ else sum(epsilon_interval_width[which(pareto)]),
     tolerance_domain_width = sum(epsilon_interval_width),
     pareto_persistence = if (tolerance_domain_width > 0) pareto_tolerance_width / tolerance_domain_width else NA_real_,
     .groups = "drop"
@@ -147,9 +147,11 @@ pareto_frequency <- pareto_summary |>
   group_by(support_id, placement, optical, resolution_s, n_days) |>
   summarise(
     n_metrics_available = n_distinct(metric),
-    n_metrics_ever_pareto = n_distinct(metric[ever_pareto]),
-    fraction_metrics_ever_pareto = n_metrics_ever_pareto / n_metrics_available,
-    mean_pareto_persistence = mean(pareto_persistence, na.rm = TRUE), .groups = "drop"
+    n_metrics_resolved = n_distinct(metric[status == "resolved"]),
+    n_metrics_ever_pareto = if (n_metrics_resolved > 0L) n_distinct(metric[which(ever_pareto)]) else NA_integer_,
+    fraction_metrics_ever_pareto = if (n_metrics_resolved > 0L) n_metrics_ever_pareto / n_metrics_resolved else NA_real_,
+    mean_pareto_persistence = if (any(is.finite(pareto_persistence))) mean(pareto_persistence, na.rm = TRUE) else NA_real_,
+    .groups = "drop"
   )
 readr::write_csv(pareto_occupancy, file.path(OUT, "rq3_pareto_occupancy.csv"), na = "")
 readr::write_csv(pareto_summary, file.path(OUT, "rq3_pareto_frontiers.csv"), na = "")

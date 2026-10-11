@@ -139,6 +139,9 @@ LOG="results/logs/downstream_v5.log"
   echo "===== RQ1 INFERENTIAL PRESERVATION (FROZEN DAILY METRICS) ====="
   Rscript scripts/10b_rq1_inferential_preservation.R
 
+  echo "===== CONFIGURATION / PARTICIPANT COUNT (FROZEN RQ1) ====="
+  Rscript scripts/14b_rq3_resource_allocation.R --compensation
+
   echo "===== FIGURE 2 (RQ1 DOWNSTREAM INFERENCE) ====="
   Rscript scripts/11b_plot_fig2.R
 

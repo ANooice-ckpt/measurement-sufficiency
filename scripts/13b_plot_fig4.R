@@ -55,9 +55,10 @@ theme_risk<-function()theme_ms_axes(base_size=7,legend_position="bottom")+
     legend.box.spacing=unit(1,"mm"),legend.key.height=unit(3,"mm"),
     legend.key.width=unit(4,"mm"),legend.spacing.x=unit(1,"mm"),
     plot.margin=margin(4,5,2,4))
-header<-function(p,title,subtitle,h=.14,left=0)ggdraw()+draw_plot(p,left,0,1-left,1-h)+
-  draw_label(title,x=if(left>0).00735 else .015,y=.995,hjust=0,vjust=1,size=7.4,fontface="bold",fontfamily=MS_FONT)+
-  draw_label(subtitle,x=if(left>0).00735 else .015,y=1-h*.48,hjust=0,vjust=1,size=5.2,colour="#656D72",fontfamily=MS_FONT)
+header<-function(p,title,subtitle=NULL,h=NULL,left=NULL) {
+  if(inherits(p,"ggplot")) p<-ms_style_plot(p,dense=TRUE)
+  ms_panel_frame(p,title,style=FALSE)
+}
 
 # Training-only context-risk cutpoints define the held-out groups.
 mp<-as.data.table(z$metric_profiles)[target=="mean_risk"]
@@ -74,7 +75,7 @@ pa<-ggplot(display,aes(ratio,pair,colour=context_group,group=pair))+
   geom_line(colour="#BBC3C7",linewidth=.5)+geom_point(size=2.25)+
   scale_colour_manual(values=group_colors,breaks=c("Lower","Middle","Higher"),labels=c("Lower risk","Middle","Higher risk"))+
   labs(x="Observed distortion / unstratified distortion",y=NULL)+theme_risk()
-pa_body<-pa
+pa_body<-ms_style_plot(pa)
 
 value_kinds<-c("context_skill","context_increment","capacity_control")
 kind_labels<-c("Context vs mean","Joint vs measurement (10 df)","Joint vs measurement (20 df)")
@@ -90,9 +91,10 @@ pb<-ggplot(ci,aes(estimate,pair,colour=kind,group=kind))+
   geom_point(data=reps[repeat_id!=1],aes(shape=factor(repeat_id)),size=1.3,position=pd,alpha=.6,show.legend=FALSE)+
   scale_colour_manual(values=c("#2F5D7E","#B16C42","#52958B"))+
   labs(x="Held-out Brier score improvement (%)",y=NULL)+theme_risk()+guides(colour=guide_legend(ncol=1))
+pb<-ms_style_plot(pb)
 top_aligned<-align_plots(pa_body,pb,align="h",axis="tb")
-pa<-header(top_aligned[[1]],"a  Context separates reliability regimes","New participants; training-only risk groups")
-pb<-header(top_aligned[[2]],"b  Context value and decoder-capacity control","Pooled loss ratios; fixed-prediction bootstrap bars + repeat splits")
+pa<-header(top_aligned[[1]],"a  Context and distortion","New participants; training-only risk groups")
+pb<-header(top_aligned[[2]],"b  Added predictive value","Pooled loss ratios; fixed-prediction bootstrap bars + repeat splits")
 
 prof<-as.data.table(z$context_profiles)[startsWith(target,"exceed_") & context_group%in%c("Lower","Higher")]
 prof[,`:=`(epsilon=as.numeric(sub("exceed_","",target)),pair=factor(comparison_pair_id,levels=ORDER,labels=LABELS))]
@@ -138,25 +140,27 @@ if(fill_limit==0)fill_limit<-1
 pc<-ggplot(atlas,aes(epsilon,metric,fill=gain))+
   geom_tile(width=.94,height=.94)+
   geom_point(data=atlas[split_reversal==TRUE],shape=4,size=.65,stroke=.2,colour="#30363A")+
-  facet_grid(metric_class~pair,scales="free_y",space="free_y",switch="y")+
+  facet_grid(metric_class~pair,scales="free_y",space="free_y",switch="y",
+    labeller=labeller(metric_class=function(x)stringr::str_wrap(x,width=10)))+
+  scale_y_discrete(labels=function(x)gsub("_"," ",x))+
   scale_fill_gradient2(low="#B16C42",mid="#FAFAF8",high="#2F5D7E",midpoint=0,
     limits=c(-fill_limit,fill_limit),trans=scales::pseudo_log_trans(sigma=.1),
     name="Brier reduction × 100")+
   labs(x="Tolerance ε within each contrast (frozen RQ1 standardized units)",y=NULL)+theme_risk()+
   theme(panel.grid=element_blank(),panel.background=element_rect(fill="#E0E3E5",colour=NA),
     panel.spacing.x=unit(.6,"mm"),panel.spacing.y=unit(.6,"mm"),
-    strip.placement="outside",strip.text.y.left=element_text(angle=0,size=5.2),
+    strip.placement="outside",strip.text.y.left=element_text(angle=0,size=MS_FIG_DENSE_PT),
     axis.text.y=element_text(size=4.8),axis.text.x=element_text(size=4.8,angle=90,hjust=1,vjust=.5),
     axis.ticks=element_blank(),legend.title=element_text(size=6))+
   guides(fill=guide_colourbar(barwidth=unit(40,"mm"),barheight=unit(2,"mm"),title.position="top"))
-pc<-header(pc,"c  Where context adds information beyond candidate measurements",
+pc<-header(pc,"c  Context value by target and tolerance",
   "Primary split: measurement (10 df) loss − joint loss; blue = improvement · × = sign changes across splits · grey = unavailable",.07)
 foot<-ggdraw()+draw_label(
-  "52 daily targets; eight contrasts; participant-grouped out-of-sample evaluation. a–b: equal metric weights.\nb: relative improvement over each baseline; c: absolute loss reduction, with no metric or tolerance averaging.\nSplit markers describe validation variability, not significance. Daily risk does not redefine RQ3 sufficiency.",
-  x=.012,hjust=0,size=5.4,colour="#626A70",fontfamily=MS_FONT)
+  "b: relative Brier improvement; small points: repeat splits. c: absolute Brier reduction × 100.\n×: sign changes across splits; grey: unavailable. All panels retain metric-specific supports.",
+  x=.012,hjust=0,size=MS_FIG_DENSE_PT,colour="#30363B",fontfamily=MS_FONT)
 figure<-plot_grid(plot_grid(pa,pb,nrow=1,rel_widths=c(.49,.51)),pc,foot,
-  ncol=1,rel_heights=c(.29,.66,.05))
-ms_plot_save(figure,"results/rq2/Fig4_RQ2.png",8.6,8.4)
+  ncol=1,rel_heights=c(.28,.68,.04))
+ms_plot_save(figure,"results/rq2/Fig4_RQ2.png",MS_FIG_WIDTH_IN,9.0)
 ms_plot_save(previous_figure,"results/rq2/FigS_RQ2_reliability_profiles.png",7.4,7.7)
 if (!ms_plot_prep_only()) {
   fwrite(cloud,"results/rq2/fig4_tolerance_scatter_display.csv")

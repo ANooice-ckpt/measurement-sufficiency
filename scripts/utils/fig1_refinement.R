@@ -373,7 +373,7 @@ ms_fig1_refine_main <- function(env) {
       ggplot2::theme_void(base_family = MS_FONT) +
       ggplot2::theme(
         legend.position = "bottom",
-        legend.text = ggplot2::element_text(size = 4.10),
+        legend.text = ggplot2::element_text(size = MS_FIG_LEGEND_PT),
         legend.key.width = grid::unit(2.4, "mm"),
         legend.spacing.x = grid::unit(.32, "mm"),
         legend.margin = ggplot2::margin(0, 0, 0, 0)
@@ -384,6 +384,8 @@ ms_fig1_refine_main <- function(env) {
     p1a_core = p1a_core,
     assoc_text = assoc_text,
     p1b_core = p1b_core,
+    p1b_top = p1b_top,
+    p1b_bottom = p1b_bottom,
     p1b_shape_legend = p1b_shape_legend
   )
 }

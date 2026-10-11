@@ -1,3 +1,8 @@
+> Historical design record. The reconstruction estimators and their
+> `--smoke-test`/`--legacy-run` commands were retired on 2026-10-11.
+> Use [RQ2_CONDITIONAL_RELIABILITY.md](RQ2_CONDITIONAL_RELIABILITY.md) for the
+> active commands. Shared input builders remain; historical outputs are retained.
+
 > Historical design record. This is not the active Fig.4 contract. See
 > [RQ2_CONDITIONAL_RELIABILITY.md](RQ2_CONDITIONAL_RELIABILITY.md). Commands and
 > retired script names below describe earlier experiments, not current runners.

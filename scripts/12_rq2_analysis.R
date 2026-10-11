@@ -4,7 +4,7 @@
 # and is sourced in the same R process so it reuses the validated transition
 # objects without reconstructing RQ1/core data.
 
-.requested_rq2_models <- tolower(Sys.getenv("RQ2_RUN_MODELS", unset = "1")) %in% c("1", "true", "yes")
+RUN_MODELS <- tolower(Sys.getenv("RQ2_RUN_MODELS", unset = "1")) %in% c("1", "true", "yes")
 suppressPackageStartupMessages({library(tidyverse); library(nlme)})
 source("scripts/utils/analysis_design.R")
 source("scripts/utils/core_artifacts.R")
@@ -31,9 +31,6 @@ CORE_CONTEXT <- file.path("results", "core", "unit_context.csv.gz")
 DURATION_MANIFEST <- file.path("results", "core", "duration_window_manifest.rds")
 OUT <- file.path("results", "rq2")
 DIAG <- file.path("results", "diagnostics")
-CHECKPOINTS <- file.path(OUT, "checkpoints_v5")
-SHARD_ROOT <- file.path(OUT, "model_input_shards")
-RUN_MODELS <- FALSE # Legacy fits are superseded by the layered context stage.
 KEEP_MODEL_INPUTS <- identical(Sys.getenv("RQ2_KEEP_MODEL_INPUTS", unset = "0"), "1")
 RQ2_CV_FOLDS <- suppressWarnings(as.integer(Sys.getenv("RQ2_CV_FOLDS", unset = "5")))
 if (!is.finite(RQ2_CV_FOLDS) || RQ2_CV_FOLDS < 2L) RQ2_CV_FOLDS <- 5L
@@ -46,7 +43,7 @@ TEMPORAL_GAMMA_S <- PRIMARY_TEMPORAL_S
 ANALYSIS_DESIGN_ID <- ms_analysis_design_id()
 EXTERNAL <- c("external_radiation", "external_direct_fraction", "external_cloud", "solar_noon_elevation_deg")
 OUTCOMES <- c(signed = "z", magnitude = "abs_z")
-ensure_result_dirs(OUT, DIAG, CHECKPOINTS, SHARD_ROOT)
+ensure_result_dirs(OUT, DIAG)
 for (p in c(RQ1_PAIRWISE, RQ1_SUMMARY, CORE_METRICS, CORE_CONTEXT, DURATION_MANIFEST)) {
   if (!file.exists(p)) stop("Missing RQ2 input: ", p)
 }
@@ -80,9 +77,9 @@ if (length(CORE_VERSION) != 1L) stop("Core version mismatch")
 CORE_VERSION <- CORE_VERSION[[1]]
 ms_assert_version(rq1_artifact, "core_artifact_version", core_artifact_version())
 RQ2_VERSION <- paste0("rq2_v5_duration_type_streamed_cv_fixed__", RQ1_VERSION, "__", ANALYSIS_DESIGN_ID)
-SHARD_DIR <- file.path(SHARD_ROOT, RQ2_VERSION)
+CONDITIONAL_DIR <- file.path(OUT, "conditional_parts", RQ2_VERSION)
 UNIT_FEATURE_DIR <- file.path(OUT, "unit_feature_parts", RQ2_VERSION)
-dir.create(SHARD_DIR, recursive = TRUE, showWarnings = FALSE)
+dir.create(CONDITIONAL_DIR, recursive = TRUE, showWarnings = FALSE)
 dir.create(UNIT_FEATURE_DIR, recursive = TRUE, showWarnings = FALSE)
 
 cube <- readr::read_csv(CORE_METRICS, show_col_types = FALSE, progress = FALSE) |>
@@ -274,98 +271,56 @@ readr::write_csv(task_catalog, file.path(DIAG, "rq2_model_task_catalog.csv"), na
 sanitize_task <- function(i) sprintf("task_%04d", as.integer(i))
 part_token <- function(i) sprintf("part_%03d", as.integer(i) - 1L)
 
-build_shards_for_part <- function(path, i) {
-  pdir <- file.path(SHARD_DIR, part_token(i))
-  marker <- file.path(pdir, ".complete")
-  manifest_path <- file.path(pdir, "manifest.csv")
-  conditional_path <- file.path(pdir, "conditional_fragment.rds")
-  if (file.exists(marker) && file.exists(manifest_path) && file.exists(conditional_path)) {
-    return(readr::read_csv(manifest_path, show_col_types = FALSE, progress = FALSE))
-  }
-  if (dir.exists(pdir)) unlink(pdir, recursive = TRUE, force = TRUE)
-  dir.create(pdir, recursive = TRUE, showWarnings = FALSE)
-
+# Only conditional distribution fragments are needed here. The active context
+# stage builds its own richer model inputs once, below.
+build_conditional_part <- function(path, i) {
+  conditional_path <- file.path(CONDITIONAL_DIR, paste0(part_token(i), ".rds"))
+  marker <- paste0(conditional_path, ".ok")
+  if (file.exists(marker) && file.exists(conditional_path)) return(conditional_path)
   z <- normalize_primary(readRDS(path)) |>
     filter(available, is.finite(z)) |>
-    select(
-      dimension, comparison_pair_id, config_a_label, config_b_label, metric, metric_class, metric_geometry,
-      support_id, site, Id, analysis_unit_id_a, analysis_unit_id_b, transition_unit_key, z
-    ) |>
-    left_join(
-      unit_features |>
-        select(transition_unit_key, participant_key, primary_state_name, primary_state_raw,
-               duration_day_variability, all_of(EXTERNAL), state_bin, state_bin_label),
-      by = "transition_unit_key"
-    ) |>
-    mutate(abs_z = abs(z)) |>
-    left_join(task_catalog, by = c("dimension", "comparison_pair_id", "metric", "metric_class"))
-  if (any(is.na(z$task_index))) stop("RQ2 task catalogue join failed in ", basename(path))
-
+    select(dimension, comparison_pair_id, config_a_label, config_b_label, metric,
+           metric_class, metric_geometry, transition_unit_key, z) |>
+    left_join(unit_features |>
+      select(transition_unit_key, participant_key, primary_state_name, primary_state_raw,
+             state_bin, state_bin_label), by = "transition_unit_key")
   conditional_fragment <- z |>
     filter(!is.na(state_bin_label)) |>
     group_by(dimension, comparison_pair_id, config_a_label, config_b_label, metric, metric_class,
              metric_geometry, primary_state_name, state_bin, state_bin_label) |>
-    summarise(
-      z_values = list(as.numeric(z)), state_values = list(as.numeric(primary_state_raw)),
-      participant_keys = list(unique(participant_key)), .groups = "drop"
-    )
+    summarise(z_values = list(as.numeric(z)), state_values = list(as.numeric(primary_state_raw)),
+              participant_keys = list(unique(participant_key)), .groups = "drop")
   saveRDS(conditional_fragment, conditional_path, compress = "gzip")
-
-  model_z <- z |>
-    filter(is.finite(primary_state_raw)) |>
-    select(task_index, site, participant_key, z, abs_z, primary_state_raw,
-           duration_day_variability, all_of(EXTERNAL))
-  groups <- split(model_z, model_z$task_index)
-  rows <- vector("list", length(groups)); k <- 0L
-  for (nm in names(groups)) {
-    k <- k + 1L
-    g <- groups[[nm]] |> select(-task_index)
-    spath <- file.path(pdir, paste0(sanitize_task(as.integer(nm)), ".rds"))
-    saveRDS(g, spath, compress = "gzip")
-    rows[[k]] <- tibble(
-      part_index = i, task_index = as.integer(nm), shard_path = normalizePath(spath, winslash = "/", mustWork = TRUE),
-      rows = nrow(g), bytes = as.numeric(file.info(spath)$size)
-    )
-  }
-  manifest <- bind_rows(rows)
-  readr::write_csv(manifest, manifest_path, na = "")
-  writeLines(c(RQ2_VERSION, paste0("source=", basename(path))), marker)
-  rm(z, model_z, groups, conditional_fragment)
-  invisible(gc(FALSE))
-  manifest
+  writeLines(RQ2_VERSION, marker)
+  conditional_path
 }
-
-build_shard_task <- function(task) build_shards_for_part(task$path, task$i)
-message("RQ2 v5 pass 2/2: build/reuse bounded model-input shards; workers=", RQ2_STREAM_WORKERS)
-shard_tasks <- Map(function(path, i) list(path = path, i = i), part_paths, seq_along(part_paths))
-shard_manifests <- ms_parallel_map(
-  shard_tasks, build_shard_task, workers = RQ2_STREAM_WORKERS,
+build_conditional_task <- function(task) build_conditional_part(task$path, task$i)
+message("RQ2 pass 2/2: build/reuse conditional distribution fragments; workers=", RQ2_STREAM_WORKERS)
+conditional_tasks <- Map(function(path, i) list(path = path, i = i), part_paths, seq_along(part_paths))
+conditional_paths <- unlist(ms_parallel_map(
+  conditional_tasks, build_conditional_task, workers = RQ2_STREAM_WORKERS,
   packages = c("tidyverse"),
-  exports = c("build_shard_task", "build_shards_for_part", "normalize_primary", "unit_features",
-              "task_catalog", "SHARD_DIR", "RQ2_VERSION", "sanitize_task", "part_token", "EXTERNAL")
-)
-shard_manifest <- bind_rows(shard_manifests)
-rm(shard_tasks)
-readr::write_csv(shard_manifest, file.path(OUT, "rq2_model_input_shard_manifest.csv"), na = "")
+  exports = c("build_conditional_task", "build_conditional_part", "normalize_primary",
+              "unit_features", "CONDITIONAL_DIR", "RQ2_VERSION", "part_token")
+), use.names = FALSE)
+rm(conditional_tasks)
 
 # A small manifest replaces the legacy enormous condition_long table. Plotting
 # only needs provenance; inferential summaries are written separately below.
 condition_manifest <- list(
-  artifact_type = "rq2_streamed_condition_manifest_v1",
+  artifact_type = "rq2_streamed_condition_manifest_v2",
   core_artifact_version = CORE_VERSION,
   rq1_analysis_version = RQ1_VERSION,
   rq2_analysis_version = RQ2_VERSION,
   analysis_design_id = ANALYSIS_DESIGN_ID,
   canonical_part_count = length(part_paths),
   task_count = nrow(task_catalog),
-  shard_dir = normalizePath(SHARD_DIR, winslash = "/", mustWork = TRUE)
+  conditional_dir = normalizePath(CONDITIONAL_DIR, winslash = "/", mustWork = TRUE)
 )
 saveRDS(condition_manifest, file.path(OUT, "rq2_condition_long.rds"), compress = "gzip")
 
 # Exact conditional A/B and quantiles are pooled from compact numeric chunks.
-conditional_parts <- lapply(seq_along(part_paths), function(i) {
-  readRDS(file.path(SHARD_DIR, part_token(i), "conditional_fragment.rds"))
-})
+conditional_parts <- lapply(conditional_paths, readRDS)
 conditional_geometry <- bind_rows(conditional_parts) |>
   group_by(dimension, comparison_pair_id, config_a_label, config_b_label, metric, metric_class,
            metric_geometry, primary_state_name, state_bin, state_bin_label) |>
@@ -393,73 +348,6 @@ if (any(conditional_geometry$A_conditional + 1e-12 < abs(conditional_geometry$B_
 readr::write_csv(conditional_geometry, file.path(OUT, "rq2_conditional_geometry.csv"), na = "")
 rm(conditional_parts)
 invisible(gc())
-
-# Legacy fits are never run here; retain their task/cache identities so existing
-# checkpoints and disabled-model exports keep the same compatibility contract.
-# The log directory is also required by the following layered context stage.
-PROGRESS_LOG <- file.path("results", "logs", "rq2_model_progress.tsv")
-dir.create(dirname(PROGRESS_LOG), recursive = TRUE, showWarnings = FALSE)
-
-model_tasks <- lapply(seq_len(nrow(task_catalog)), function(i) {
-  meta <- task_catalog[i, ]
-  paths <- shard_manifest |> filter(task_index == meta$task_index) |> pull(shard_path)
-  checkpoint_path <- file.path(CHECKPOINTS, paste0(sanitize_task(meta$task_index), ".rds"))
-  list(
-    index = meta$task_index[[1]], meta = meta, shard_paths = paths,
-    folds = RQ2_CV_FOLDS, seed = MODEL_SEED + meta$task_index[[1]],
-    checkpoint_version = paste0(RQ2_VERSION, "__core__", CORE_VERSION, "__participant_cv__", RQ2_CV_FOLDS),
-    checkpoint_path = checkpoint_path,
-    progress_path = normalizePath(PROGRESS_LOG, winslash = "/", mustWork = FALSE),
-    cost = sum(shard_manifest$bytes[shard_manifest$task_index == meta$task_index], na.rm = TRUE)
-  )
-})
-model_tasks <- keep(model_tasks, ~length(.x$shard_paths) > 0L)
-model_results <- vector("list", nrow(task_catalog))
-message("RQ2 legacy fits skipped; layered context models run in the following stage when requested")
-# Load valid legacy checkpoints without fitting or modifying them.
-for (task in model_tasks) {
-  if (is.null(model_results[[task$index]]) && file.exists(task$checkpoint_path)) {
-    obj <- tryCatch(readRDS(task$checkpoint_path), error = function(e) NULL)
-    if (!is.null(obj) && identical(obj$checkpoint_version, task$checkpoint_version) && isTRUE(obj$complete)) {
-      model_results[[task$index]] <- obj
-    }
-  }
-}
-model_coefficients <- bind_rows(map(model_results, ~if (is.null(.x)) NULL else .x$coefficients))
-model_performance <- bind_rows(map(model_results, ~if (is.null(.x)) NULL else .x$performance))
-if (!ncol(model_coefficients)) model_coefficients <- tibble(
-  dimension = character(), comparison_pair_id = character(), metric = character(), outcome = character(),
-  model_family = character(), random_structure = character(), term = character(), estimate = double(),
-  std_error = double(), df = double(), t_value = double(), p_value = double()
-)
-if (!ncol(model_performance)) model_performance <- tibble(
-  dimension = character(), comparison_pair_id = character(), metric = character(), outcome = character(),
-  model_family = character(), validation_scheme = character(), n_participants = integer(), n_sites = integer(),
-  n_test = integer(), rmse = double(), mae = double(), r2 = double()
-)
-readr::write_csv(model_coefficients, file.path(OUT, "rq2_model_coefficients.csv"), na = "")
-readr::write_csv(model_performance, file.path(OUT, "rq2_model_performance.csv"), na = "")
-
-model_manifest <- bind_rows(lapply(seq_len(nrow(task_catalog)), function(i) {
-  meta <- task_catalog[i, ]
-  obj <- model_results[[meta$task_index]]
-  checkpoint_path <- file.path(CHECKPOINTS, paste0(sanitize_task(meta$task_index), ".rds"))
-  tibble(
-    artifact_type = "rq2_model_checkpoint_manifest_v2",
-    rq1_analysis_version = RQ1_VERSION, rq2_analysis_version = RQ2_VERSION,
-    core_artifact_version = CORE_VERSION, task_index = meta$task_index,
-    dimension = meta$dimension, comparison_pair_id = meta$comparison_pair_id,
-    metric = meta$metric, metric_class = meta$metric_class,
-    checkpoint_path = normalizePath(checkpoint_path, winslash = "/", mustWork = FALSE),
-    checkpoint_version = paste0(RQ2_VERSION, "__core__", CORE_VERSION, "__participant_cv__", RQ2_CV_FOLDS),
-    checkpoint_present = file.exists(checkpoint_path),
-    checkpoint_complete = !is.null(obj) && isTRUE(obj$complete),
-    coefficient_rows = if (!is.null(obj)) nrow(obj$coefficients) else 0L,
-    performance_rows = if (!is.null(obj)) nrow(obj$performance) else 0L,
-    run_models = RUN_MODELS
-  )
-}))
-readr::write_csv(model_manifest, file.path(OUT, "rq2_model_artifact_manifest.csv"), na = "")
 
 # -----------------------------------------------------------------------------
 # Gamma: actual four-cell configuration values. This branch uses the daily core
@@ -583,12 +471,7 @@ writeLines(c(
   paste0("Circular gamma branch-cut test passed: gamma_delta = ", format(branch_cut_test$circular_second_difference, digits = 8))
 ), file.path(OUT, "RQ2_RUN_REPORT.md"))
 
-# Base shards are deliberately retained until the layered context stage has
-# completed successfully. The canonical stage must never delete its own resume
-# state before downstream consumers finish.
 message("RQ2 complete: ", RQ2_VERSION)
-
-RUN_MODELS <- .requested_rq2_models
 
 # The layered contextual extension deliberately runs in the same R process: it
 # reuses the validated canonical transition objects created above and never
@@ -616,7 +499,7 @@ if (isTRUE(RUN_MODELS)) {
     stop("Layered RQ2 model families missing from coefficients: ", paste(missing_families, collapse = ", "))
   }
 
-  # Fig. 2b is allowed to show only a fixed representative subset, but the
+  # Fig. 3a is allowed to show only a fixed representative subset, but the
   # corresponding joint-model layers must actually have been estimated.
   required_joint_terms <- c(
     "micro_outdoor_fraction", "micro_daylight_indoor_fraction",
@@ -627,13 +510,13 @@ if (isTRUE(RUN_MODELS)) {
   ))
   missing_joint_terms <- setdiff(required_joint_terms, observed_joint_terms)
   if (length(missing_joint_terms)) {
-    stop("Layered RQ2 joint-model terms required for Fig. 2b are missing: ",
+    stop("Layered RQ2 joint-model terms required for Fig. 3a are missing: ",
          paste(missing_joint_terms, collapse = ", "))
   }
 
   cat(
     "\nLayered context extension: ", CONTEXT_VERSION,
-    "\nBase legacy coefficient fits: intentionally skipped; canonical conditional/gamma products retained.",
+    "\nOnly layered context models are fitted; canonical conditional/gamma products retained.",
     "\nModel families: external opportunity, micro-environment, behaviour, exposure state, joint.",
     "\nContext inputs reuse unit_context ERA5 fields plus harmonised MeLiDos diaries; no core or ERA5 ingestion rule is redefined.\n",
     file = file.path(OUT, "RQ2_RUN_REPORT.md"), append = TRUE, sep = ""
@@ -642,13 +525,8 @@ if (isTRUE(RUN_MODELS)) {
   # Delete large row-level model inputs only after the entire layered RQ2 stage
   # has succeeded. Durable pass-1 unit-feature checkpoints are intentionally kept.
   if (!KEEP_MODEL_INPUTS) {
-    if (exists("SHARD_DIR") && dir.exists(SHARD_DIR)) {
-      unlink(SHARD_DIR, recursive = TRUE, force = TRUE)
-    }
     if (exists("CONTEXT_SHARD_ROOT") && dir.exists(CONTEXT_SHARD_ROOT)) {
       unlink(CONTEXT_SHARD_ROOT, recursive = TRUE, force = TRUE)
     }
   }
 }
-
-rm(.requested_rq2_models)

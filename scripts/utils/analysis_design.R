@@ -12,6 +12,18 @@ ms_all_temporal_s <- function() sort(unique(c(ms_primary_temporal_s(), ms_reserv
 
 ms_primary_duration_days <- function() 1:6
 
+# One maximal stored support per placement/optical/metric configuration.
+# Shared by duration contrasts and joint stability; reserve all-position
+# intersections and duplicate eye rows on pairwise supports are excluded.
+ms_maximal_configuration_support <- function(df) {
+  base <- unname(c(eye = "eye", chest = "eye_chest", wrist = "eye_wrist")[df$placement])
+  full <- df$optical == "LIGHT" | df$metric %in% c("MDER", "nvRD")
+  expected <- paste0(base, ifelse(full, "_full", "_medi"))
+  keep <- !is.na(base) & df$support_id == expected &
+    !(df$optical == "LIGHT" & df$metric %in% c("MDER", "nvRD"))
+  df[which(keep), , drop = FALSE]
+}
+
 # Keep the published design's existing cache identity as an exact compatibility
 # alias, NOT a weighted checksum. Every other vector uses a lossless encoding in
 # a disjoint namespace. These historical vectors are aliases, not design inputs.

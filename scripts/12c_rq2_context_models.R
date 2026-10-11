@@ -8,7 +8,20 @@ if (!exists("normalize_primary", mode = "function") || !exists("unit_features") 
 source("scripts/utils/rq2_context_features.R")
 
 if (!isTRUE(RUN_MODELS)) {
-  message("RQ2 layered context models disabled by RQ2_RUN_MODELS=0")
+  message("RQ2 layered context models disabled by RQ2_RUN_MODELS=0; no legacy fits are loaded")
+  # Preserve the empty-output contract of analysis-only runs, without reviving
+  # superseded models or leaving prior coefficients labelled as current.
+  coefficients <- tibble(dimension=character(), comparison_pair_id=character(), metric=character(),
+    outcome=character(), model_family=character(), random_structure=character(), term=character(),
+    estimate=double(), std_error=double(), df=double(), t_value=double(), p_value=double())
+  performance <- tibble(dimension=character(), comparison_pair_id=character(), metric=character(),
+    outcome=character(), model_family=character(), validation_scheme=character(),
+    n_participants=integer(), n_sites=integer(), n_test=integer(), rmse=double(), mae=double(), r2=double())
+  manifest <- task_catalog |> mutate(rq1_analysis_version=RQ1_VERSION, rq2_analysis_version=RQ2_VERSION,
+    core_artifact_version=CORE_VERSION, checkpoint_complete=FALSE, run_models=FALSE)
+  readr::write_csv(coefficients, file.path(OUT, "rq2_model_coefficients.csv"), na="")
+  readr::write_csv(performance, file.path(OUT, "rq2_model_performance.csv"), na="")
+  readr::write_csv(manifest, file.path(OUT, "rq2_model_artifact_manifest.csv"), na="")
 } else {
   CONTEXT_EXTERNAL <- rq2_context_external_predictors()
   CONTEXT_MICRO <- rq2_context_micro_predictors()
@@ -276,6 +289,7 @@ if (!isTRUE(RUN_MODELS)) {
   }
 
   CONTEXT_PROGRESS_LOG <- file.path("results", "logs", "rq2_layered_context_model_progress.tsv")
+  dir.create(dirname(CONTEXT_PROGRESS_LOG), recursive = TRUE, showWarnings = FALSE)
   writeLines(
     "timestamp\ttask_index\tstatus\tdimension\tcomparison_pair_id\tmetric",
     CONTEXT_PROGRESS_LOG

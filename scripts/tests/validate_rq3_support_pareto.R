@@ -7,7 +7,7 @@ facets <- tidyr::crossing(
   placement = c("eye", "chest", "wrist"), optical = c("MEDI", "LIGHT"),
   metric = c("mean_MEDI", "MDER")
 )
-kept <- rq3_support_filter(facets)
+kept <- ms_maximal_configuration_support(facets)
 stopifnot(nrow(kept) == 9L,
           !anyDuplicated(kept[c("placement", "optical", "metric")]),
           !any(grepl("chest_wrist", kept$support_id)),
@@ -37,6 +37,15 @@ check_projection <- function(A) {
     identical(attr(saved, "task_projection")$task_projection_version, "rq3_task_projection_v1"))
   stopifnot(all(!composition$states$composition_resolved),
             all(is.na(composition$summary$failure_rate)))
+  boundary <- pareto_occupancy |> filter(config_id == "r10__d6")
+  stopifnot(all(boundary$status == "boundary_unresolved"),
+    all(is.na(boundary$sufficient)), all(is.na(boundary$pareto)),
+    is.na(pareto_summary$ever_pareto[pareto_summary$config_id == "r10__d6"]),
+    is.na(pareto_summary$pareto_tolerance_width[pareto_summary$config_id == "r10__d6"]),
+    is.na(pareto_frequency$fraction_metrics_ever_pareto[pareto_frequency$resolution_s == 10L]),
+    pareto_frequency$n_metrics_resolved[pareto_frequency$resolution_s == 10L] == 0L)
+  exported <- readr::read_csv(file.path(OUT, "rq3_pareto_occupancy.csv"), show_col_types = FALSE)
+  stopifnot(all(is.na(exported$sufficient[exported$status == "boundary_unresolved"])))
   endpoint <- pareto_occupancy |> filter(terminal_endpoint, config_id == "r120__d1")
   stopifnot(nrow(endpoint) == 1L, endpoint$pareto, endpoint$sufficient,
             endpoint$epsilon_interval_width == 0,
@@ -78,6 +87,33 @@ check_projection <- function(A) {
 }
 check_projection(.5)
 check_projection(0)
+
+# Execute the single-axis producer and query its frozen decisions as Fig. 5
+# does. Include a non-threshold-like set, an upper boundary and exact endpoints.
+local({
+  single <- tibble(dimension="duration", comparison_lattice="duration", metric="synthetic",
+    metric_class="level", metric_geometry="linear", state_id=paste0("duration_",1:4,"d"),
+    requirement_rank=1:4, R_obs=c(.1,.8,.2,NA_real_),
+    status=c(rep("resolved",3),"boundary_unresolved"))
+  NUMERIC_TOL <- 1e-12
+  code <- parse("scripts/14_rq3_analysis.R")
+  for (name in c("sufficiency_long", "single_requirement")) {
+    expr <- Filter(function(e) is.call(e) && identical(e[[1]],as.name("<-")) &&
+      identical(e[[2]],as.name(name)), as.list(code))
+    stopifnot(length(expr)==1L); eval(expr[[1]])
+  }
+  stopifnot(all(is.na(sufficiency_long$sufficient[sufficiency_long$status=="boundary_unresolved"])))
+  plot_code <- parse("scripts/15a_plot_fig5.R")
+  helper <- Filter(function(e) is.call(e) && identical(e[[1]],as.name("<-")) &&
+    identical(e[[2]],as.name("fig5_requirement_lookup")), as.list(plot_code))
+  stopifnot(length(helper)==1L); eval(helper[[1]])
+  frozen <- single_requirement |>
+    left_join(select(single,state_id,requirement_rank),
+      by=c("least_demanding_sufficient_state"="state_id")) |>
+    rename(minimum_rank=requirement_rank)
+  ranks <- fig5_requirement_lookup(frozen,c(0,.1,.2,.5,.8,1))
+  stopifnot(identical(ranks,c(NA_real_,NA_real_,NA_real_,NA_real_,1,1)))
+})
 
 # A task frontier is the intersection of its required targets, not the union or
 # majority of their individual frontiers. Missing targets cannot silently pass.
@@ -134,8 +170,14 @@ stopifnot(z$sufficient[z$config_id == "r120__d1"],
 # No production figure entrypoint, device, rendering or file save is invoked.
 published_classes <- readxl::read_excel("external/zauner_position/data/metric_types.xlsx")$metric_type
 stopifnot(all(c("level", "timing", "temporal dynamics") %in% published_classes))
+source("scripts/utils/figure_style.R")
 source("scripts/utils/fig6_redesign.R")
-plot_tasks <- rq3_task_projection(task_joint, inventory,
+source("scripts/utils/analysis_design.R")
+# The rejected neighbour is limited by dose (tied with MDER for all targets),
+# while dose is NOT limiting at the sufficient frontier cells.
+plot_joint <- task_joint |> mutate(R_obs = if_else(config_id == "r120__d1" &
+  metric %in% c("dose", "MDER"), .8, R_obs))
+plot_tasks <- rq3_task_projection(plot_joint, inventory,
   list(level = c("mean_MEDI", "dose"), `temporal dynamics` = "crossings",
        all_targets = inventory$metric))$frontiers |>
   filter(placement == "eye", optical == "MEDI", epsilon_interval_start <= .4,
@@ -143,25 +185,54 @@ plot_tasks <- rq3_task_projection(task_joint, inventory,
   mutate(resolution_rank = match(resolution_s, c(120, 60, 10)),
          task_id = factor(task_id, levels = c("level", "temporal dynamics", "all_targets")),
          nominal_sample_reduction = (6 / 10) / (n_days / resolution_s))
+raw_plot_tasks <- plot_tasks
+plot_tasks <- ms_fig6_task_explanation(raw_plot_tasks, inventory)
+front <- plot_tasks |> filter(task_id == "level", pareto %in% TRUE)
+stopifnot(front$shorter_blocking_targets[front$n_days == 2] == "dose",
+  front$coarser_blocking_targets[front$resolution_s == 60] == "dose",
+  all(front$limiting_targets == "mean_MEDI"),
+  all(is.na(front$shorter_blocker_key[front$n_days == 1])),
+  all(front$shorter_status[front$n_days == 1] == "outside_domain"),
+  all(front$coarser_status[front$resolution_s == 120] == "outside_domain"),
+  all(plot_tasks$coarser_status[plot_tasks$resolution_s == 10] == "not_observed"),
+  identical(plot_tasks[c("status", "sufficient", "pareto")],
+            raw_plot_tasks[c("status", "sufficient", "pareto")]))
+for (neighbour_status in c("boundary_unresolved", "unavailable")) {
+  unknown <- raw_plot_tasks |> mutate(
+    status = if_else(config_id == "r120__d1", neighbour_status, status),
+    sufficient = if_else(config_id == "r120__d1", NA, sufficient)) |>
+    ms_fig6_task_explanation(inventory)
+  stopifnot(all(is.na(unknown$shorter_blocker_key)), all(is.na(unknown$coarser_blocker_key)))
+}
 plot_env <- new.env(parent = environment())
 plot_env$tasks <- plot_tasks
 plot_env$base <- ggplot2::theme_void()
 plot_env$lattice_axes <- list()
 plot_env$unresolved <- "#E1E5E7"
 plot_env$muted <- "#657078"
+plot_env$ink <- "#30363B"
+plot_env$MS_METRIC_CLASSES <- unique(inventory$metric_class)
+plot_env$MS_METRIC_COLORS <- stats::setNames(c("green", "orange", "red"), plot_env$MS_METRIC_CLASSES)
 for (expr in as.list(body(ms_fig6_redesign))[-1L]) {
   if (is.call(expr) && identical(expr[[1L]], as.name("<-")) &&
       paste(deparse(expr[[2L]]), collapse = "") %in%
-        c("tasks$decision", "task_names", "tasks$task_label", "b")) eval(expr, plot_env)
+        c("tasks$decision", "task_names", "tasks$task_label", "comparison_frontier",
+          "blocker_key", "blocker_caption", "b")) eval(expr, plot_env)
 }
 panel <- ggplot2::ggplot_build(plot_env$b)
 stopifnot(nrow(panel$data[[1L]]) == nrow(plot_tasks),
   length(unique(panel$data[[1L]]$PANEL)) == 3L,
   nrow(panel$data[[2L]]) == sum(plot_tasks$pareto, na.rm = TRUE),
   nrow(panel$data[[3L]]) == sum(plot_tasks$status != "resolved"),
+  nrow(panel$data[[4L]]) == sum(plot_tasks$pareto[plot_tasks$task_id != "all_targets"], na.rm = TRUE),
+  nrow(panel$data[[5L]]) == sum(!is.na(plot_tasks$shorter_blocker_key)),
+  nrow(panel$data[[6L]]) == sum(!is.na(plot_tasks$coarser_blocker_key)),
+  setequal(plot_env$blocker_key$targets, c("dose", "crossings", "MDER;dose")),
+  grepl("MDER + dose", plot_env$blocker_caption, fixed = TRUE),
   all(panel$data[[2L]]$label == "36\u00d7"),
   identical(levels(plot_env$tasks$task_label),
-            c("Level (2 targets)", "Temporal dynamics (1 targets)", "All targets (4 targets)")),
+            c("Level\n2 targets\nStarting goal", "Temporal dynamics\n1 targets\nvs Level",
+              "All targets\n4 targets\nvs Temporal dynamics")),
   identical(plot_env$tasks[c("status", "sufficient", "pareto")],
             plot_tasks[c("status", "sufficient", "pareto")]))
 cat("RQ3 maximal-support, task-set completeness and sufficient/Pareto contracts passed\n")

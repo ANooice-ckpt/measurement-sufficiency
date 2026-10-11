@@ -94,7 +94,7 @@ RQ2_VERSION <- ms_plot_one_version(c(condition_rq2, conditional$rq2_analysis_ver
                                    "rq2_analysis_version")
 CORE_VERSION <- ms_plot_assert_core(c(condition_core, conditional$core_artifact_version,
                                      model_manifest$core_artifact_version, gamma_long$core_artifact_version))
-ms_plot_assert_prefix(RQ1_VERSION, "rq1_v5_", "rq1_analysis_version")
+ms_plot_assert_prefix(RQ1_VERSION, "rq1_v6_", "rq1_analysis_version")
 ms_plot_assert_prefix(RQ2_VERSION, "rq2_v5_", "rq2_analysis_version")
 if (is.list(condition) && !is.null(condition$analysis_design_id) &&
     !identical(as.character(condition$analysis_design_id[[1]]), ms_analysis_design_id())) {
@@ -594,7 +594,7 @@ add_row_guides <- function(p) {
 }
 
 p_labels <- ggplot(predictor_order, aes(y = y)) +
-  geom_text(aes(x = .955, label = label), hjust = 1, size = 1.38, colour = "#34383B") +
+  geom_text(aes(x = .955, label = label), hjust = 1, size = MS_FIG_DENSE_PT / ggplot2::.pt, colour = "#30363B") +
   geom_point(aes(x = .995, colour = predictor_family), size = .70, alpha = .95) +
   scale_colour_manual(values = PREDICTOR_COLORS, drop = FALSE, guide = "none") +
   scale_x_continuous(limits = c(0, 1), expand = expansion(mult = c(0, 0))) +
@@ -624,7 +624,7 @@ p_strength <- ggplot(predictor_order, aes(fill = predictor_family)) +
   ) +
   scale_fill_manual(values = PREDICTOR_COLORS, drop = FALSE, guide = "none") +
   scale_x_continuous(
-    limits = c(0, overall_limit), breaks = scales::breaks_extended(n = 3),
+    limits = c(0, overall_limit), breaks = c(0, overall_limit), labels = function(x) format(signif(x, 2), trim=TRUE),
     expand = expansion(mult = c(0, .02))
   ) +
   scale_y_continuous(limits = predictor_y_limits, expand = expansion(mult = c(0, 0))) +
@@ -655,7 +655,7 @@ predictor_legend <- cowplot::get_legend(
     guides(colour = guide_legend(title = NULL, nrow = 1, byrow = TRUE)) +
     theme_void(base_family = MS_FONT) +
     theme(
-      legend.position = "bottom", legend.text = element_text(size = 4.00),
+      legend.position = "bottom", legend.text = element_text(size = MS_FIG_LEGEND_PT),
       legend.key.width = grid::unit(2.3, "mm"), legend.spacing.x = grid::unit(.45, "mm"),
       legend.margin = margin(0, 0, 0, 0)
     )
@@ -673,8 +673,8 @@ dimension_legend <- cowplot::get_legend(
     guides(shape = guide_legend(title = "dimension fingerprint", nrow = 1, byrow = TRUE)) +
     theme_void(base_family = MS_FONT) +
     theme(
-      legend.position = "bottom", legend.text = element_text(size = 3.75),
-      legend.title = element_text(size = 3.75, colour = "#666A6D"),
+      legend.position = "bottom", legend.text = element_text(size = MS_FIG_LEGEND_PT),
+      legend.title = element_text(size = MS_FIG_LEGEND_PT, colour = "#30363B"),
       legend.key.width = grid::unit(2.2, "mm"), legend.spacing.x = grid::unit(.40, "mm"),
       legend.margin = margin(0, 0, 0, 0)
     )
@@ -828,11 +828,9 @@ theme_dense <- function() theme_ms_axes(base_size = 6, legend_position = "none")
     strip.text = element_text(size = 6, face = "bold"), axis.text = element_text(size = 5.4),
     plot.title = element_text(size = 7, face = "bold"), plot.subtitle = element_text(size = 5.2),
     plot.margin = margin(3, 4, 3, 4))
-section <- function(plot, title, subtitle, header = .15, bottom = 0) ggdraw() +
-  draw_plot(plot, 0, bottom, 1, 1 - header - bottom) +
-  draw_label(title, x = .012, y = .995, hjust = 0, vjust = 1, size = 7.4, fontface = "bold", fontfamily = MS_FONT) +
-  draw_label(subtitle, x = .012, y = 1 - header * .48, hjust = 0, vjust = 1,
-    size = 5.1, colour = "#666A6D", fontfamily = MS_FONT)
+section <- function(plot, title, subtitle = NULL, header = NULL, bottom = NULL) {
+  ms_panel_frame(ms_style_plot(plot), title)
+}
 
 # Every metric is visible. Smooth, zero-preserving display transforms retain
 # tails without clipping or using different windows for different dimensions.
@@ -850,9 +848,6 @@ p_shift <- ggplot(conditional_shift_path_metric,
   scale_x_continuous(trans = scales::pseudo_log_trans(sigma = .025), breaks = c(-.5, -.1, 0, .1, .5)) +
   scale_y_continuous(trans = scales::pseudo_log_trans(sigma = .05), breaks = c(-1, -.2, 0, .2, 1)) +
   labs(x = expression(Delta*A~"relative to low state"), y = expression(Delta*(B/A))) + theme_dense()
-p2b <- section(p_shift, "b  Exposure state modulates distortion",
-  "Low \u2192 middle (circle) \u2192 high (diamond); lines = metric-class medians", .13)
-
 # Full CV distributions replace the selected top-eight showcase. Exposure-state
 # and joint models are explanatory and are not deployable recovery models.
 cv_display <- performance |> filter(validation_scheme == "participant_grouped", is.finite(r2)) |>
@@ -910,29 +905,31 @@ gamma_panel <- function(field) {
       colour = "#879198", stroke = .3) +
     facet_grid(~block, scales = "free_x", space = "free_x") +
     {if (field == "Q") scale_fill_gradientn(colours = c("#F2F6F7", "#B4CBD9", "#5E91B0", "#254F6D"),
-      trans = scales::pseudo_log_trans(sigma = .015), limits = c(0, limit), breaks = c(0, .03, .1, .3), name = "Median Q", na.value = "#E5E8EA")
+      trans = scales::pseudo_log_trans(sigma = .015), limits = c(0, limit), breaks = c(0, .03, .1, .3), name = "Median\nQ", na.value = "#E5E8EA")
       else scale_fill_gradient2(low = "#31678C", mid = "#F5F5F0", high = "#B66A30",
-        limits = c(-limit, limit), breaks = c(-limit, 0, limit), labels = function(x) signif(x, 2), name = "Median R/Q", na.value = "#E5E8EA")} +
+        limits = c(-limit, limit), breaks = c(-limit, 0, limit), labels = function(x) signif(x, 2), name = "Median\nR/Q", na.value = "#E5E8EA")} +
     labs(x = NULL, y = NULL) + theme_dense() +
     theme(panel.grid = element_blank(), axis.line = element_blank(), axis.ticks = element_blank(),
       axis.text.y = element_text(size = 5.4), strip.text = element_text(size = 5),
       panel.spacing.x = unit(1.4, "mm"), legend.position = "right", legend.title = element_text(size = 4.9),
       legend.text = element_text(size = 4.7), legend.key.height = unit(4, "mm"), legend.key.width = unit(2, "mm"))
 }
-gamma_body <- plot_grid(gamma_panel("Q"), gamma_panel("C"), ncol = 1, align = "v", axis = "lr")
-p2d <- section(gamma_body, "c  Where do configuration effects interact?",
-  "Class medians: magnitude (top), coherence (bottom); crosses = unavailable", .15, bottom = .065)
-right_column <- plot_grid(p2b, p2d, ncol = 1, rel_heights = c(.53, .47))
-main_body <- plot_grid(p2a, right_column, ncol = 2, rel_widths = c(.49, .51))
-legends <- plot_grid(predictor_legend, dimension_legend, ms_metric_legend(text_size = 5.3),
-  ncol = 1, rel_heights = c(1, 1, 1))
-foot <- ggdraw() + draw_label(paste0(
-  "State-conditioned explanation includes high-information exposure state; it is excluded from reliability prediction in Fig. 4.\n",
-  "c: placement \u00d7 optical steps 1/2 = chest/wrist; temporal steps 1\u20135 = 120\u219260, 60\u219240, 40\u219230, 30\u219220, 20\u219210 s.\n",
-  "Display summaries weight metrics equally. IQRs describe metric heterogeneity, not confidence intervals."),
-  x = .015, hjust = 0, size = 5.1, colour = "#626A70", fontfamily = MS_FONT)
-p2 <- plot_grid(main_body, legends, foot, ncol = 1, rel_heights = c(1, .07, .06))
-ms_plot_save(p2, file.path(OUT_DIR, "Fig2_RQ2.png"), 7.40, 6.88)
+# Align the fields within the right column before adding identical title bands.
+gamma_fields <- cowplot::align_plots(ms_style_plot(p_shift),
+  ms_style_plot(gamma_panel("Q"),dense=TRUE),ms_style_plot(gamma_panel("C"),dense=TRUE),
+  align="v",axis="lr")
+p2b <- ms_panel_frame(gamma_fields[[1]],"b  Exposure-state dependence")
+gamma_body <- plot_grid(gamma_fields[[2]],gamma_fields[[3]],ncol=1,rel_heights=c(1,1))
+p2d <- ms_panel_frame(gamma_body,"c  Cross-axis non-additivity",style=FALSE)
+right_column <- plot_grid(p2b,p2d,ncol=1,rel_heights=c(.52,.48))
+main_body <- plot_grid(p2a,right_column,ncol=2,rel_widths=c(.52,.48))
+legends <- plot_grid(predictor_legend,dimension_legend,ms_metric_legend(),
+  ncol=1,rel_heights=c(1,1,1))
+foot <- ggdraw()+draw_label(
+  "c: steps 1–5 = 120→60, 60→40, 40→30, 30→20, 20→10 s; × = unavailable. Bars: metric IQRs.",
+  x=.012,hjust=0,size=MS_FIG_DENSE_PT,colour="#30363B",fontfamily=MS_FONT)
+p2 <- plot_grid(main_body,legends,foot,ncol=1,rel_heights=c(1,.08,.035))
+ms_plot_save(p2,file.path(OUT_DIR,"Fig2_RQ2.png"),MS_FIG_WIDTH_IN,7.5)
 ms_plot_save(section(p_cv, "Which information predicts distortion?",
   "Participant-grouped CV; descriptive context includes reference exposure state", .16),
   file.path(OUT_DIR, "FigS_RQ2_context_predictability.png"), 7.4, 3.0)

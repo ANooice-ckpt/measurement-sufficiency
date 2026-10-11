@@ -1,3 +1,7 @@
+> 2026-10-11 maintenance note: the historical `--legacy-run` branch and old
+> estimator tests mentioned below are now retired. Active shared-input checks
+> remain in `validate_recovery_paths.R`; the report below records the earlier redesign.
+
 # RQ2 后半部分：独立重构与实验报告
 
 日期：2026-09-14。完整方法见 [RQ2_CONDITIONAL_RELIABILITY.md](RQ2_CONDITIONAL_RELIABILITY.md)，

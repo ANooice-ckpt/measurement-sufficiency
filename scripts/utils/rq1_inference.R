@@ -8,7 +8,7 @@ if (!exists("rq1_pairwise_load", mode = "function")) {
 }
 
 rq1_inference_version <- function(rq1_version) {
-  paste0("rq1_inference_v7_shape_anchor8__", rq1_version)
+  paste0("rq1_inference_v8_geometry_anchor8__", rq1_version)
 }
 
 rq1_inference_anchor_map <- function() {
@@ -376,6 +376,10 @@ rq1_association_signal <- function(xr, xc, y, participant, br, bc) {
   # pair. This is a directional design-space loss, invariant to clock rotation,
   # not a circular correlation or an additional exposure-outcome model.
   shape_loss <- sum(qr.resid(qr(wc), wr)^2) / sum(wr^2)
+  # Equal-rank FE designs: ||P_c - P_r||_2 is the sine of the largest
+  # principal angle. Thin QR/SVD avoids constructing day-by-day projectors.
+  overlap <- svd(crossprod(qr.Q(qr(wr)), qr.Q(qr(wc))), nu = 0L, nv = 0L)$d
+  kappa <- sqrt(max(0, 1 - min(1, min(overlap))^2))
   ur <- demean(as.numeric(xr %*% br))
   uc <- demean(as.numeric(xc %*% bc))
   yy <- demean(y)
@@ -386,6 +390,8 @@ rq1_association_signal <- function(xr, xc, y, participant, br, bc) {
   tibble::tibble(
     rho_within = if (ncol(wr) == 1L) stats::cor(wr[, 1L], wc[, 1L]) else NA_real_,
     within_shape_loss = max(0, min(1, shape_loss)),
+    within_linear_gain = if (ncol(wr) == 1L) sum(wr * wc) / sum(wr^2) else NA_real_,
+    signal_geometry_bound = kappa,
     signal_reference_rms = sqrt(mean(ur^2)),
     signal_candidate_rms = sqrt(mean(uc^2)),
     signal_difference_rms = sqrt(mean((uc - ur)^2)),
@@ -551,6 +557,7 @@ rq1_inference_fit <- function(g, B = 1000L, seed = 20260911L) {
     distortion_within_ms=NA_real_, D_T=NA_real_, f_W=NA_real_,
     distortion_within_rms=NA_real_, distortion_within_fraction=NA_real_)
   signal <- tibble::tibble(rho_within=NA_real_, within_shape_loss=NA_real_,
+    within_linear_gain=NA_real_, signal_geometry_bound=NA_real_,
     signal_reference_rms=NA_real_, signal_candidate_rms=NA_real_,
     signal_difference_rms=NA_real_, signal_difference_outcome_sd=NA_real_,
     signal_reference_r2=NA_real_, signal_candidate_r2=NA_real_, signal_correlation=NA_real_)
@@ -623,6 +630,12 @@ rq1_inference_fit <- function(g, B = 1000L, seed = 20260911L) {
   component_blocks$reference_xy <- lapply(sr[block_order], `[[`, "xy")
   component_blocks$candidate_xx <- lapply(sc[block_order], `[[`, "xx")
   component_blocks$candidate_xy <- lapply(sc[block_order], `[[`, "xy")
+  # Fixed full-support signal evaluation for the participant-count experiment.
+  block_rows <- split(seq_len(nrow(good)), good$participant)[component_blocks$participant]
+  component_blocks$reference_candidate_xx <- lapply(block_rows, function(i) {
+    crossprod(scale(xr[i,,drop=FALSE], scale=FALSE), scale(xc[i,,drop=FALSE], scale=FALSE))
+  })
+  component_blocks$outcome_within_ss <- vapply(block_rows, function(i) sum((y[i] - mean(y[i]))^2), numeric(1))
   component_blocks$reference_covariance <- rep(list(matrix(NA_real_,length(terms),length(terms))),nrow(component_blocks))
   weights <- rep(1L, length(sr))
   br <- rq1_inference_solve(sr, weights)

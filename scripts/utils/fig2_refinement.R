@@ -29,9 +29,8 @@ ms_fig2_refine_main <- function(env) {
   names(objects) <- required
   if (any(vapply(objects, is.null, logical(1)))) return(NULL)
 
-  p_labels <- objects$p_labels
-  # Narrow strength column: avoid a terminal tick label intruding into signed effects.
-  p_strength <- objects$p_strength + ggplot2::theme(axis.text.x = ggplot2::element_text(size = 3.1))
+  p_labels <- ms_style_plot(objects$p_labels, dense=TRUE, subpanel=TRUE)
+  p_strength <- ms_style_plot(objects$p_strength, dense=TRUE, subpanel=TRUE)
   coef_summary_all_plot <- objects$coef_summary_all_plot
   coef_summary_dim_plot <- objects$coef_summary_dim_plot
   status_grid <- objects$status_grid
@@ -128,28 +127,17 @@ ms_fig2_refine_main <- function(env) {
         ),
         plot.margin = ggplot2::margin(1.2, .7, 1.0, .7)
       )
-    ms_fig2_add_family_guides(p, family_boundaries)
+    ms_style_plot(ms_fig2_add_family_guides(p, family_boundaries), dense=TRUE, subpanel=TRUE)
   }
 
   p_signed <- make_effect_panel("Signed", "Signed effect")
   p_absolute <- make_effect_panel("Absolute", "Absolute effect")
   p2a_core <- cowplot::plot_grid(
     p_labels, p_strength, p_signed, p_absolute,
-    ncol = 4, rel_widths = c(.23, .12, .325, .325),
+    ncol = 4, rel_widths = c(.34, .14, .26, .26),
     align = "hv", axis = "tblr", greedy = TRUE
   )
-  p2a <- cowplot::ggdraw() +
-    cowplot::draw_plot(p2a_core, x = 0, y = .018, width = 1, height = .912) +
-    cowplot::draw_label(
-      "a  Contextual predictor hierarchy",
-      x = .002, y = .998, hjust = 0, vjust = 1,
-      fontface = "bold", size = 7.0
-    ) +
-    cowplot::draw_label(
-      "Overall median / IQR with dimension fingerprints · shared pseudo-log axes expand near-zero effects",
-      x = .002, y = .968, hjust = 0, vjust = 1,
-      colour = "#666A6D", size = 4.25
-    )
+  p2a <- ms_panel_frame(p2a_core, "a  Contextual predictors", style=FALSE)
 
   list(p2a = p2a)
 }
