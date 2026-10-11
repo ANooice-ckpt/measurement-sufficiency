@@ -153,7 +153,7 @@ core_filter_native_sources <- function(sources, site, support_id) {
   audit <- required |>
     dplyr::left_join(audit, by = c("Id", "placement")) |>
     dplyr::mutate(
-      support_id = support_id, site = site,
+      support_id = support_id, site = .env$site,
       unavailable_reason = dplyr::if_else(is.na(source_available), "required placement source is absent", unavailable_reason),
       source_available = dplyr::coalesce(source_available, FALSE)
     ) |>
