@@ -64,191 +64,280 @@ ms_fig6_task_explanation <- function(tasks, inventory) {
                   coarser_blocker_key = match(coarser_blocking_targets, blocker_sets))
 }
 
-ms_fig6_redesign <- function(entry, tasks, classes, resolution_labels, days, composition,
-                             prep_only = FALSE) {
-  ink <- "#30363B"
-  muted <- "#657078"
-  unresolved <- "#E1E5E7"
-  base <- theme_minimal(base_size = 7, base_family = MS_FONT) +
-    theme(
-      panel.grid = element_blank(), axis.ticks = element_blank(),
-      axis.text = element_text(size = 6.5, colour = ink),
-      axis.title = element_text(size = 7, colour = ink),
-      axis.title.x = element_text(margin = margin(t = 5)),
-      axis.title.y = element_text(margin = margin(r = 5)),
-      strip.text = element_text(size = 7, face = "bold", colour = ink, margin = margin(b = 5)),
-      strip.background = element_blank(),
-      panel.spacing.x = grid::unit(2.4, "mm"),
-      legend.position = "bottom", legend.title = element_text(size = 6.5),
-      legend.text = element_text(size = 6), legend.margin = margin(0, 0, 0, 0),
-      legend.box.margin = margin(0, 0, 0, 0),
-      plot.margin = margin(3, 5, 3, 3)
-    )
-  lattice_axes <- list(
-    scale_x_continuous(breaks = seq_along(resolution_labels), labels = resolution_labels,
-                       limits = c(.5, length(resolution_labels) + .5), expand = expansion(0)),
-    scale_y_continuous(breaks = days, limits = c(min(days) - .5, max(days) + .5), expand = expansion(0))
-  )
+# Select an existing tolerance interval, preserving every frozen decision.
+ms_fig6_frontier_display <- function(frontiers, epsilon = .50) {
+  frontiers |>
+    dplyr::filter(optical == "MEDI",
+      epsilon_interval_start <= epsilon,
+      epsilon_interval_end > epsilon | (terminal_endpoint & epsilon_interval_end >= epsilon)) |>
+    dplyr::group_by(task_id, placement, optical, config_id) |>
+    dplyr::slice_max(epsilon_interval_start, n = 1, with_ties = FALSE) |>
+    dplyr::ungroup() |>
+    dplyr::mutate(epsilon_display = epsilon,
+      scheduled_records_saved = 100 * (1 - (n_days / resolution_s) / (6 / 10)))
+}
 
-  # a: global joint geometry. Use the range of the displayed medians, not the
-  # unplotted individual-metric tail; numbers retain exact reading precision.
-  entry$display_label <- ifelse(entry$cell_unresolved, "U",
-                                 ifelse(is.finite(entry$epsilon_entry_median), sprintf("%.2f", entry$epsilon_entry_median), "NA"))
-  entry$heading <- "Median entry tolerance"
-  entry_max <- max(entry$epsilon_entry_median[!entry$cell_unresolved], na.rm = TRUE)
-  a <- ggplot(entry, aes(resolution_rank, n_days)) +
-    geom_tile(aes(fill = epsilon_entry_median), width = .97, height = .97, colour = "white", linewidth = .35) +
-    geom_tile(data = entry[entry$cell_unresolved, ], fill = unresolved, width = .97, height = .97) +
-    geom_text(aes(label = display_label,
-                  colour = !cell_unresolved & is.finite(epsilon_entry_median) & epsilon_entry_median > .63 * entry_max),
-              size = 2.25, show.legend = FALSE) +
-    scale_colour_manual(values = c(`FALSE` = ink, `TRUE` = "white")) +
-    scale_fill_gradientn(colours = c("#F5F1E9", "#DCC8A3", "#AA7E45", "#704B2B"),
-                          limits = c(0, entry_max), na.value = unresolved,
-                          breaks = c(0, .25, .50, .75), name = "Entry tolerance") +
-    facet_wrap(~heading) + lattice_axes +
-    labs(x = "Sampling interval", y = "Monitoring duration (days)") + base +
-    guides(fill = guide_colorbar(title.position = "top", barwidth = grid::unit(32, "mm"),
-                                 barheight = grid::unit(2, "mm")))
+ms_fig6_composition_display <- function(states, epsilon = .25) {
+  states |>
+    dplyr::mutate(epsilon_display = epsilon,
+      # Membership in the already frozen half-open failure interval.
+      failure_at_slice = dplyr::if_else(composition_resolved,
+        ever_composition_failure & failure_interval_start <= epsilon &
+          failure_interval_end > epsilon, NA))
+}
 
-  # b: preserve every required target, rather than counting how frequently an
-  # individually optimal state occurs. Sufficiency and Pareto flags are frozen.
-  tasks$decision <- factor(ifelse(is.na(tasks$sufficient), NA_character_,
-    ifelse(tasks$pareto, "Pareto", ifelse(tasks$sufficient, "Sufficient", "Not sufficient"))),
-    levels = c("Not sufficient", "Sufficient", "Pareto"))
-  task_names <- c(level = "Level", `temporal dynamics` = "Temporal dynamics", all_targets = "All targets")
-  tasks$task_label <- paste0(unname(task_names[as.character(tasks$task_id)]), "\n", tasks$n_required, " targets",
-    ifelse(tasks$task_id == "level", "\nStarting goal",
-           ifelse(tasks$task_id == "temporal dynamics", "\nvs Level", "\nvs Temporal dynamics")))
-  tasks$task_label <- factor(tasks$task_label, levels = unique(tasks$task_label[order(tasks$task_id)]))
-  # Overlay every frozen comparison-frontier cell; no point matching or implied
-  # unique optimum. Level -> dynamics changes goals; dynamics -> all adds targets.
-  comparison_frontier <- tasks |>
-    dplyr::distinct(task_id, task_label, comparison_task) |>
-    dplyr::filter(!is.na(comparison_task)) |>
-    dplyr::inner_join(tasks |> dplyr::filter(pareto %in% TRUE) |>
-      dplyr::transmute(comparison_task = as.character(task_id), resolution_rank, n_days),
-      by = "comparison_task", relationship = "many-to-many")
-  blocker_key <- dplyr::bind_rows(
-    tasks |> dplyr::transmute(key = shorter_blocker_key, targets = shorter_blocking_targets),
-    tasks |> dplyr::transmute(key = coarser_blocker_key, targets = coarser_blocking_targets)) |>
-    dplyr::filter(!is.na(key)) |> dplyr::distinct() |> dplyr::arrange(key)
-  blocker_caption <- if (nrow(blocker_key)) paste0(
-    "D: one fewer day; S: next slower interval; +: tied maxima.\n",
-    stringr::str_wrap(paste0(blocker_key$key, ": ", gsub("_", " ", gsub(";", " + ", blocker_key$targets)),
-                            collapse = ";  "), width = 100)) else NULL
-  b <- ggplot(tasks, aes(resolution_rank, n_days)) +
-    geom_tile(aes(fill = decision), colour = "white", width = .97, height = .97, linewidth = .3) +
-    geom_text(data = tasks[which(tasks$sufficient & tasks$pareto), ],
-      aes(label = sprintf("%g\u00d7", nominal_sample_reduction)),
-      colour = "white", size = 2, fontface = "bold") +
-    geom_text(data = tasks[tasks$status != "resolved", ],
-      aes(label = ifelse(status == "unavailable", "NA", "U")), size = 2, colour = muted) +
-    geom_tile(data = comparison_frontier, fill = NA, colour = ink, linetype = "22",
-              width = .89, height = .89, linewidth = .35) +
-    geom_text(data = tasks[!is.na(tasks$shorter_blocker_key), ],
-      aes(y = n_days - .30, label = paste0("D", shorter_blocker_key)),
-      colour = "white", size = 1.85) +
-    geom_text(data = tasks[!is.na(tasks$coarser_blocker_key), ],
-      aes(y = n_days + .30, label = paste0("S", coarser_blocker_key)),
-      colour = "white", size = 1.85) +
-    scale_fill_manual(values = c(`Not sufficient` = "#FCFDFD", Sufficient = "#CCDDE0", Pareto = "#5F8B9E"),
-                      na.value = unresolved, drop = FALSE, name = NULL) +
-    facet_wrap(~task_label, nrow = 1) + lattice_axes +
-    labs(x = "Sampling interval", y = NULL, caption = paste0(
-      "Eye/MEDI; dashed boxes: comparison frontier.\n", blocker_caption)) + base +
-    theme(legend.box = "vertical", legend.spacing.y = grid::unit(1, "mm"),
-          plot.caption = element_text(size = 5.2, hjust = 0, colour = ink, lineheight = 1.05),
-          legend.key.width = grid::unit(4, "mm"), legend.key.height = grid::unit(2.5, "mm")) +
-    guides(fill = guide_legend(nrow = 1))
+# Project frozen tolerance intervals; never infer a new sufficient or Pareto set.
+ms_fig6_tolerance_display <- function(frontiers, domain = c(.05, 1)) {
+  z <- frontiers |>
+    dplyr::filter(optical == "MEDI", epsilon_interval_end >= domain[1],
+      epsilon_interval_start <= domain[2]) |>
+    dplyr::mutate(x_start = pmax(epsilon_interval_start, domain[1]),
+      x_end = pmin(epsilon_interval_end, domain[2]),
+      records_saved = 100 * (1 - (n_days / resolution_s) / (6 / 10)))
+  savings <- z |>
+    dplyr::group_by(task_id, placement, optical, epsilon_interval_start,
+      epsilon_interval_end, x_start, x_end, terminal_endpoint) |>
+    dplyr::summarise(n_pareto = sum(pareto %in% TRUE),
+      savings_low = if (any(pareto %in% TRUE)) min(records_saved[pareto %in% TRUE]) else NA_real_,
+      savings_high = if (any(pareto %in% TRUE)) max(records_saved[pareto %in% TRUE]) else NA_real_,
+      .groups = "drop")
+  allocations <- z |>
+    dplyr::filter(task_id == "all_targets", pareto %in% TRUE)
+  list(savings = savings, allocations = allocations)
+}
 
-  # c: re-express all four original 6 x 6 class fields as discrete-day profiles.
-  # Heavy endpoint cadences reveal sampling sensitivity; middle cadences remain
-  # visible without four more redundant heatmaps. Segments only connect observed
-  # states. No envelope, fitted trend or new class statistic is calculated.
-  classes$cadence <- ifelse(classes$resolution_rank == 1, "120 s",
-                            ifelse(classes$resolution_rank == length(resolution_labels), "10 s", "20-60 s"))
-  classes$cadence <- factor(classes$cadence, levels = c("120 s", "10 s", "20-60 s"))
-  c <- ggplot(classes, aes(n_days, suff_fraction, group = resolution_rank, colour = metric_class)) +
-    geom_hline(yintercept = c(0, .5, 1), colour = "#E8ECEE", linewidth = .20) +
-    geom_line(data = classes[classes$cadence == "20-60 s", ], linewidth = .35, alpha = .32, na.rm = TRUE) +
-    geom_line(data = classes[classes$cadence != "20-60 s", ], aes(linetype = cadence), linewidth = .60, na.rm = TRUE) +
-    geom_point(data = classes[classes$cadence != "20-60 s", ], aes(shape = cadence), size = 1.45, stroke = .45, fill = "white", na.rm = TRUE) +
-    facet_wrap(~class_label, nrow = 1) +
-    scale_colour_manual(values = MS_METRIC_COLORS, guide = "none") +
-    scale_linetype_manual(values = c(`120 s` = "solid", `10 s` = "22"), breaks = c("120 s", "10 s"), name = "Sampling interval") +
-    scale_shape_manual(values = c(`120 s` = 16, `10 s` = 21), breaks = c("120 s", "10 s"), name = "Sampling interval") +
-    scale_x_continuous(breaks = days, limits = range(days) + c(-.15, .15), expand = expansion(0)) +
-    scale_y_continuous(breaks = c(0, .5, 1), labels = scales::label_percent(accuracy = 1),
-                       limits = c(0, 1), expand = expansion(add = .04)) +
-    labs(x = "Monitoring duration (days)", y = "Metrics sufficient") + base +
-    guides(linetype = guide_legend(title.position = "left", nrow = 1),
-           shape = guide_legend(title.position = "left", nrow = 1))
+# Tabulate existing decisions at the evaluated tolerance slices. Missing frozen
+# intervals remain explicit: a terminal endpoint is not permission to extrapolate.
+ms_fig6_matrix_display <- function(frontiers, tolerances = c(.05, .1, .2, .25, .3, .5, 1)) {
+  keys <- frontiers |> dplyr::filter(optical == "MEDI") |>
+    dplyr::distinct(task_id, placement, optical, n_required)
+  cells <- lapply(tolerances, function(eps) {
+    selected <- ms_fig6_frontier_display(frontiers, eps)
+    summary <- selected |> dplyr::group_by(task_id, placement, optical, n_required) |>
+      dplyr::summarise(n_states = dplyr::n(), n_resolved = sum(status == "resolved"),
+        all_unavailable = all(status == "unavailable"),
+        n_pareto = sum(pareto %in% TRUE),
+        savings_low = if (any(pareto %in% TRUE)) min(scheduled_records_saved[pareto %in% TRUE]) else NA_real_,
+        savings_high = if (any(pareto %in% TRUE)) max(scheduled_records_saved[pareto %in% TRUE]) else NA_real_,
+        .groups = "drop")
+    keys |> dplyr::left_join(summary, by = c("task_id", "placement", "optical", "n_required")) |>
+      dplyr::mutate(epsilon = eps, display_status = dplyr::case_when(
+        is.na(n_states) ~ "outside_frozen_domain",
+        all_unavailable ~ "unavailable",
+        n_resolved == 0 ~ "unresolved",
+        n_pareto == 0 ~ "no_sufficient_choice",
+        TRUE ~ "pareto_choices"))
+  }) |> dplyr::bind_rows()
+  stopifnot(!anyDuplicated(cells[c("task_id", "placement", "optical", "epsilon")]))
+  cells
+}
 
-  class_profiles <- c
-  # Counts and sufficiency decisions are frozen by the analysis. This helper
-  # only selects display slices; it does not reconstruct a joint decision.
-  failure_cells <- composition |>
-    dplyr::filter(summary_scope=="cell_all_facets",abs(epsilon-.25)<1e-12) |>
-    dplyr::mutate(resolution_rank=match(resolution_s,rev(ms_primary_temporal_s())),
-      cell_label=dplyr::case_when(n_resolved==0 ~ "U",n_axis_pass==0 ~ "-",
-                                  TRUE ~ paste0(n_failure,"/",n_axis_pass)))
-  failure_map <- ggplot(failure_cells,aes(resolution_rank,n_days)) +
-    geom_tile(aes(fill=failure_rate),width=.97,height=.97,colour="white",linewidth=.2) +
-    geom_text(aes(label=cell_label),size=1.9,colour=ink) +
-    lattice_axes +
-    scale_fill_gradient(low="#F1F5F5",high="#C78257",limits=c(0,1),na.value=unresolved,
-      labels=scales::label_percent(),breaks=c(0,.5,1),name="Joint failures / axis passes") +
-    labs(x="Sampling interval",y="Days",title="Composition failures at epsilon = 0.25") + base +
-    theme(plot.title=element_text(size=6.5,face="bold")) +
-    guides(fill=guide_colorbar(title.position="top",barwidth=grid::unit(30,"mm"),barheight=grid::unit(2,"mm")))
-  failure_curves <- composition |>
-    dplyr::filter(summary_scope=="placement_optical")
-  failure_curve <- ggplot(failure_curves,
-    aes(epsilon,failure_rate,colour=placement,linetype=optical,group=interaction(placement,optical))) +
-    geom_line(linewidth=.45,na.rm=TRUE) + geom_point(size=1.2,na.rm=TRUE) +
-    scale_colour_manual(values=c(eye="#31586A",chest="#B2774F",wrist="#528C87")) +
-    scale_linetype_manual(values=c(MEDI="solid",LIGHT="22")) +
-    scale_y_continuous(limits=c(0,1),breaks=c(0,.5,1),labels=scales::label_percent()) +
-    scale_x_continuous(breaks=c(.05,.25,.5,1)) +
-    labs(x="Tolerance epsilon",y="Joint failures / axis passes",colour="Placement",linetype="Optical",
-         title="Failure across evaluated tolerances") + base +
-    theme(plot.title=element_text(size=6.5,face="bold"))
-  c <- cowplot::plot_grid(failure_map,failure_curve,nrow=1,rel_widths=c(.44,.56))
-  facet_cells <- composition |>
-    dplyr::filter(summary_scope=="cell_placement_optical",abs(epsilon-.25)<1e-12) |>
-    dplyr::mutate(resolution_rank=match(resolution_s,rev(ms_primary_temporal_s())),
-      cell_label=dplyr::case_when(n_resolved==0 ~ "U",n_axis_pass==0 ~ "-",
-                                  TRUE ~ paste0(n_failure,"/",n_axis_pass)))
-  composition_facets <- ggplot(facet_cells,aes(resolution_rank,n_days)) +
-    geom_tile(aes(fill=failure_rate),colour="white") + geom_text(aes(label=cell_label),size=2) +
-    facet_grid(optical~placement) + lattice_axes +
-    scale_fill_gradient(low="#F1F5F5",high="#C78257",limits=c(0,1),na.value=unresolved,
-      labels=scales::label_percent(),name="Failure rate") +
-    labs(x="Sampling interval",y="Days",title="Single-axis composition at epsilon = 0.25",
-      subtitle="Numbers: failures / single-axis passes; U: axis unresolved; -: no axis passes") + base
+ms_fig6_redesign <- function(frontiers, composition, joint) {
+  # All panels query frozen analysis outputs; no diagnostic preview or derived
+  # display CSV is an input to the canonical figure.
+  task_states <- ms_fig6_frontier_display(frontiers, .50)
+  portfolio <- task_states |> dplyr::filter(pareto %in% TRUE)
+  projected <- ms_fig6_tolerance_display(frontiers)
+  savings <- projected$savings
+  failure <- composition |> dplyr::filter(summary_scope == "placement_optical")
+  stopifnot(!anyDuplicated(failure[c("placement", "optical", "epsilon")]),
+    all(is.na(failure$failure_rate[failure$n_axis_pass == 0])),
+    all(abs(failure$failure_rate - failure$n_failure / failure$n_axis_pass) < 1e-10, na.rm = TRUE))
+  all_ink <- "#263B46"
+  palette <- c(MS_METRIC_COLORS, all_targets=all_ink)
+  blue <- "#2C607A"; orange <- "#B46E40"; ink <- "#28343B"; muted <- "#8B989F"
+  place <- function(x) factor(x, c("eye", "chest", "wrist"), c("Eye", "Chest", "Wrist"))
+  cadences <- ms_primary_temporal_s()
+  short <- c(all_targets="All 54", duration="Duration", `exposure history`="History",
+             level="Level", spectrum="Spectrum", `temporal dynamics`="Dynamics", timing="Timing")
+  base_theme <- theme_minimal(base_size=7, base_family=MS_FONT) +
+    theme(panel.grid.minor=element_blank(),
+          panel.grid.major=element_line(colour="#E6EBEE", linewidth=.25),
+          axis.title=element_text(size=7,colour=ink), axis.text=element_text(size=6.4,colour=ink),
+          strip.text=element_text(size=7.5,face="bold",colour=ink),
+          panel.spacing.x=grid::unit(4,"mm"),
+          plot.margin=margin(3,6,3,3), legend.position="none")
 
-  # Align the plotting fields before adding fixed physical title bands.
-  a <- ms_style_plot(a)
-  b <- ms_style_plot(b)
-  failure_map <- ms_style_plot(failure_map, subpanel=TRUE) +
-    labs(title="At epsilon = 0.25")
-  failure_curve <- ms_style_plot(failure_curve, subpanel=TRUE) +
-    labs(title="Across tolerances")
-  left <- cowplot::align_plots(a,failure_map,align="v",axis="l")
-  right <- cowplot::align_plots(b,failure_curve,align="v",axis="lr")
-  aligned <- cowplot::align_plots(left[[1]],right[[1]],align="h",axis="tb")
-  lower <- cowplot::align_plots(left[[2]],right[[2]],align="h",axis="tb")
-  top <- cowplot::plot_grid(ms_panel_frame(aligned[[1]],"a  Joint stability"),
-    ms_panel_frame(aligned[[2]],"b  Target-specific designs (epsilon = 0.50)"),
-    nrow=1,rel_widths=c(.30,.70))
-  c <- cowplot::plot_grid(plotlist=lower,nrow=1,rel_widths=c(.30,.70))
-  note <- cowplot::ggdraw()+cowplot::draw_label(
-    paste0("b: multipliers = sample reduction vs 10 s x 6 d; Level / dynamics: alternative goals; All targets: expanded goal.\n",
-      "U: unresolved; NA: unavailable. c: joint failures / axis passes; -: no axis passes; counts are metric-facet-states."),
-    x=.012,hjust=0,fontfamily=MS_FONT,size=MS_FIG_DENSE_PT,colour=ink)
-  final <- cowplot::plot_grid(top,ms_panel_frame(c,"c  Do single-axis rules compose?",style=FALSE),note,
-    ncol=1,rel_heights=c(.59,.36,.05))
-  list(plot=final,a=a,b=b,c=c,class_profiles=ms_style_plot(class_profiles),
-       composition_facets=ms_style_plot(composition_facets))
+  # Exact shared coordinates have one marker and combined direct labels.
+  points <- portfolio |> mutate(x=match(resolution_s,cadences)) |>
+    group_by(placement,x,n_days) |>
+    summarise(label=paste(unname(short[task_id]),collapse="\n"),
+              all_targets=any(task_id=="all_targets"), n_choices=n(),.groups="drop")
+  stopifnot(sum(points$n_choices)==nrow(portfolio))
+  offsets <- read.table(text="placement x n_days tx ty hj
+  eye 1 4 1.05 5.35 0
+  eye 2 3 1.75 2.50 .5
+  eye 2 4 1.85 4.58 .5
+  eye 3 4 3.25 3.46 .5
+  eye 4 5 4.00 5.55 .5
+  eye 5 3 4.83 3.55 .5
+  eye 6 2 5.88 1.23 1
+  chest 1 4 1.10 3.45 0
+  chest 1 5 1.10 5.58 0
+  chest 3 3 2.80 2.48 .5
+  chest 4 4 4.12 3.43 0
+  chest 4 5 3.75 5.48 .5
+  chest 5 6 5.08 6.47 .5
+  chest 6 2 5.88 1.23 1
+  wrist 1 3 1.12 2.53 0
+  wrist 1 4 1.12 4.05 0
+  wrist 1 5 1.12 5.46 0
+  wrist 4 3 3.63 2.45 .5
+  wrist 4 5 3.62 5.55 .5
+  wrist 5 4 5.20 4.38 .5
+  wrist 5 5 5.38 5.58 .5
+  wrist 6 2 5.85 1.48 1
+  wrist 6 3 5.87 3.18 1", header=TRUE)
+  points <- left_join(points, offsets, by=c("placement","x","n_days")) |>
+    mutate(placement=place(placement))
+  stopifnot(!anyNA(points$tx))
+  pa <- ggplot(points, aes(x,n_days)) +
+    geom_segment(aes(xend=tx,yend=ty),colour="#C4CDD2",linewidth=.28) +
+    geom_point(data=filter(points,!all_targets),size=2.15,shape=21,fill="#98ABB5",colour="white",stroke=.35) +
+    geom_point(data=filter(points,all_targets),size=3.4,shape=21,fill=all_ink,colour="white",stroke=.45) +
+    geom_text(aes(x=tx,y=ty,label=label,hjust=hj),size=2.05,colour=ink,
+              lineheight=.94,fontface=ifelse(points$all_targets,"bold","plain"),family=MS_FONT) +
+    facet_grid(~placement) +
+    scale_x_continuous(breaks=1:6,labels=cadences,limits=c(.65,6.40),expand=c(0,0)) +
+    scale_y_continuous(breaks=1:6,limits=c(.8,6.70),expand=c(0,0)) +
+    labs(x="Sampling interval (s; observed levels)",y="Monitoring days") + base_theme
+
+  # Restore every target bundle's tolerance profile. These are projections of
+  # frozen intervals, with all Pareto savings endpoints retained.
+  bundle_order <- c("duration","exposure history","level","spectrum",
+                    "temporal dynamics","timing","all_targets")
+  profiles <- savings |> arrange(placement,task_id,x_start) |>
+    group_by(placement,task_id) |>
+    mutate(previous_low=lag(savings_low),previous_high=lag(savings_high),previous_end=lag(x_end)) |>
+    ungroup() |> mutate(placement=place(placement),task_id=factor(task_id,bundle_order)) |>
+    filter(n_pareto>0)
+  stopifnot(setequal(as.character(unique(profiles$task_id)),bundle_order))
+  profile_subset <- filter(profiles,task_id!="all_targets")
+  profile_all <- filter(profiles,task_id=="all_targets")
+  selected <- profile_all |> filter(x_start<=.5,x_end>.5) |>
+    mutate(label=sprintf("%.1f%%",savings_low))
+  entries <- profile_all |> group_by(placement) |> summarise(x=min(x_start),.groups="drop")
+  pb2 <- ggplot(profiles,aes(colour=task_id)) +
+    geom_vline(xintercept=.5,colour="#A5AFB5",linewidth=.28,linetype=3) +
+    geom_rect(aes(xmin=x_start,xmax=x_end,ymin=savings_low,ymax=savings_high,fill=task_id),
+              colour=NA,alpha=.12,show.legend=FALSE) +
+    geom_segment(data=profile_subset,aes(x=x_start,xend=x_end,y=savings_low,yend=savings_low),linewidth=.35,alpha=.78) +
+    geom_segment(data=filter(profile_subset,savings_high>savings_low+1e-9),
+                 aes(x=x_start,xend=x_end,y=savings_high,yend=savings_high),linewidth=.30,alpha=.7) +
+    geom_segment(data=filter(profile_subset,is.finite(previous_low),abs(x_start-previous_end)<1e-9),
+                 aes(x=x_start,xend=x_start,y=previous_low,yend=savings_low),linewidth=.3,alpha=.7) +
+    geom_segment(data=filter(profile_subset,is.finite(previous_high),abs(x_start-previous_end)<1e-9),
+                 aes(x=x_start,xend=x_start,y=previous_high,yend=savings_high),linewidth=.3,alpha=.7) +
+    geom_segment(data=profile_all,aes(x=x_start,xend=x_end,y=savings_low,yend=savings_low),linewidth=.85) +
+    geom_segment(data=filter(profile_all,savings_high>savings_low+1e-9),
+                 aes(x=x_start,xend=x_end,y=savings_high,yend=savings_high),linewidth=.65) +
+    geom_segment(data=filter(profile_all,is.finite(previous_low),abs(x_start-previous_end)<1e-9),
+                 aes(x=x_start,xend=x_start,y=previous_low,yend=savings_low),linewidth=.65) +
+    geom_segment(data=filter(profile_all,is.finite(previous_high),abs(x_start-previous_end)<1e-9),
+                 aes(x=x_start,xend=x_start,y=previous_high,yend=savings_high),linewidth=.45) +
+    geom_point(data=selected,aes(x=.5,y=savings_low),size=1.6) +
+    geom_text(data=selected,aes(x=.51,y=savings_low+11,label=label),colour=ink,hjust=0,size=1.95,family=MS_FONT) +
+    geom_point(data=entries,aes(x=x,y=0),inherit.aes=FALSE,shape=25,fill=all_ink,colour=all_ink,size=1.7) +
+    scale_colour_manual(values=palette,breaks=bundle_order,labels=unname(short[bundle_order]),name=NULL) +
+    scale_fill_manual(values=palette,guide="none") +
+    facet_grid(~placement) +
+    scale_x_continuous(breaks=c(.05,.25,.5,.75,1),labels=c(".05",".25",".50",".75","1.00"),
+                       limits=c(.025,1.03),expand=c(0,0)) +
+    scale_y_continuous(breaks=c(0,50,100),limits=c(-5,104),expand=c(0,0)) +
+    labs(x="Tolerance ε",y="Scheduled records\nsaved (%)") + base_theme +
+    theme(strip.text=element_blank(),panel.grid.major.x=element_blank())
+  legend <- get_legend(pb2+theme(legend.position="bottom",legend.text=element_text(size=6),
+                                 legend.key.width=grid::unit(3,"mm"),legend.key.height=grid::unit(2,"mm"),
+                                 legend.margin=margin(0,0,0,0),legend.box.margin=margin(0,0,0,0))+
+                         guides(colour=guide_legend(nrow=1,override.aes=list(linewidth=.8,alpha=1))))
+
+  # Use the existing selected state plus its immediate lower-burden neighbours.
+  # R_task and sufficient flags are read, never recalculated for display.
+  chosen <- portfolio |> filter(task_id=="all_targets")
+  # This accepted layout has one all-target Pareto choice per placement. Fail
+  # explicitly if a future analysis changes this rather than choosing a winner.
+  stopifnot(nrow(chosen)==3L, !anyDuplicated(chosen$placement))
+  query <- bind_rows(
+    chosen |> transmute(placement,optical,resolution_s,n_days,role=3L),
+    chosen |> transmute(placement,optical,resolution_s,n_days=n_days-1L,role=2L),
+    chosen |> transmute(placement,optical,resolution_s=cadences[match(resolution_s,cadences)+1L],n_days,role=1L))
+  state_detail <- task_states |> filter(task_id=="all_targets") |>
+    inner_join(query,by=c("placement","optical","resolution_s","n_days"))
+  metric_detail <- joint |> inner_join(query,by=c("placement","optical","resolution_s","n_days"))
+  stopifnot(nrow(state_detail)==3L*nrow(chosen),
+            all(metric_detail$status=="resolved"),
+            all(state_detail$sufficient[state_detail$role==3] %in% TRUE),
+            all(state_detail$sufficient[state_detail$role!=3] %in% FALSE))
+  check <- metric_detail |> group_by(placement,role) |>
+    summarise(n=n_distinct(metric),rows=n(),maximum=max(R_obs),.groups="drop") |>
+    left_join(state_detail |> select(placement,role,R_task,n_required),by=c("placement","role"))
+  stopifnot(all(check$n==check$n_required),all(check$rows==check$n),all(abs(check$maximum-check$R_task)<1e-10))
+  metric_names <- c(mean_timing_above_1000="Mean timing > 1,000",
+                    mean_timing_above_250="Mean timing > 250",
+                    mean_timing_above_10="Mean timing > 10",
+                    disparity_index="Disparity index")
+  state_detail_export <- state_detail
+  metric_detail_export <- metric_detail
+  stopifnot(all(state_detail$limiting_targets %in% names(metric_names)))
+  state_detail <- state_detail |> mutate(placement=place(placement),
+    description=paste0(resolution_s," s × ",n_days," d  ·  ",unname(metric_names[limiting_targets])))
+  metric_detail <- metric_detail |> mutate(placement=place(placement))
+  stopifnot(!anyNA(state_detail$description))
+  pc2 <- ggplot(metric_detail,aes(R_obs,role)) +
+    annotate("rect",xmin=.5,xmax=1.4,ymin=.5,ymax=3.7,fill="#F6EDE6",alpha=.65) +
+    geom_hline(yintercept=1:3,colour="#E6EBEE",linewidth=.25) +
+    geom_vline(xintercept=.5,linetype=2,colour="#986B4A",linewidth=.4) +
+    geom_point(aes(colour=metric_class),position=position_jitter(width=0,height=.085,seed=246),
+               size=.75,alpha=.62) +
+    geom_point(data=state_detail,aes(x=R_task),shape=18,size=2.05,colour=all_ink) +
+    geom_text(data=state_detail,aes(x=R_task+.035,label=sprintf("%.3f",R_task)),
+              hjust=0,size=1.95,colour=ink,family=MS_FONT) +
+    geom_text(data=state_detail,aes(x=.02,y=role+.32,label=description),
+              hjust=0,size=1.87,colour=ink,family=MS_FONT) +
+    scale_colour_manual(values=palette) + facet_grid(~placement) +
+    scale_x_continuous(limits=c(0,1.4),breaks=c(0,.5,1),expand=c(0,0)) +
+    scale_y_continuous(limits=c(.60,3.64),breaks=1:3,labels=c("Coarser","1 day less","Chosen"),expand=c(0,0)) +
+    labs(x="Residual instability, R",y=NULL) + base_theme +
+    theme(strip.text=element_blank(),panel.grid=element_blank(),axis.text.y=element_text(size=6.0))
+
+  # Keep all optical facets and tolerances; provide exact counts at the .25 slice.
+  ff <- failure |> mutate(placement=place(placement),rate=100*failure_rate,
+                           low_n=n_axis_pass>0 & n_axis_pass<10)
+  count_key <- ff |> filter(epsilon==.25) |>
+    mutate(key_y=ifelse(optical=="MEDI",49,40),key_label=paste0(optical,"  ",n_failure,"/",n_axis_pass))
+  pd2 <- ggplot(ff,aes(epsilon,rate,colour=optical,group=optical)) +
+    geom_vline(xintercept=.5,colour="#A5AFB5",linewidth=.28,linetype=3) +
+    geom_line(aes(linetype=optical),linewidth=.48,na.rm=TRUE) +
+    geom_point(data=filter(ff,n_axis_pass>=10),size=1.4) +
+    geom_point(data=filter(ff,low_n),shape=21,fill="white",size=2,stroke=.65) +
+    geom_point(data=filter(ff,n_axis_pass==0),aes(y=-4),shape=4,size=1.5,stroke=.45) +
+    annotate("text",x=.57,y=57,label="Counts at ε = .25",hjust=0,size=1.8,colour=ink,family=MS_FONT) +
+    geom_segment(data=count_key,aes(x=.56,xend=.62,y=key_y,yend=key_y,linetype=optical),linewidth=.55) +
+    geom_text(data=count_key,aes(x=.65,y=key_y,label=key_label),colour=ink,hjust=0,size=1.8,family=MS_FONT) +
+    geom_text(data=filter(ff,placement=="Chest",low_n),aes(x=.095,y=53,label=paste0(n_failure,"/",n_axis_pass)),
+              colour=ink,hjust=0,size=1.9,family=MS_FONT) +
+    geom_text(data=filter(ff,placement=="Wrist",low_n,optical=="MEDI"),
+              aes(x=.08,y=6,label=paste0(n_failure,"/",n_axis_pass," each")),colour=ink,hjust=0,size=1.8,family=MS_FONT) +
+    scale_colour_manual(values=c(MEDI=blue,LIGHT=orange)) +
+    scale_linetype_manual(values=c(MEDI=1,LIGHT=2)) + facet_grid(~placement) +
+    scale_x_continuous(breaks=c(.05,.25,.5,.75,1),labels=c(".05",".25",".50",".75","1.00"),
+                       limits=c(.025,1.03),expand=c(0,0)) +
+    scale_y_continuous(breaks=c(0,10,25,50),limits=c(-7,62),expand=c(0,0)) +
+    labs(x="Tolerance ε",y="Joint failures among\naxis passes (%)") + base_theme +
+    theme(strip.text=element_blank(),panel.grid.major.x=element_blank())
+
+  fields <- align_plots(pa,pb2,pc2,pd2,align="v",axis="lr")
+  title <- function(label) ggdraw()+draw_label(label,x=.079,hjust=0,y=.5,
+    size=8.2,fontface="bold",fontfamily=MS_FONT,colour=ink)
+  # The accepted main figure has no footnote block. Explanatory definitions live
+  # in FIGURE_ARCHITECTURE and the manuscript caption; axes and keys stay visible.
+  final <- plot_grid(
+    title("a  Target choice changes the sufficient joint design · ε = .50"),fields[[1]],
+    title("b  Tolerance profiles retain differences between target bundles"),fields[[2]],legend,
+    title("c  Which targets prevent another reduction? · ε = .50"),fields[[3]],
+    title("d  Separate-axis sufficiency does not always compose"),fields[[4]],
+    ncol=1,rel_heights=c(.24,2.50,.24,1.40,.23,.24,1.50,.24,1.62))
+  list(plot=final,a=pa,b=pb2,c=pc2,d=pd2,
+    savings=projected$savings,allocations=projected$allocations,failure=failure,
+    design_coordinates=points,state_detail=state_detail_export,metric_detail=metric_detail_export)
 }

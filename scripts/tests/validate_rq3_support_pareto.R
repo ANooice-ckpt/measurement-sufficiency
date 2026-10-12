@@ -204,35 +204,53 @@ for (neighbour_status in c("boundary_unresolved", "unavailable")) {
     ms_fig6_task_explanation(inventory)
   stopifnot(all(is.na(unknown$shorter_blocker_key)), all(is.na(unknown$coarser_blocker_key)))
 }
-plot_env <- new.env(parent = environment())
-plot_env$tasks <- plot_tasks
-plot_env$base <- ggplot2::theme_void()
-plot_env$lattice_axes <- list()
-plot_env$unresolved <- "#E1E5E7"
-plot_env$muted <- "#657078"
-plot_env$ink <- "#30363B"
-plot_env$MS_METRIC_CLASSES <- unique(inventory$metric_class)
-plot_env$MS_METRIC_COLORS <- stats::setNames(c("green", "orange", "red"), plot_env$MS_METRIC_CLASSES)
-for (expr in as.list(body(ms_fig6_redesign))[-1L]) {
-  if (is.call(expr) && identical(expr[[1L]], as.name("<-")) &&
-      paste(deparse(expr[[2L]]), collapse = "") %in%
-        c("tasks$decision", "task_names", "tasks$task_label", "comparison_frontier",
-          "blocker_key", "blocker_caption", "b")) eval(expr, plot_env)
-}
-panel <- ggplot2::ggplot_build(plot_env$b)
-stopifnot(nrow(panel$data[[1L]]) == nrow(plot_tasks),
-  length(unique(panel$data[[1L]]$PANEL)) == 3L,
-  nrow(panel$data[[2L]]) == sum(plot_tasks$pareto, na.rm = TRUE),
-  nrow(panel$data[[3L]]) == sum(plot_tasks$status != "resolved"),
-  nrow(panel$data[[4L]]) == sum(plot_tasks$pareto[plot_tasks$task_id != "all_targets"], na.rm = TRUE),
-  nrow(panel$data[[5L]]) == sum(!is.na(plot_tasks$shorter_blocker_key)),
-  nrow(panel$data[[6L]]) == sum(!is.na(plot_tasks$coarser_blocker_key)),
-  setequal(plot_env$blocker_key$targets, c("dose", "crossings", "MDER;dose")),
-  grepl("MDER + dose", plot_env$blocker_caption, fixed = TRUE),
-  all(panel$data[[2L]]$label == "36\u00d7"),
-  identical(levels(plot_env$tasks$task_label),
-            c("Level\n2 targets\nStarting goal", "Temporal dynamics\n1 targets\nvs Level",
-              "All targets\n4 targets\nvs Temporal dynamics")),
-  identical(plot_env$tasks[c("status", "sufficient", "pareto")],
-            plot_tasks[c("status", "sufficient", "pareto")]))
+# Display selection keeps every frozen state, including unresolved decisions.
+selected <- ms_fig6_frontier_display(raw_plot_tasks, epsilon = .4)
+stopifnot(nrow(selected) == nrow(raw_plot_tasks),
+  identical(selected |> arrange(task_id, config_id) |> select(status, sufficient, pareto),
+            raw_plot_tasks |> arrange(task_id, config_id) |> select(status, sufficient, pareto)))
+# Equal scheduled counts do not collapse distinct cadence/duration designs.
+equal_counts <- tibble(task_id = "level", placement = "eye", optical = "MEDI",
+  config_id = c("r30__d3", "r40__d4", "r20__d1"),
+  resolution_s = c(30, 40, 20), n_days = c(3, 4, 1),
+  epsilon_interval_start = 0, epsilon_interval_end = 1, terminal_endpoint = FALSE,
+  status = c("resolved", "resolved", "unavailable"),
+  sufficient = c(TRUE, TRUE, NA), pareto = c(TRUE, TRUE, NA))
+equal_display <- ms_fig6_frontier_display(equal_counts)
+stopifnot(nrow(equal_display) == 3L, sum(equal_display$pareto %in% TRUE) == 2L,
+  n_distinct(equal_display$scheduled_records_saved[equal_display$pareto %in% TRUE]) == 1L,
+  is.na(equal_display$sufficient[equal_display$config_id == "r20__d1"]),
+  is.na(equal_display$pareto[equal_display$config_id == "r20__d1"]))
+# A frozen failure interval is half-open. Unresolved states retain NA.
+interval_fixture <- tibble(composition_resolved = c(TRUE, TRUE, FALSE, TRUE),
+  ever_composition_failure = c(TRUE, TRUE, FALSE, FALSE),
+  failure_interval_start = c(.1, .25, NA, NA),
+  failure_interval_end = c(.25, .5, NA, NA))
+stopifnot(identical(ms_fig6_composition_display(interval_fixture)$failure_at_slice,
+                    c(FALSE, TRUE, NA, FALSE)))
+# Tolerance displays use only frozen intervals and retain all tradeoff choices.
+interval_choices <- equal_counts |> mutate(task_id = "all_targets",
+  epsilon_interval_start = .1, epsilon_interval_end = .3)
+tolerance_display <- ms_fig6_tolerance_display(interval_choices)
+stopifnot(nrow(tolerance_display$allocations) == 2L,
+  all(tolerance_display$savings$n_pareto == 2L),
+  all(tolerance_display$savings$x_start == .1),
+  all(tolerance_display$savings$x_end == .3),
+  tolerance_display$savings$savings_low == tolerance_display$savings$savings_high)
+no_choice <- ms_fig6_tolerance_display(interval_choices |> mutate(pareto = NA))
+stopifnot(nrow(no_choice$allocations) == 0L, no_choice$savings$n_pareto == 0L,
+  is.na(no_choice$savings$savings_low), is.na(no_choice$savings$savings_high))
+# Matrix cells preserve frozen interval support and keep equal-cost alternatives.
+# A terminal endpoint is included only at its endpoint, never carried forward.
+matrix_choices <- interval_choices |> mutate(n_required = 2L)
+matrix_display <- ms_fig6_matrix_display(matrix_choices, c(.05, .1, .2, .3, .4))
+stopifnot(nrow(matrix_display) == 5L,
+  all(matrix_display$display_status[matrix_display$epsilon %in% c(.05, .3, .4)] == "outside_frozen_domain"),
+  all(matrix_display$n_pareto[matrix_display$epsilon %in% c(.1, .2)] == 2L))
+endpoint <- ms_fig6_matrix_display(matrix_choices |> mutate(terminal_endpoint = TRUE), c(.3, .4))
+stopifnot(endpoint$n_pareto[endpoint$epsilon == .3] == 2L,
+  endpoint$display_status[endpoint$epsilon == .4] == "outside_frozen_domain")
+unknown_matrix <- ms_fig6_matrix_display(matrix_choices |>
+  mutate(status = "boundary_unresolved", sufficient = NA, pareto = NA), .2)
+stopifnot(unknown_matrix$display_status == "unresolved", is.na(unknown_matrix$savings_high))
 cat("RQ3 maximal-support, task-set completeness and sufficient/Pareto contracts passed\n")

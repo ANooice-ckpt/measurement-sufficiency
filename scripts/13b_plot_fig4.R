@@ -16,6 +16,30 @@ fig4_increment_display <- function(scores) {
   out[]
 }
 
+# Use the same training-mean baseline for all three information sources.
+# Pool equally weighted metric losses before taking the ratio; a mean/median
+# of task-specific ratios would estimate a different quantity. A zero-loss
+# baseline has undefined task skill and remains explicit in the display table.
+fig4_skill_display <- function(scores) {
+  d<-data.table::as.data.table(scores)[startsWith(target,"exceed_")]
+  keys<-c("task_index","metric","metric_class","dimension","comparison_pair_id",
+    "support_id","target","repeat_id")
+  stopifnot(!anyDuplicated(d[,c(keys,"state"),with=FALSE]))
+  w<-data.table::dcast(d,task_index+metric+metric_class+dimension+comparison_pair_id+
+    support_id+target+repeat_id~state,value.var="mse")
+  m<-data.table::melt(w,id.vars=c(keys,"null"),
+    measure.vars=c("context","measurement","joint"),
+    variable.name="state",value.name="model_brier")
+  stopifnot(all(is.finite(m$model_brier)),all(is.finite(m$null)),all(m$null>=0))
+  m[,`:=`(epsilon=as.numeric(sub("exceed_","",target)),
+    skill=ifelse(null>0,100*(1-model_brier/null),NA_real_))]
+  p<-m[,.(n_metrics=uniqueN(metric),n_undefined=sum(null==0),
+    model_brier=mean(model_brier),null_brier=mean(null)),
+    by=.(comparison_pair_id,epsilon,repeat_id,state)]
+  p[,skill:=ifelse(null_brier>0,100*(1-model_brier/null_brier),NA_real_)]
+  list(metric=m,profile=p)
+}
+
 fig4_risk_scatter_summary <- function(metric_profiles) {
   d<-data.table::as.data.table(metric_profiles)[startsWith(target,"exceed_") &
     context_group%in%c("Lower","Higher")]
@@ -70,11 +94,17 @@ display[,`:=`(ratio=ifelse(is.finite(raw_A)&raw_A>0,conditional_A/raw_A,NA_real_
 metric<-mp[context_group%in%c("Lower","Higher") & raw_A>1e-8]
 metric[,`:=`(ratio=observed/raw_A,pair=pair_factor(comparison_pair_id))]
 group_colors<-c(Lower="#3A7C88",Middle="#A5ADB2",Higher="#B16C42")
+risk_separation<-dcast(display,pair~context_group,value.var="ratio")
+risk_separation[,high_low:=Higher/Lower]
 pa<-ggplot(display,aes(ratio,pair,colour=context_group,group=pair))+
   geom_vline(xintercept=1,colour="#7D858A",linetype=2,linewidth=.35)+
   geom_line(colour="#BBC3C7",linewidth=.5)+geom_point(size=2.25)+
+  geom_text(data=risk_separation,aes(x=1.53,y=pair,label=sprintf("%.2f×",high_low)),
+    inherit.aes=FALSE,size=MS_FIG_DENSE_PT/ggplot2::.pt,colour="#30363B")+
+  scale_x_continuous(breaks=c(.75,1,1.25),limits=c(.68,1.63))+
   scale_colour_manual(values=group_colors,breaks=c("Lower","Middle","Higher"),labels=c("Lower risk","Middle","Higher risk"))+
-  labs(x="Observed distortion / unstratified distortion",y=NULL)+theme_risk()
+  labs(x="Observed distortion / unstratified distortion",y=NULL,
+    caption="Right-hand numbers: higher / lower context-risk ratio")+theme_risk()
 pa_body<-ms_style_plot(pa)
 
 value_kinds<-c("context_skill","context_increment","capacity_control")
@@ -93,7 +123,7 @@ pb<-ggplot(ci,aes(estimate,pair,colour=kind,group=kind))+
   labs(x="Held-out Brier score improvement (%)",y=NULL)+theme_risk()+guides(colour=guide_legend(ncol=1))
 pb<-ms_style_plot(pb)
 top_aligned<-align_plots(pa_body,pb,align="h",axis="tb")
-pa<-header(top_aligned[[1]],"a  Context and distortion","New participants; training-only risk groups")
+pa<-header(top_aligned[[1]],"a  Context stratifies distortion","Held-out participants; right: higher / lower risk ratio")
 pb<-header(top_aligned[[2]],"b  Added predictive value","Pooled loss ratios; fixed-prediction bootstrap bars + repeat splits")
 
 prof<-as.data.table(z$context_profiles)[startsWith(target,"exceed_") & context_group%in%c("Lower","Higher")]
@@ -118,9 +148,9 @@ risk_scatter<-fig4_risk_scatter_summary(z$metric_profiles)
 cloud<-risk_scatter$cloud
 spread<-risk_scatter$spread
 
-# The main atlas reveals the incremental-value structure before any pooling.
-# Every frozen split remains in `increment`; choose the declared primary split,
-# and mark sign reversals across splits without introducing a hypothesis test.
+# Preserve the complete metric atlas as a supplement. The main panel shows
+# metric heterogeneity at each tolerance without thousands of labelled cells.
+# All summaries below are displays of frozen held-out losses, not new fits.
 increment<-fig4_increment_display(z$task_scores)
 repeat_range<-increment[baseline=="measurement",.(split_min=min(brier_reduction),
   split_max=max(brier_reduction)),by=.(task_index,target)]
@@ -153,18 +183,87 @@ pc<-ggplot(atlas,aes(epsilon,metric,fill=gain))+
     axis.text.y=element_text(size=4.8),axis.text.x=element_text(size=4.8,angle=90,hjust=1,vjust=.5),
     axis.ticks=element_blank(),legend.title=element_text(size=6))+
   guides(fill=guide_colourbar(barwidth=unit(40,"mm"),barheight=unit(2,"mm"),title.position="top"))
-pc<-header(pc,"c  Context value by target and tolerance",
-  "Primary split: measurement (10 df) loss − joint loss; blue = improvement · × = sign changes across splits · grey = unavailable",.07)
+atlas_plot<-pc
+atlas_note<-ggdraw()+draw_label(
+  "Primary split: measurement (10 df) Brier loss − joint loss. Positive values favour added context.\n×: sign changes across three participant-grouped splits; grey: unavailable targets.",
+  x=.012,hjust=0,size=MS_FIG_DENSE_PT,colour="#30363B",fontfamily=MS_FONT)
+atlas_figure<-plot_grid(
+  header(atlas_plot,"Context value by metric and tolerance"),atlas_note,
+  ncol=1,rel_heights=c(1,.055))
+
+increment_profile<-increment[baseline=="measurement",.(
+  n_metrics=uniqueN(metric),
+  median=median(100*brier_reduction),
+  q25=unname(quantile(100*brier_reduction,.25)),
+  q75=unname(quantile(100*brier_reduction,.75))),
+  by=.(comparison_pair_id,epsilon,repeat_id)]
+increment_profile[,pair:=factor(comparison_pair_id,levels=ORDER,
+  labels=c("Chest","Wrist","LIGHT","20 s","30 s","40 s","60 s","120 s"))]
+skill_display<-fig4_skill_display(z$task_scores)
+skill_metric<-skill_display$metric
+skill_profile<-skill_display$profile
+for(d in list(skill_metric,skill_profile)) {
+  d[,pair:=factor(comparison_pair_id,levels=ORDER,
+    labels=c("Chest","Wrist","LIGHT","20 s","30 s","40 s","60 s","120 s"))]
+}
+primary_skill<-skill_profile[repeat_id==1L]
+joint_detail<-skill_metric[repeat_id==1L & state=="joint"]
+setorder(joint_detail,task_index,epsilon)
+skill_floor<- -10
+clipped_skill<-joint_detail[is.finite(skill) & skill<skill_floor,
+  .(n_clipped=.N,minimum_skill=min(skill)),by=.(pair,epsilon)]
+# Fine trajectories preserve every metric/tolerance value. Bold lines show
+# pooled losses and share a common baseline; no recovery percentage is implied.
+pc<-ggplot(primary_skill,aes(epsilon,skill))+
+  geom_hline(yintercept=0,colour="#90999F",linetype=2,linewidth=.3)+
+  geom_line(data=joint_detail,aes(group=task_index),
+    colour="#B3BEC5",linewidth=.22,alpha=.40,na.rm=TRUE)+
+  geom_point(data=joint_detail,colour="#B3BEC5",size=.35,alpha=.5,na.rm=TRUE)+
+  geom_point(data=clipped_skill,aes(x=epsilon,y=-8.9),inherit.aes=FALSE,
+    shape=25,size=1.65,stroke=.25,fill="#8B969D",colour="#657078")+
+  geom_line(aes(colour=state,linetype=state),linewidth=.72)+
+  geom_point(aes(colour=state,shape=state,size=state),stroke=.5,fill="white")+
+  facet_wrap(~pair,ncol=4)+
+  scale_colour_manual(values=c(context="#AD8040",measurement="#658B80",joint=MS_PRIMARY),
+    breaks=c("context","measurement","joint"),
+    labels=c("Context only","Measurement only","Measurement + context"))+
+  scale_linetype_manual(values=c(context="22",measurement="42",joint="solid"),
+    breaks=c("context","measurement","joint"),
+    labels=c("Context only","Measurement only","Measurement + context"))+
+  scale_shape_manual(values=c(context=17,measurement=1,joint=16),
+    breaks=c("context","measurement","joint"),
+    labels=c("Context only","Measurement only","Measurement + context"))+
+  scale_size_manual(values=c(context=1.5,measurement=2.15,joint=1.4),guide="none")+
+  scale_x_log10(breaks=eps,labels=c(".05",".1",".2",".3",".5","1"),
+    expand=expansion(mult=c(.035,.035)))+
+  scale_y_continuous(trans=scales::pseudo_log_trans(sigma=5),
+    breaks=c(-10,0,10,25,50),labels=function(x)paste0(x,"%"),expand=expansion(0))+
+  coord_cartesian(ylim=c(skill_floor,55))+
+  labs(x="Tolerance ε",y="Brier skill vs training mean (higher is better)")+
+  theme_risk()+theme(panel.grid.minor=element_blank(),panel.spacing=unit(3,"mm"),
+    axis.text.x=element_text(size=MS_FIG_DENSE_PT),legend.key.width=unit(8,"mm"))+
+  guides(colour=guide_legend(nrow=1))
+pc<-header(pc,"c  Predictive skill across tolerances and individual metrics")
 foot<-ggdraw()+draw_label(
-  "b: relative Brier improvement; small points: repeat splits. c: absolute Brier reduction × 100.\n×: sign changes across splits; grey: unavailable. All panels retain metric-specific supports.",
+  paste0("c: bold = 100 × (1 − mean model loss / mean baseline loss); equal metric weights, primary held-out split.\n",
+    "Grey = metric detail; signed pseudo-log axis. ▼: ",sum(clipped_skill$n_clipped),
+    " values below −10% (minimum ",sprintf("%.1f%%",min(clipped_skill$minimum_skill)),
+    "); view clipped.\n",
+    sum(!is.finite(joint_detail$skill))," zero-baseline cells have undefined skill. 52 targets; LIGHT: 50."),
   x=.012,hjust=0,size=MS_FIG_DENSE_PT,colour="#30363B",fontfamily=MS_FONT)
 figure<-plot_grid(plot_grid(pa,pb,nrow=1,rel_widths=c(.49,.51)),pc,foot,
-  ncol=1,rel_heights=c(.28,.68,.04))
-ms_plot_save(figure,"results/rq2/Fig4_RQ2.png",MS_FIG_WIDTH_IN,9.0)
+  ncol=1,rel_heights=c(.42,.50,.08))
+ms_plot_save(figure,"results/rq2/Fig4_RQ2.png",MS_FIG_WIDTH_IN,7.0)
+ms_plot_save(atlas_figure,"results/rq2/FigS_RQ2_context_increment_atlas.png",MS_FIG_WIDTH_IN,7.8)
 ms_plot_save(previous_figure,"results/rq2/FigS_RQ2_reliability_profiles.png",7.4,7.7)
 if (!ms_plot_prep_only()) {
   fwrite(cloud,"results/rq2/fig4_tolerance_scatter_display.csv")
   fwrite(spread,"results/rq2/fig4_tolerance_scatter_iqr.csv")
+  fwrite(increment_profile,"results/rq2/fig4_increment_profile_display.csv")
+  fwrite(skill_profile,"results/rq2/fig4_skill_profile_display.csv")
+  fwrite(skill_metric,"results/rq2/fig4_skill_metric_display.csv")
+  fwrite(clipped_skill,"results/rq2/fig4_skill_clipping_display.csv")
+  fwrite(risk_separation,"results/rq2/fig4_context_separation_display.csv")
 }
 
 # Strong nuisance controls and metric-level detail are retained as supplements.

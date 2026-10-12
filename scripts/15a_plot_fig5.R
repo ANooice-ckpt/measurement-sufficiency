@@ -219,8 +219,8 @@ epsilon_log1p <- scales::trans_new(
   domain = c(0, Inf)
 )
 FIG4_DIM_LABELS <- c(
-  "Temporal resolution" = paste0("Temporal resolution · ", RES_LABELS[[1]], " → ", tail(RES_LABELS, 1)),
-  "Monitoring duration" = paste0("Monitoring duration · ", min(DURATION_LEVELS), " d → ", max(DURATION_LEVELS), " d")
+  "Temporal resolution" = "Sampling interval",
+  "Monitoring duration" = "Monitoring days"
 )
 fig5_slice_guides <- FIG5_TOLERANCE_SLICES[FIG5_TOLERANCE_SLICES <= epsilon_limit + NUMERIC_TOL]
 
@@ -247,7 +247,7 @@ p4a_row_map <- tibble(
   row_label = c(
     "Overall",
     paste0(
-      str_to_sentence(p4a_class_order),
+      str_replace(str_to_sentence(p4a_class_order), "Temporal dynamics", "Temporal\ndynamics"),
       " (n=",
       p4a_class_counts$n_metrics[match(p4a_class_order, p4a_class_counts$metric_class)],
       ")"
@@ -518,7 +518,8 @@ p4c <- ggplot(
     inherit.aes = FALSE, shape = 21, fill = "white", size = 1.35, stroke = .45
   ) +
   facet_wrap(~dimension, nrow = 1, scales = "free_x") +
-  scale_color_manual(values = pair_palette, breaks = pair_levels, name = NULL) +
+  scale_color_manual(values = pair_palette, breaks = pair_levels, name = NULL,
+    labels = function(x) gsub(" → ", " / ", x)) +
   scale_x_continuous(
     trans = epsilon_log1p,
     breaks = c(0, .5, 1, 2, 3, 5),

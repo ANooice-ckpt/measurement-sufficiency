@@ -1,0 +1,50 @@
+SYNTHETIC STREAM TEST PASS: exact supported CDD, all-weather baseline, paired draws, immutable checkpoint
+PASS: original warm field unchanged: aggregate_sums
+PASS: original warm field unchanged: aggregate_denominator
+PASS: original warm field unchanged: aggregate_cell_counts
+PASS: original warm field unchanged: support_sums
+PASS: original warm field unchanged: support_denominator
+PASS: original warm field unchanged: support_cell_counts
+PASS: original warm field unchanged: summary_table
+PASS: original warm field unchanged: joint_draw_means
+PASS: original warm field unchanged: joint_draw_denominator
+PASS: original warm field unchanged: joint_draw_cell_ids
+PASS: CDD agrees with independent daily scalar formula
+PASS: reject corrupted checkpoint: negative_cdd
+PASS: reject corrupted checkpoint: negative_baseline
+PASS: reject corrupted checkpoint: infinite_cdd
+PASS: reject corrupted checkpoint: missing_cdd
+PASS: reject corrupted checkpoint: excess_weather_days
+PASS: reject corrupted checkpoint: fractional_days
+PASS: reject corrupted checkpoint: supported_exceeds_weather
+PASS: reject corrupted checkpoint: impossible_intersection
+PASS: reject corrupted checkpoint: nonzero_unsupported_cdd
+PASS: reject corrupted checkpoint: nonzero_missing_weather_baseline
+PASS: reject corrupted checkpoint: baseline_subset
+PASS: reject corrupted checkpoint: equal_support_baseline
+PASS: reject corrupted checkpoint: mismatched_warm_support
+PASS: reject corrupted checkpoint: changed_cell_area
+PASS: checkpoint resume restores partition without prediction
+PASS: single-cell multi-scenario checkpoint with full-period-only warm table
+PASS: draw-specific thresholds and zero-transfer scenario stay aligned
+PASS: eligible result retains exact area-weighted totals
+PASS: empty totals and baseline are NA with explicit status
+PASS: empty CSV intervals are NA: cdd_global_posterior_summary.csv
+PASS: empty CSV intervals are NA: cdd_global_total_posterior_summary.csv
+PASS: annual empty periods coexist with eligible full period
+PASS: genuine zero CDD remains zero on eligible cold days
+PASS: verifier rejects false zero for empty support
+PASS: verifier rejects missing draws on eligible support
+PASS: 04 verifier entrypoint: all_empty
+PASS: 04 verifier entrypoint: valid_zero
+PASS: auto resumes incomplete run
+PASS: running status published
+PASS: auto resumes failed run
+PASS: numeric receipt overrides stale failed/running status
+PASS: legacy v1 completion receipt prevents automatic rerun
+PASS: explicit resume remains available for integrity review
+PASS: reject mismatched completion receipt
+PASS: completion is rechecked after lock acquisition
+PASS: completion race releases the run lock
+PASS: completed status published in inherited selector format
+REGRESSION TESTS PASS: 48 checks. Synthetic fixtures only; fitted-model/ECS validation remains separate.

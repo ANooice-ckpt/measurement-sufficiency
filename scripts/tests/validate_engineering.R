@@ -342,43 +342,10 @@ local({
   stopifnot(nrow(plotted) == 3L, all(is.finite(plotted$x)), all(is.finite(plotted$y)),
             all(is.finite(plotted$size)), all(plotted$size > 0))
 
-  # Participant-count display keeps task membership fixed, including rounded
-  # duplicate sample sizes and a task unavailable at only one intermediate N.
-  anchor_map <- rq1_inference_anchor_map()
-  DOMAIN_LEVELS <- c("Sleep", "Alertness", "Affect")
-  contrast_short <- setNames(c("Chest", "Wrist", "LIGHT", "20 s", "30 s", "40 s", "60 s", "120 s"),
-                            anchor_map$contrast_label)
-  participant_curves <- crossing(candidate_config=anchor_map$candidate_config,
-    outcome_domain=DOMAIN_LEVELS, metric=c("large_pool", "small_pool"), fraction=c(.25,.5,.75,1)) |>
-    mutate(outcome=outcome_domain, eligible_N=if_else(metric == "large_pool", 16L, 5L),
-      N=pmax(4L, ceiling(eligible_N*fraction)), participant_fraction=N/eligible_N,
-      space="signal_full_support_outcome_sd", mc_valid=30L, mc_requested=30L,
-      sampling_mean=(1-participant_fraction)*.3,
-      total_mean=sqrt(sampling_mean^2+(match(candidate_config, anchor_map$candidate_config)/20)^2)) |>
-    select(-fraction) |> distinct()
-  participant_curves$total_mean[participant_curves$candidate_config == anchor_map$candidate_config[1] &
-    participant_curves$outcome_domain == "Sleep" & participant_curves$N == 8L] <- NA_real_
-  participant_curves$total_mean[participant_curves$candidate_config == anchor_map$candidate_config[3] &
-    participant_curves$outcome_domain == "Alertness"] <- NA_real_
+  # Participant-count Monte Carlo artifacts are no longer a plotting dependency.
   exprs <- parse("scripts/11b_plot_fig2.R")
-  new_panel <- Filter(function(e) is.call(e) && identical(e[[1]], as.name("<-")) &&
-    is.symbol(e[[2]]) && as.character(e[[2]]) %in%
-      c("fig2_participant_display", "participant_display", "p2d_curves"), exprs)
-  stopifnot(length(new_panel) == 4L)
-  invisible(lapply(new_panel, eval, envir=environment()))
-  excluded <- filter(participant_display, candidate_config == anchor_map$candidate_config[1], outcome_domain == "Sleep")
-  stopifnot(nrow(participant_display) == 8L*3L*4L*2L, all(excluded$n_tasks == 1L),
-    all(excluded$n_full_tasks == 2L),
-    all(excluded$N_min[excluded$target_fraction < 1] == 4L),
-    all(excluded$actual_fraction_min[excluded$target_fraction < 1] == .8),
-    all(participant_display$n_tasks[participant_display$candidate_config == anchor_map$candidate_config[3] &
-                                    participant_display$outcome_domain == "Alertness"] == 0L),
-    all(participant_display$centre[participant_display$target_fraction == 1 &
-                                   participant_display$series == "sampling_mean"] == 0, na.rm=TRUE),
-    nrow(ggplot_build(p2d_curves)$layout$layout) == 24L)
-  runner <- readLines("scripts/run_downstream_server.sh", warn=FALSE)
-  stopifnot(grep("Rscript scripts/10b_", runner) < grep("Rscript scripts/14b_", runner),
-            grep("Rscript scripts/14b_", runner) < grep("Rscript scripts/11b_", runner))
+  DOMAIN_LEVELS <- c("Sleep", "Alertness", "Affect")
+  stopifnot(!"PARTICIPANT_CSV" %in% all.names(exprs))
 
   # Optional labelled layout preview, outside production results.
   preview_dir <- Sys.getenv("MS_FIG2D_PREVIEW_DIR", "")
@@ -394,15 +361,13 @@ local({
     eval(panel[[1]])
     display_expr <- Filter(function(e) is.call(e) && identical(e[[1]], as.name("<-")) &&
       identical(e[[2]], as.name("p2d_display")), exprs)
+    signal_limits <- c(0, max(contrast_plot$signal_difference_outcome_sd)*1.05)
     eval(display_expr[[1]])
-    preview <- cowplot::plot_grid(
-      ms_panel_frame(p2d_display, "d  Coefficient displacement and association signal", style=FALSE),
-      ms_panel_frame(p2d_curves, "Participant count and association signal", style=FALSE),
-      ncol=1, rel_heights=c(8.8*.38/1.415, 3.6))
+    preview <- ms_panel_frame(p2d_display, "d  Coefficient displacement and association signal", style=FALSE)
     preview <- cowplot::plot_grid(cowplot::ggdraw()+cowplot::draw_label("SYNTHETIC LAYOUT CHECK - NOT STUDY RESULTS", size=9),
-                                  preview, ncol=1, rel_heights=c(.22, 5.96))
+                                  preview, ncol=1, rel_heights=c(.22, 2.6))
     dir.create(preview_dir, recursive=TRUE, showWarnings=FALSE)
-    ggsave(file.path(preview_dir, "synthetic_fig2d_layout.png"), preview, width=7.4, height=6.18, dpi=200, bg="white")
+    ggsave(file.path(preview_dir, "synthetic_fig2d_layout.png"), preview, width=7.4, height=2.82, dpi=200, bg="white")
   }
 })
 
@@ -445,8 +410,15 @@ local({
   eval(assignment[[1]], e)
   stopifnot(inherits(e$class_grob, "gtable"), identical(dev.list(), before),
             !length(list.files(all.files = TRUE, no.. = TRUE)))
+  framed <- e$class_grob
+  header_row <- framed$layout[framed$layout$name == "ms-panel-heading", ]
+  stopifnot(header_row$l == min(framed$layout$l[grepl("^panel($|-)", framed$layout$name)]))
   pdf(NULL); existing <- dev.cur()
   on.exit(dev.off(existing), add = TRUE)
+  nested <- ms_panel_frame(cowplot::ggdraw(e$c), "a  Nested", style = FALSE, anchor = e$c)
+  header_index <- which(nested$layout$name == "ms-panel-heading")
+  stopifnot(nested$layout$l[header_index] == 1L,
+    grid::convertX(nested$grobs[[header_index]]$x, "mm", valueOnly = TRUE) > 0)
   before <- dev.list()
   eval(assignment[[1]], e)
   stopifnot(identical(dev.cur(), existing), identical(dev.list(), before))

@@ -425,12 +425,11 @@ transition_spread <- transition_state |>
   )
 
 # -----------------------------------------------------------------------------
-# a. Hierarchical contextual predictor atlas
+# a. Contextual predictor strength and direction
 # -----------------------------------------------------------------------------
-# Predictor strength is the primary backbone. Signed and absolute coefficient
-# panels retain one overall distribution per predictor; dimension-specific
-# medians/IQRs are deliberately demoted to a secondary fingerprint within that
-# shared coordinate system instead of receiving four equal-status panels.
+# Predictor strength is the primary backbone. The two response-specific
+# profiles show separate dimension medians; pooled distributional quantiles
+# below are retained for audit only and are not drawn in the main figure.
 PREDICTOR_COLORS <- c(
   "External opportunity" = MS_PRIMARY,
   "Micro-environment" = "#5F8F84",
@@ -595,7 +594,7 @@ add_row_guides <- function(p) {
 
 p_labels <- ggplot(predictor_order, aes(y = y)) +
   geom_text(aes(x = .955, label = label), hjust = 1, size = MS_FIG_DENSE_PT / ggplot2::.pt, colour = "#30363B") +
-  geom_point(aes(x = .995, colour = predictor_family), size = .70, alpha = .95) +
+  geom_point(aes(x = .984, colour = predictor_family), size = .70, alpha = .95) +
   scale_colour_manual(values = PREDICTOR_COLORS, drop = FALSE, guide = "none") +
   scale_x_continuous(limits = c(0, 1), expand = expansion(mult = c(0, 0))) +
   scale_y_continuous(limits = predictor_y_limits, expand = expansion(mult = c(0, 0))) +
@@ -818,11 +817,82 @@ joint_cv_summary_panel <- joint_cv_summary_panel |>
 # -----------------------------------------------------------------------------
 # Main composition
 # -----------------------------------------------------------------------------
-# Preserve the accepted predictor atlas, but compose the new scientific panels
-# here. Legacy whole-figure refinement must not overwrite this composition.
-accepted <- ms_fig2_refine_main(environment())
-if (is.null(accepted$p2a)) stop("Missing accepted Fig. 3a predictor atlas")
-p2a <- accepted$p2a
+# Preserve the absolute-strength ranking, then use the former empty tail for
+# signed coefficients. The signed-distortion and absolute-distortion responses
+# must remain separate: their coefficients need not have the same direction.
+# Linear axes retain proportional coefficient magnitudes. Each directional stem
+# runs from zero to one dimension's median: it is not an uncertainty interval.
+# No signed summary or interval pooled across dimensions enters the main panel.
+strength_dimensions <- coef_metric |>
+  group_by(term, dimension, y) |>
+  summarise(median_abs = median(abs(estimate)), .groups = "drop")
+direction_dimensions <- coef_summary |>
+  mutate(dimension = factor(dimension, levels = DIMENSIONS),
+    y_mark = y + unname(c(placement = .24, optical = .08,
+                          temporal = -.08, duration = -.24)[as.character(dimension)]),
+    coefficient_sign = factor(case_when(
+      estimate_q50 < -NUMERIC_TOL ~ "Negative",
+      estimate_q50 > NUMERIC_TOL ~ "Positive",
+      TRUE ~ "Numerical zero"), levels = c("Negative", "Positive", "Numerical zero")))
+coefficient_sign_colors <- c(Negative = "#306B8B", Positive = "#BB6B31", "Numerical zero" = "#C4CCD0")
+strength_limit <- ceiling(100 * max(predictor_order$overall_abs, na.rm = TRUE) * 1.08)
+direction_limit <- ceiling(100 * max(abs(direction_dimensions$estimate_q50), na.rm = TRUE) * 1.08)
+predictor_theme <- theme_ms_axes(legend_position = "bottom") +
+  theme(panel.grid.major.y = element_blank(), panel.grid.minor = element_blank(),
+    axis.ticks.y = element_blank(), legend.key.width = unit(3, "mm"),
+    legend.text = element_text(size = MS_FIG_DENSE_PT),
+    strip.background = element_blank(), strip.text = element_text(size = MS_FIG_DENSE_PT, face = "bold"),
+    plot.margin = margin(3, 3, 3, 2))
+p_strength <- ggplot(predictor_order |> mutate(panel = "Overall strength")) +
+  geom_hline(yintercept = family_boundaries, colour = "#DEE3E6", linewidth = .3) +
+  geom_rect(aes(xmin = 0, xmax = 100 * overall_abs, ymin = y - .26, ymax = y + .26,
+    fill = predictor_family), alpha = .72, show.legend = FALSE) +
+  facet_wrap(~panel) +
+  scale_fill_manual(values = PREDICTOR_COLORS, guide = "none") +
+  scale_x_continuous(limits = c(0, strength_limit),
+    breaks = seq(0, strength_limit), expand = expansion(mult = c(0, .025))) +
+  scale_y_continuous(limits = predictor_y_limits, breaks = predictor_order$y,
+    labels = predictor_order$label, expand = expansion(0)) +
+  labs(x = expression(100 %*% "median |"*beta*"|"), y = NULL) + predictor_theme
+direction_panel <- function(response, title) {
+  ggplot(direction_dimensions |> filter(outcome_label == response) |> mutate(panel = title)) +
+    geom_hline(yintercept = family_boundaries, colour = "#DEE3E6", linewidth = .3) +
+    geom_vline(xintercept = 0, colour = "#9AA4AB", linewidth = .3) +
+    geom_segment(aes(x = 0, xend = 100 * estimate_q50,
+      y = y_mark, yend = y_mark, colour = coefficient_sign), linewidth = .4, alpha = .65) +
+    geom_point(aes(x = 100 * estimate_q50, y = y_mark, shape = dimension,
+      fill = coefficient_sign), size = 1.25, stroke = .25, colour = "#34434C") +
+    facet_wrap(~panel) +
+    scale_colour_manual(values = coefficient_sign_colors, guide = "none") +
+    scale_fill_manual(values = coefficient_sign_colors, guide = "none") +
+    scale_shape_manual(values = c(placement = 21, optical = 22, temporal = 24, duration = 23),
+      labels = c(placement = "Placement", optical = "Optical",
+        temporal = "Temporal", duration = "Duration"), name = NULL) +
+    scale_x_continuous(limits = c(-direction_limit, direction_limit),
+      breaks = scales::breaks_pretty(n = 4), expand = expansion(mult = .015)) +
+    scale_y_continuous(limits = predictor_y_limits, expand = expansion(0)) +
+    labs(x = expression(100 %*% "median "*beta), y = NULL) + predictor_theme +
+    theme(axis.text.y = element_blank(), axis.line.y = element_blank()) +
+    guides(shape = guide_legend(nrow = 1, override.aes = list(size = 1.6, fill = "white")))
+}
+direction_sign_legend <- cowplot::get_legend(
+  ggplot(tibble(coefficient_sign = factor(names(coefficient_sign_colors),
+      levels = names(coefficient_sign_colors)), x = 1:3, y = 1), aes(x, y, fill = coefficient_sign)) +
+    geom_point(shape = 21, size = 1.6, stroke = .25, colour = "#34434C") +
+    scale_fill_manual(values = coefficient_sign_colors,
+      labels = c(Negative = "β < 0", Positive = "β > 0", "Numerical zero" = "β ≈ 0"), name = NULL) +
+    theme_void(base_family = MS_FONT) +
+    theme(legend.position = "bottom", legend.text = element_text(size = MS_FIG_LEGEND_PT),
+      legend.key.width = unit(3, "mm"), legend.margin = margin(0, 0, 0, 0)))
+p_signed <- ms_style_plot(direction_panel("Signed", "Signed distortion"), dense = TRUE)
+p_absolute <- ms_style_plot(direction_panel("Absolute", "Absolute distortion"), dense = TRUE)
+strength_legend <- cowplot::get_legend(p_signed)
+predictor_fields <- cowplot::align_plots(ms_style_plot(p_strength, dense = TRUE),
+  p_signed + theme(legend.position = "none"), p_absolute + theme(legend.position = "none"),
+  align = "h", axis = "tb")
+predictor_body <- plot_grid(plotlist = predictor_fields, nrow = 1, rel_widths = c(.48, .26, .26))
+p2a <- ms_panel_frame(predictor_body, "a  Predictor strength and direction",
+  style = FALSE, anchor = predictor_fields[[1]])
 theme_dense <- function() theme_ms_axes(base_size = 6, legend_position = "none") +
   theme(panel.grid.minor = element_blank(), panel.grid.major = element_line(colour = "#ECEFF0", linewidth = .18),
     strip.text = element_text(size = 6, face = "bold"), axis.text = element_text(size = 5.4),
@@ -891,8 +961,9 @@ gamma_tiles <- gamma_class |> mutate(
   block = case_when(pair == "Placement \u00d7 optical" ~ "P \u00d7 O",
     pair == "Optical \u00d7 temporal" ~ "O \u00d7 T", placement == "Chest" ~ "P \u00d7 T: chest", TRUE ~ "P \u00d7 T: wrist"),
   block = factor(block, levels = c("P \u00d7 O", "O \u00d7 T", "P \u00d7 T: chest", "P \u00d7 T: wrist")),
-  step_label = if_else(pair == "Placement \u00d7 optical", if_else(placement == "Chest", "Ch", "Wr"), as.character(step_index)),
-  step_label = factor(step_label, levels = c("Ch", "Wr", as.character(1:5))),
+  step_label = if_else(pair == "Placement \u00d7 optical", if_else(placement == "Chest", "Ch", "Wr"),
+    c("120→60","60→40","40→30","30→20","20→10")[step_index]),
+  step_label = factor(step_label, levels = c("Ch", "Wr","120→60","60→40","40→30","30→20","20→10")),
   class_plot = factor(metric_class, levels = rev(MS_METRIC_CLASSES),
     labels = rev(c("Duration", "History", "Level", "Spectrum", "Dynamics", "Timing"))))
 gamma_tiles <- gamma_tiles |> group_by(block) |>
@@ -910,7 +981,7 @@ gamma_panel <- function(field) {
         limits = c(-limit, limit), breaks = c(-limit, 0, limit), labels = function(x) signif(x, 2), name = "Median\nR/Q", na.value = "#E5E8EA")} +
     labs(x = NULL, y = NULL) + theme_dense() +
     theme(panel.grid = element_blank(), axis.line = element_blank(), axis.ticks = element_blank(),
-      axis.text.y = element_text(size = 5.4), strip.text = element_text(size = 5),
+      axis.text.y = element_text(size = 5.4), axis.text.x = element_text(angle=60,hjust=1,size=5.2), strip.text = element_text(size = 5),
       panel.spacing.x = unit(1.4, "mm"), legend.position = "right", legend.title = element_text(size = 4.9),
       legend.text = element_text(size = 4.7), legend.key.height = unit(4, "mm"), legend.key.width = unit(2, "mm"))
 }
@@ -920,16 +991,20 @@ gamma_fields <- cowplot::align_plots(ms_style_plot(p_shift),
   align="v",axis="lr")
 p2b <- ms_panel_frame(gamma_fields[[1]],"b  Exposure-state dependence")
 gamma_body <- plot_grid(gamma_fields[[2]],gamma_fields[[3]],ncol=1,rel_heights=c(1,1))
-p2d <- ms_panel_frame(gamma_body,"c  Cross-axis non-additivity",style=FALSE)
+p2d <- ms_panel_frame(gamma_body,"c  Cross-axis non-additivity",style=FALSE,anchor=gamma_fields[[2]])
 right_column <- plot_grid(p2b,p2d,ncol=1,rel_heights=c(.52,.48))
 main_body <- plot_grid(p2a,right_column,ncol=2,rel_widths=c(.52,.48))
-legends <- plot_grid(predictor_legend,dimension_legend,ms_metric_legend(),
-  ncol=1,rel_heights=c(1,1,1))
+state_key <- ggdraw()+draw_label("b: Low = origin   ● Middle   ◆ High",
+  size=MS_FIG_LEGEND_PT,fontfamily=MS_FONT,colour="#35434C")
+legend_top <- plot_grid(strength_legend,state_key,nrow=1,rel_widths=c(.52,.48))
+predictor_keys <- plot_grid(predictor_legend,direction_sign_legend,nrow=1,rel_widths=c(.60,.40))
+legends <- plot_grid(legend_top,predictor_keys,ms_metric_legend(key_width_mm=5),
+  ncol=1,rel_heights=c(1.25,.65,.65))
 foot <- ggdraw()+draw_label(
-  "c: steps 1–5 = 120→60, 60→40, 40→30, 30→20, 20→10 s; × = unavailable. Bars: metric IQRs.",
+  "a: bars = pooled median |β|; points = median β across metrics within each dimension; stems connect 0 to the median (not intervals).\nGrey: |β| ≤ 10⁻¹². Day variability: duration only. b: thick = class medians; fine = metrics. c: seconds; × = unavailable; Q = magnitude, R/Q = direction.",
   x=.012,hjust=0,size=MS_FIG_DENSE_PT,colour="#30363B",fontfamily=MS_FONT)
-p2 <- plot_grid(main_body,legends,foot,ncol=1,rel_heights=c(1,.08,.035))
-ms_plot_save(p2,file.path(OUT_DIR,"Fig2_RQ2.png"),MS_FIG_WIDTH_IN,7.5)
+p2 <- plot_grid(main_body,legends,foot,ncol=1,rel_heights=c(1,.12,.065))
+ms_plot_save(p2,file.path(OUT_DIR,"Fig2_RQ2.png"),MS_FIG_WIDTH_IN,6.6)
 ms_plot_save(section(p_cv, "Which information predicts distortion?",
   "Participant-grouped CV; descriptive context includes reference exposure state", .16),
   file.path(OUT_DIR, "FigS_RQ2_context_predictability.png"), 7.4, 3.0)
@@ -942,6 +1017,12 @@ if (!ms_plot_prep_only()) {
 # Audit/display tables
 # -----------------------------------------------------------------------------
 if (!ms_plot_prep_only()) {
+  readr::write_csv(strength_dimensions,
+    file.path("results", "rq2", "fig3_predictor_strength_dimensions.csv"), na = "")
+  readr::write_csv(direction_dimensions,
+    file.path("results", "rq2", "fig3_predictor_direction_dimensions.csv"), na = "")
+  readr::write_csv(coef_summary_all,
+    file.path("results", "rq2", "fig3_predictor_direction_pooled.csv"), na = "")
   readr::write_csv(
     conditional_profile_summary |>
       mutate(metric_class = as.character(metric_class), state_bin_label = as.character(state_bin_label)),

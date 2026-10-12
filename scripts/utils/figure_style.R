@@ -61,7 +61,7 @@ ms_style_plot <- function(plot, dense = FALSE, subpanel = FALSE) {
   plot + ggplot2::labs(subtitle = NULL) + text_theme
 }
 
-ms_panel_frame <- function(plot, title = NULL, style = TRUE) {
+ms_panel_frame <- function(plot, title = NULL, style = TRUE, anchor = NULL) {
   if (inherits(plot, "ggplot")) {
     if (is.null(title)) title <- plot$labels$title
     if (style) plot <- ms_style_plot(plot)
@@ -69,12 +69,25 @@ ms_panel_frame <- function(plot, title = NULL, style = TRUE) {
   }
   g <- cowplot::as_grob(plot, device = function(width, height) grDevices::pdf(NULL, width, height))
   if (is.null(title) || !nzchar(title)) return(g)
+  # Titles start at the data field, after the axis-title/label gutter. Nested
+  # compositions can supply their first aligned child as the field anchor.
+  panel_cols <- g$layout$l[grepl("^panel($|-)", g$layout$name)]
+  heading_col <- if (length(panel_cols)) min(panel_cols) else 1L
+  heading_x <- grid::unit(0, "mm")
+  if (!is.null(anchor)) {
+    a <- cowplot::as_grob(anchor, device = function(width, height) grDevices::pdf(NULL, width, height))
+    anchor_cols <- a$layout$l[grepl("^panel($|-)", a$layout$name)]
+    if (length(anchor_cols) && min(anchor_cols) > 1L) {
+      heading_x <- sum(a$widths[seq_len(min(anchor_cols) - 1L)])
+      heading_col <- 1L
+    }
+  }
   g <- gtable::gtable_add_rows(g, grid::unit(MS_FIG_HEADER_MM, "mm"), pos = 0)
   gtable::gtable_add_grob(g, grid::textGrob(title,
-    x = grid::unit(1, "mm"), y = grid::unit(1, "npc") - grid::unit(1, "mm"),
+    x = heading_x, y = grid::unit(1, "npc") - grid::unit(1, "mm"),
     just = c("left", "top"), gp = grid::gpar(fontfamily = MS_FONT,
       fontsize = MS_FIG_TITLE_PT, fontface = "bold", col = "#151515")),
-    t = 1, l = 1, r = ncol(g), clip = "off", name = "ms-panel-heading")
+    t = 1, l = heading_col, r = ncol(g), clip = "off", name = "ms-panel-heading")
 }
 
 MS_METRIC_CLASSES <- c(

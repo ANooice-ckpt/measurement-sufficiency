@@ -16,8 +16,9 @@ The v8 geometry inference artifact additionally freezes `within_linear_gain`,
 signal evaluation. After 10b, `Rscript scripts/14b_rq3_resource_allocation.R
 --compensation` writes `results/rq3/rq3_configuration_participant_curve.csv`.
 The downstream server runner includes this step; `RQ3_RESOURCE_MC` controls its
-replicates (default 500). It runs before Fig. 2, whose panel d appends a
-participant-count curve band below the original scatter. Each row identifies the coefficient or signal space;
+replicates (default 500). This remains a separate analysis output; Fig. 2 no
+longer includes the participant-count curve continuation and does not read this
+CSV. Each row identifies the coefficient or signal space;
 `configuration_*`, `sampling_*`, `total_*` and `cross_ms` retain the exact
 displacement decomposition. Unavailable tasks remain explicit. The existing
 14b command without this flag retains the duration-allocation experiment.

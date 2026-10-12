@@ -36,7 +36,7 @@ stopifnot(abs(fixed[1]-.15)<1e-12,is.na(fixed[2]),
   abs(reliability_improvement(.1,.2)-50)<1e-12)
 # Load only the pure display helpers: never execute the plotting entrypoint.
 plot_code<-parse("scripts/13b_plot_fig4.R",encoding="UTF-8")
-for(helper_name in c("fig4_increment_display","fig4_risk_scatter_summary")){
+for(helper_name in c("fig4_increment_display","fig4_skill_display","fig4_risk_scatter_summary")){
   helper<-Filter(function(e)is.call(e) && identical(e[[1]],as.name("<-")) &&
     identical(e[[2]],as.name(helper_name)),as.list(plot_code))
   stopifnot(length(helper)==1L);eval(helper[[1]])
@@ -57,6 +57,19 @@ stopifnot(identical(scores,unchanged),nrow(value)==24L,
   abs(value[task_index==2 & repeat_id==1 & epsilon==.5 & baseline=="measurement"]$brier_reduction-.005)<1e-12,
   all(value[task_index==2 & baseline=="measurement_capacity"]$brier_reduction<0),
   inherits(try(fig4_increment_display(rbind(scores,scores[1])),silent=TRUE),"try-error"))
+# Skill uses a common baseline and a ratio of pooled losses, including zero-loss
+# tasks in the pool. Undefined individual ratios must not silently become zero.
+skill_scores<-rbind(scores,
+  copy(scores[state=="measurement"])[,`:=`(state="null",mse=ifelse(task_index==1,0,.1))],
+  copy(scores[state=="measurement"])[,state:="context"])
+skill_before<-copy(skill_scores)
+skill<-fig4_skill_display(skill_scores)
+stopifnot(identical(skill_before,skill_scores),nrow(skill$metric)==36L,nrow(skill$profile)==18L,
+  all(is.na(skill$metric[task_index==1]$skill)),all(skill$profile$n_undefined==1L),
+  abs(skill$profile[repeat_id==1 & epsilon==.1 & state=="joint"]$skill-60)<1e-12,
+  abs(skill$profile[repeat_id==2 & epsilon==.1 & state=="joint"]$skill-40)<1e-12)
+zero_skill<-fig4_skill_display(skill_scores[task_index==1])
+stopifnot(all(is.na(zero_skill$profile$skill)))
 risk_profiles<-data.table(
   task_index=c(1L,1L,2L),metric=c("m1","m1","m2"),dimension="placement",
   comparison_pair_id="chest_vs_eye",target="exceed_0.1",

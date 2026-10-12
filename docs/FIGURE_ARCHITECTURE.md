@@ -62,7 +62,9 @@ the runner or plot-contract dispatch.
 
 Across Fig. 1–6:
 
-- panel labels and titles are left aligned and bold, with no grey explanatory
+- panel labels and titles are bold and align to the left data-field / axis-frame
+  edge, never to the outer axis-label gutter. Nested compositions pass their
+  first aligned plot field as an explicit title anchor. There is no grey explanatory
   subtitle below individual panel titles; essential definitions belong in axes,
   legends or short dark figure notes;
 - `figure_style.R` owns the shared font and physical sizes: 7.4-inch figure
@@ -81,13 +83,15 @@ Across Fig. 1–6:
 - subplot spacing is controlled at the composition level rather than by adding
   arbitrary whitespace inside individual plotting panels.
 
-Fig. 1 retains its established preservation geometry. Fig. 2 retains two
-distortion-composition tracks on the left, panels b/c on the right and panel d
-across the full width. Its two upper rows are assembled from aligned fields.
-Figs. 3–6 retain their panel identities and existing refinement/polish helpers;
-Fig. 6 uses matching 30:70 column widths across both rows. Canonical file
+Fig. 1 retains its established preservation geometry. Fig. 2 places magnitude
+(a) and inferential displacement (b) in an aligned top row. Pattern/signal (c)
+and coefficient/signal (d) each span the full width, with aligned Sleep,
+Alertness and Affect columns. Panel a retains total RMS only.
+Figs. 3–5 retain their panel identities and existing refinement/polish helpers.
+Fig. 6 uses four coordinated rows: joint designs, tolerance-dependent savings,
+individual target constraints, and separate-axis composition failure. Canonical file
 numbering is identical to manuscript numbering. Figure heights (Fig. 1–6) are
-5.8, 12.4, 7.5, 9.0, 6.5 and 6.1 inches; height accommodates content density
+5.8, 7.6, 6.6, 7.0, 6.5 and 8.1 inches; height accommodates content density
 without changing the series-wide physical font sizes.
 
 ## Frozen inputs and output locations
@@ -156,12 +160,12 @@ response estimates.
 
 Fig. 2 presents:
 
-- Fig. 2a: two aligned tracks show matched-support total RMS D_T and the
-  within-person share f_W of squared candidate/reference distortion
-  for each of the eight contrasts, on the exact outcome-matched fitting support.
-  Its complement is the stable participant-offset share (including common bias).
-  Metric-outcome points and median/IQR retain heterogeneity. Linear reference-SD
-  and circular sin/cos design spaces are displayed separately;
+- Fig. 2a: matched-support total RMS D_T for each of the eight contrasts,
+  on the exact outcome-matched fitting support. Metric-outcome points and
+  median/IQR retain heterogeneity. Linear reference-SD and circular sin/cos
+  design spaces are displayed separately, in the same order as panel c.
+  The within-person fraction remains in the frozen analysis artifact but is
+  not a second track in the main figure;
 - Fig. 2b: inferential degradation for each of the eight measurement contrasts,
   shown as horizontal metric–outcome point distributions with domain-level
   median and interquartile range. Placement, optical and temporal groups are
@@ -173,30 +177,26 @@ Fig. 2 presents:
   linear correlation remains in the existing inference tables. Points show
   descriptive task-level relationships without another fitted model. The
   previous conditional composition model remains in the frozen analysis outputs.
-- Fig. 2d: the existing coefficient-displacement versus association-signal
-  displacement panel, with signal RMS normalized by within-outcome RMS. These
-  are same-sample FE signals, not held-out predictions. A 3.6-inch continuation
-  below this unchanged scatter shows the frozen participant-count experiment:
-  eight configuration rows by three outcome-domain columns compare candidate
-  total displacement with reference sampling displacement on full-support signal
-  space. Curves are medians and ribbons are IQR across metric-outcome tasks,
-  not confidence intervals. The identical task set is used for both curves at
-  all four target fractions, requiring estimability in every frozen MC draw.
-  Fractions are requested cohort fractions with a minimum of four participants;
-  repeated rounded sizes reuse the same frozen result. Actual fractions/counts,
-  plotted-task counts and full-cohort task counts are retained in
-  `results/rq1/inference/fig2_participant_count_display.csv`. Empty facets are
-  marked unavailable. The new geometric bound and gain are not added to the figure.
+- Fig. 2d: coefficient displacement versus association-signal displacement,
+  with signal RMS normalized by within-outcome RMS. These are same-sample FE
+  signals, not held-out predictions. Point size encodes reference within R²;
+  the legend shows 0.1%, 1% and 5%, within the observed range. Point shapes
+  identify placement, optical and temporal contrasts in both c and d.
 
-Fig. 2b retains its original pseudo-log deviation scale. The original reference
-landscape and pooled A-displacement scatter move to supplementary figures,
-together with within-contrast correlations stratified by exposure geometry.
-The established tall-left/two-right composition and the existing full-width
-panel d are retained. Panel b's summary lane offset is categorical spacing only.
-The figure is 7.4 x 12.4 inches: the original 8.8-inch composition keeps its
-physical size and all encodings, with the curve continuation added below it.
-Total RMS uses a pseudo-log axis and
-geometry-specific ranges. No plot refits a model.
+The four panels respectively describe magnitude, coefficient sensitivity,
+pattern/signal correspondence and coefficient/signal correspondence. All
+finite task-level points in b/c/d are retained. Panels c/d share their full
+vertical signal range and align the three domain columns. No significance
+screen, new fit or smoothing is introduced. Total RMS and inferential
+displacement retain pseudo-log axes; the linear and circular total-RMS facets
+use their own ranges because their units differ. Panel b's summary lane offset
+is categorical spacing only. The figure is 7.4 x 7.6 inches.
+
+The participant-count continuation has been removed from Fig. 2. Its frozen
+Monte Carlo artifact remains available but is no longer a plotting dependency;
+`fig2_participant_count_display.csv`, if present from an earlier render, is
+historical. The original reference landscape, pooled A-displacement scatter
+and within-contrast correlation outputs retain their existing exports.
 
 Frozen RQ1 A remains the upstream magnitude covariate and the pooled supplement's
 x-axis. Matched-support squared-error components are newly declared explanatory
@@ -215,13 +215,30 @@ observation rather than two unrelated timing coefficients.
 
 `13a_plot_fig3.R` presents:
 
-- Fig. 3a: a contextual predictor atlas spanning the prespecified external
-  opportunity, micro-environment, behaviour and exposure-state predictors,
-  including standardized joint-model coefficient distributions across estimable
-  tasks;
+- Fig. 3a: horizontal bars show the overall predictor-strength pattern for
+  all 20 predictors, grouped by contextual family. Bar length is the existing
+  median absolute standardized coefficient across metric/dimension/response
+  units. Two adjacent coefficient profiles separately retain the signed- and
+  absolute-distortion responses: four small shapes show the median coefficient
+  across metrics separately for each dimension. Each stem connects zero to
+  that median; no interval or signed summary pooled across dimensions is drawn.
+  Blue/orange points retain negative/positive signs even near zero; grey denotes
+  numerical zero (absolute median coefficient <= 1e-12, not a substantive
+  equivalence threshold). Response types are never pooled when assigning direction.
+  All three fields use linear axes; ticks show 100 times the original coefficients.
+  The strength bars keep a zero baseline. Both signed fields share symmetric
+  limits containing every median, with no sign-based filtering.
+  Day-to-day variability has a duration symbol only.
+  These are coefficient-strength summaries, not additive explained-variance
+  contributions. Metric-level values and signed coefficient quantiles remain
+  in audit CSVs, including `fig3_predictor_direction_dimensions.csv` and
+  `fig3_predictor_direction_pooled.csv` in raw coefficient units. The latter
+  is audit-only: its pooled quantiles are not drawn and are not confidence intervals;
 - Fig. 3b: conditional distortion geometry across transition-local exposure-state
-  tertiles, retaining both magnitude `A` and directional coherence `B/A`;
-- Fig. 3c: cross-axis non-additivity, showing magnitude Q and coherence R/Q.
+  tertiles, retaining both magnitude `A` and directional coherence `B/A`, with
+  an explicit low-origin / middle-circle / high-diamond key;
+- Fig. 3c: cross-axis non-additivity, showing magnitude Q and coherence R/Q,
+  with temporal intervals labelled directly in seconds rather than ranks.
   The former contextual CV panel is retained in
   `FigS_RQ2_context_predictability.png`; Fig.4 owns the main predictive-value narrative.
 
@@ -235,17 +252,43 @@ incremental grouped-CV information diagnostic remain secondary outputs.
 this frozen artifact only. Its three panels present:
 
 - Fig.4a: pooled lower/middle/higher contextual risk-group distortion ratios,
-  shown as connected dots (dumbbells).
+  shown as connected dots (dumbbells), with explicit higher/lower group ratios
+  on the right (1.50–1.88 in the current frozen artifact).
 - Fig.4b: context's Brier-score value over configuration means and its increment
   beyond candidate measurements, with participant bootstrap intervals and repeated splits.
-- Fig.4c: lower- versus higher-context observed exceedance probability scatterplots
-  at all six frozen tolerances. Dots are metric–contrast pairs; dimension-specific
-  diamonds and horizontal/vertical bars show marginal medians and IQRs. The
-  identity line indicates equal risk. IQRs describe heterogeneity, not uncertainty.
+- Fig.4c: eight contrast-specific small multiples show predictive skill at
+  all six frozen tolerances. The three bold profiles compare context only,
+  measurement only and measurement plus context against the same training-mean
+  baseline: `100 × (1 − mean model Brier loss / mean baseline Brier loss)`.
+  Metric losses have equal weight before taking the ratio. The primary
+  participant-grouped split is used. Open measurement markers remain visible
+  around the smaller filled joint markers where their results nearly coincide.
+  Fine grey trajectories retain all defined individual-metric joint skills.
+  Higher values mean better held-out reliability prediction, not a percentage
+  of recovered exposure. All facets share a signed pseudo-log skill axis
+  (sigma = 5 percentage points) with a displayed window from −10% to 55%.
+  This is coordinate clipping, not data filtering: 21 defined metric values
+  below −10% (minimum −71.3%) are indicated by downward boundary triangles,
+  with the total and minimum stated in the figure. Per-contrast/tolerance counts
+  are exported in `fig4_skill_clipping_display.csv`. Tolerance is
+  log-scaled. Zero-baseline task skills are undefined, with their number stated
+  in the figure, and remain NA in the display data. Such tasks still contribute
+  their losses to the pooled ratio. Panel b retains bootstrap intervals and
+  repeated-split diagnostics; grey trajectories in c describe heterogeneity.
 
-Fig.3 is rendered at 7.4 × 7.5 inches. Predictor labels and the narrow coefficient
-columns use the common dense-label size; the predictor-label column is wider
-and the strength scale uses endpoint ticks to avoid label collisions.
+`results/rq2/fig4_skill_profile_display.csv` retains all 432 pooled summaries
+(eight contrasts × six tolerances × three splits × three information states).
+`fig4_skill_metric_display.csv` retains every individual metric-state-split
+value, including undefined skills. These are display ratios of frozen losses;
+no model is refitted. The main figure is 7.4 × 7.0 inches. Existing audit tables
+and supplementary exports are retained without adding a new supplementary
+solution to this redesign.
+
+Fig.3 is rendered at 7.4 × 6.6 inches. Its compact strength bars expose the overall
+pattern first; adjacent signed coefficient profiles recover direction and
+dimension-specific detail without a numeric heatmap in panel a.
+Fig.5 retains its established forms; long row names wrap, residual
+instability facets have short titles, and legends have room for complete labels.
 
 The 52 daily targets and eight anchor contrasts retain metric-specific supports.
 There is no outcome matching. The figures do not claim universal sufficiency,
@@ -273,38 +316,67 @@ analysis and `RQ2_INFORMATION_EXPERIMENTS.md` for the experiment/failed-route lo
 The detailed adjacent-transition convergence and metric-level sufficiency
 trajectories remain secondary outputs.
 
-## Figure 6 — RQ3 joint temporal × duration sufficiency geometry
+## Figure 6 — RQ3 tolerance-dependent joint design
 
-`15b_plot_fig6.R` presents the frozen 6 × 6 temporal-resolution × duration
-candidate lattice:
+`15b_plot_fig6.R` reads the frozen joint task projection, joint summary and
+composition-failure summary. Four coordinated panels show joint choices,
+tolerance trends, individual target constraints, and composition-rule failures.
+Eye / Chest / Wrist columns align across the four rows. Fig.5 continues to own
+single-axis requirements and substitutability. The figure is 7.4 × 8.1 inches.
+The accepted figure has no bottom footnote block; the definitions below belong
+in the manuscript caption. Axes, the shared target-class legend, direct numeric
+annotations and the optical/count keys remain in the figure.
 
-- Fig. 6a: the joint entry-tolerance landscape based on metric-equal pooling of
-  resolved `epsilon_entry`, with boundary-unresolved cells marked explicitly;
-- Fig. 6b: Level / Temporal dynamics / All targets bundles at eye/MEDI and
-  epsilon=.50, selected directly from the frozen `task_projection` frontiers.
-  Only sufficient Pareto cells carry nominal scheduled-sample reduction labels
-  relative to 10 s x 6 d: `(6 / 10) / (n_days / resolution_s)`. This display
-  quantity does not enter sufficiency or Pareto decisions. The displayed cells
-  are exported to `results/rq3/fig6b_eye_medi_epsilon_0.50_display_slice.csv`.
-  Small D/S labels on Pareto cells identify the metrics preventing an immediate
-  reduction: D is one fewer day at the same cadence; S is the next slower primary
-  interval at the same duration. Numbers refer to exact limiting target sets in
-  the panel's key, including ties. They read the lower-burden neighbour's frozen
-  FALSE sufficiency decision and limiting metrics, not the current cell's maximum.
-  Missing, unavailable or unresolved neighbours receive no blocker label.
-  Dashed boxes overlay the comparison bundle's
-  complete frozen frontier: Level in the Temporal dynamics map, and Temporal
-  dynamics in the All targets map. This makes horizontal/vertical frontier
-  displacement visible without choosing or connecting arbitrary optimum points.
-  Level to Temporal dynamics changes goals; Temporal dynamics to All targets
-  expands the required target set. Exact limiting metrics remain in the CSV;
-- Fig. 6c: failure of single-axis sufficiency composition. A cell map at the
-  existing epsilon=.25 slice shows joint failures / single-axis passes, alongside
-  failure-rate profiles at .05/.10/.20/.25/.30/.50/1 by placement/optical facet.
-  Both axes must have observed refinements. U denotes axis-unresolved and a dash
-  denotes no single-axis passes; neither is a zero failure rate. Full failure
-  intervals and pair-support counts are analysis outputs. The former class
-  profiles and the failure map separated by facet are supplementary outputs.
+- Fig.6a: all seven MEDI target bundles at epsilon=.50 are shown on a cadence
+  versus monitoring-days grid. The six observed cadence levels are categorical.
+  Every frozen Pareto choice is retained (27 choices at 23 unique coordinates
+  in the current artifact). Coincident designs share a marker and combined
+  direct labels; All 54 is highlighted. Light leader lines associate labels with
+  points and do not imply a connected frontier. No single winning design or
+  universal order across placement/optical facets is introduced. Target counts
+  are Level 9, Dynamics 7, Timing 23, Duration 12, History 2 and Spectrum 1;
+  these are descriptive target sets, not inferential replicates.
+- Fig.6b: all seven target bundles retain their continuous frozen tolerance
+  intervals. Lines and bands show the minimum/maximum scheduled-record savings
+  among actual Pareto alternatives, not uncertainty. Savings are
+  `100 × [1 − (n_days / resolution_s) / (6 / 10)]`, relative to 10 s × 6 d.
+  This is a descriptive projection of existing choices, not a new scalar burden
+  ranking or sufficient-set calculation. All-54 profiles are emphasized; dots
+  and percentages identify epsilon=.50, and downward triangles identify the
+  first observed All-54 sufficient choice. No profile extends beyond its frozen
+  domain or connects across a missing interval. Missing savings remain NA.
+- Fig.6c: for each placement, the chosen All-54 design at epsilon=.50 is compared
+  with its immediate one-day-shorter and next-coarser-cadence neighbours.
+  Each row retains all 54 target-level residual-instability values from the
+  frozen joint summary (486 points across nine states). Colour identifies metric
+  class; jitter affects only the vertical display coordinate. Diamonds and
+  three-decimal labels show the stored task maximum R_task; direct labels give
+  the configuration and its maximum-attaining metric. The epsilon=.50 guide
+  exposes why a neighbouring reduction fails. These are
+  frozen decisions, not recomputed sufficiency tests. Maxima are checked against
+  R_task only for input consistency. Named maxima are not an exhaustive list of
+  failing targets and do not imply that removing those metrics alone would make
+  the neighbour sufficient.
+- Fig.6d: MEDI/LIGHT composition-failure profiles retain all seven evaluated
+  tolerances in every placement (42 summary cells). Lines guide the eye between
+  those evaluated slices. Numerator/denominator keys report exact counts at
+  epsilon=.25. Hollow circles identify positive denominators below 10; the
+  current chest 2/4 and wrist 0/5 cases are directly labelled. Crosses identify
+  zero denominators; their failure rates remain NA and are never plotted as 0%.
+  Counts refer to metric/configuration states, not participants, independent
+  replicates or population probabilities. All observed rates remain visible.
+
+Active display exports are `fig6_joint_design_states_display.csv`,
+`fig6_joint_design_portfolio.csv`, `fig6_pareto_savings_by_tolerance.csv`,
+`fig6_all_target_design_intervals.csv`, `fig6_constraint_states_display.csv`,
+`fig6_constraint_targets_display.csv` and `fig6_composition_failure_profiles.csv`.
+The constraint exports retain the original configuration keys and frozen values;
+state roles 3 / 2 / 1 mean chosen / one day shorter / next coarser cadence.
+`fig6b_eye_medi_epsilon_0.50_display_slice.csv` remains a reproducible audit export.
+Earlier savings-matrix, day-block, design-table, composition-scatter and
+limiting-target bar CSVs, if present, are historical and are not read by the
+active figure. The canonical plot has no dependency on the review prototypes
+and generates no additional supplementary layouts.
 
 Composition failure compares temporal-only and duration-only refinements from
 the SAME joint starting configuration and standardizer with all higher joint
@@ -313,7 +385,7 @@ Original maximal pairwise supports remain in use; failure is a design-rule
 disagreement in the observed comparison system, not proof of a statistical
 interaction. Fig.3c's Q and R/Q remain a separate cross-axis description.
 
-Fig.6b's existing display CSV also retains `R_task`, `limiting_targets`, their
+The retained .50 audit-slice CSV also includes `R_task`, `limiting_targets`, their
 metric classes and the union of limiting targets across each frozen frontier.
 These identify the metrics attaining entry tolerance at those cells. Conditional
 axis requirements report minimum sufficient days at each fixed interval and
@@ -376,7 +448,7 @@ domain is 10–120 s.
 ```text
 Fig. 1 from frozen RQ1
 → RQ1 inferential-preservation analysis
-→ Configuration / participant-count analysis from frozen RQ1 (14b --compensation)
+→ Configuration / participant-count analysis from frozen RQ1 (14b --compensation; separate output, not a Fig. 2 input)
 → Fig. 2
 → RQ2 analysis
 → Fig. 3

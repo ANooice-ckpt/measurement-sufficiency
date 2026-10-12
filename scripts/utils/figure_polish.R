@@ -22,8 +22,8 @@ ms_polish_fig1 <- function(plot, env, width, height) {
   row2 <- cowplot::align_plots(left[[3]],right[[2]],align="h",axis="tb")
   b <- cowplot::plot_grid(row1[[1]],row2[[1]],z$p1b_shape_legend,ncol=1,rel_heights=c(1,1,.13))
   c <- cowplot::plot_grid(row1[[2]],row2[[2]],NULL,ncol=1,rel_heights=c(1,1,.13))
-  bottom <- cowplot::plot_grid(ms_panel_frame(b,"b  Magnitude and direction",style=FALSE),
-    ms_panel_frame(c,"c  Adjacent configuration changes",style=FALSE),nrow=1)
+  bottom <- cowplot::plot_grid(ms_panel_frame(b,"b  Magnitude and direction",style=FALSE,anchor=row1[[1]]),
+    ms_panel_frame(c,"c  Adjacent configuration changes",style=FALSE,anchor=row1[[2]]),nrow=1)
   body <- cowplot::plot_grid(ms_panel_frame(left[[1]],"a  Absolute and relational preservation"),
     bottom,ncol=1,rel_heights=c(.72,1.28))
   final <- cowplot::plot_grid(ms_metric_legend(),body,ncol=1,rel_heights=c(.045,1))
@@ -33,7 +33,9 @@ ms_polish_fig1 <- function(plot, env, width, height) {
 ms_polish_fig4 <- function(plot, env, width, height) {
   z <- lapply(c("p4a","p4b","p4c"),function(nm) ms_polish_env_get(env,nm))
   if (any(vapply(z,is.null,logical(1)))) return(list(plot=plot,width=width,height=height))
-  a <- ms_style_plot(z[[1]],dense=TRUE) + ggplot2::labs(title=NULL)
+  a <- ms_style_plot(z[[1]],dense=TRUE) + ggplot2::labs(title=NULL) +
+    ggplot2::theme(legend.key.width=grid::unit(5,"mm"),
+                   legend.spacing.x=grid::unit(2,"mm"))
   b <- ms_style_plot(z[[2]]) + ggplot2::labs(title=NULL,
     x="Sampling interval (s) / monitoring days",y=expression(R[obs]))
   c <- ms_style_plot(z[[3]]) + ggplot2::labs(title=NULL)
@@ -43,7 +45,7 @@ ms_polish_fig4 <- function(plot, env, width, height) {
     ms_panel_frame(bc[[2]],"c  Placement / optical substitutability"),nrow=1,rel_widths=c(1.06,.94))
   body <- cowplot::plot_grid(ms_panel_frame(ac[[1]],"a  Minimum requirements across tolerances"),
     bottom,ncol=1,rel_heights=c(1.18,.82))
-  final <- cowplot::plot_grid(ms_metric_legend(),body,ncol=1,rel_heights=c(.045,1))
+  final <- cowplot::plot_grid(ms_metric_legend(key_width=5),body,ncol=1,rel_heights=c(.045,1))
   list(plot=final,width=MS_FIG_WIDTH_IN,height=6.5)
 }
 

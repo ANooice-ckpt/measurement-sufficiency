@@ -1,0 +1,11 @@
+SERVER UPLOAD BUNDLE: LOCAL INPUTS READY
+Created: 2026-10-12 17:36:03 +08:00
+Cells: 104344; tiles: 1990; native resolution: 0.25 degree; dates: 2010-2019, 3652 UTC days.
+Weather NetCDF total: 6.881 GiB / 7.389 GB.
+Bundle total at preparation: 7.118 GiB / 7.643 GB.
+Contains active code, four required model/support RDS files, ten annual weather NC files and pack_index.rds.
+Copy this entire folder to ECS and run: bash run_server.sh check
+Before prediction: fill config.R cdd$scenarios (theta0/slope/kappa); install/verify the required R environment.
+Scientific model prediction and ECS performance benchmark have NOT been run locally.
+results and results_pilot are reserved output folders; local return destination is ../04_results.
+Static code/model/index hashes: SHA256SUMS.txt. Annual weather hashes: WEATHER_MD5SUMS.txt.
