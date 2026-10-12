@@ -20,6 +20,9 @@ results/
 logs/*
 !logs/.gitkeep
 
+# Local scratch directories and external-project staging
+/.tmp*/
+
 # R
 Rplots.pdf
 .Rhistory
