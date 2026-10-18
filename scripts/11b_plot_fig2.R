@@ -119,7 +119,7 @@ ms_assert_version(a, "analysis_design_id", ms_analysis_design_id())
 CORE_VERSION <- ms_plot_assert_core(a$core_artifact_version)
 RQ1_VERSION <- ms_plot_one_version(a$rq1_analysis_version, "rq1_analysis_version")
 INFERENCE_VERSION <- ms_plot_one_version(a$rq1_inference_version, "rq1_inference_version")
-ms_plot_assert_prefix(RQ1_VERSION, "rq1_v6_", "rq1_analysis_version")
+ms_plot_assert_prefix(RQ1_VERSION, c("rq1_v6_", "rq1_v7_"), "rq1_analysis_version")
 ms_plot_assert_prefix(INFERENCE_VERSION, "rq1_inference_v8_geometry_anchor8__", "rq1_inference_version")
 
 rq1_summary <- readr::read_csv(RQ1_SUMMARY_CSV, show_col_types = FALSE, progress = FALSE)

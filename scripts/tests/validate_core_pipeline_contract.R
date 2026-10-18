@@ -8,7 +8,17 @@ local({
   repo <- normalizePath(".", winslash = "/")
   root <- tempfile("core_pipeline_contract_")
   dir.create(root)
-  on.exit({setwd(repo); unlink(root, recursive = TRUE)}, add = TRUE)
+  previous_vroom_temp <- Sys.getenv("VROOM_TEMP_PATH", unset = NA_character_)
+  on.exit({
+    setwd(repo)
+    if (is.na(previous_vroom_temp)) Sys.unsetenv("VROOM_TEMP_PATH") else
+      Sys.setenv(VROOM_TEMP_PATH = previous_vroom_temp)
+    unlink(root, recursive = TRUE)
+  }, add = TRUE)
+  # Compressed readr inputs use their own scratch setting, which may otherwise
+  # point outside the writable fixture even when R's tempdir() is available.
+  dir.create(file.path(root, "vroom"))
+  Sys.setenv(VROOM_TEMP_PATH = file.path(root, "vroom"))
   adapter <- Filter(function(x) is.call(x) && identical(x[[1]], as.name("<-")) &&
     identical(x[[2]], as.name("prepare_one")), parse("scripts/09_build_core_artifacts.R"))
   stopifnot(length(adapter) == 1L)
@@ -57,7 +67,8 @@ local({
     tryCatch({source(file.path(repo, "scripts/09b_validate_core_design.R"), local = new.env()); NULL},
       error = conditionMessage)
   }
-  stopifnot(is.null(run()))
+  validation_error <- run()
+  if (!is.null(validation_error)) stop("Valid synthetic core fixture failed: ", validation_error)
   stopifnot(grepl("ineligible native source", run(bind_rows(cube, mutate(cube, Id = "B"))), fixed = TRUE))
   # The site still has every cadence through C; A's missing state must fail.
   stopifnot(grepl("participant/configuration", run(filter(cube, !(Id == "A" & resolution_s == 120L))), fixed = TRUE))

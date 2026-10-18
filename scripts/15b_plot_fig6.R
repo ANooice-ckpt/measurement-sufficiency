@@ -29,7 +29,7 @@ ms_plot_require_files(c(JOINT_CSV, JOINT_RDS, COMPOSITION_CSV),
                       "Frozen RQ3 joint plotting inputs")
 joint <- readr::read_csv(JOINT_CSV, show_col_types = FALSE, progress = FALSE)
 task_projection <- attr(readRDS(JOINT_RDS), "task_projection", exact = TRUE)
-if (!identical(task_projection$task_projection_version, "rq3_task_projection_v1")) {
+if (!identical(task_projection$task_projection_version, "rq3_task_projection_v2_min2day_is")) {
   stop("Frozen RQ3 task projection is missing; run RQ3 analysis before plotting", call. = FALSE)
 }
 composition_summary <- readr::read_csv(COMPOSITION_CSV, show_col_types = FALSE, progress = FALSE)
@@ -43,8 +43,8 @@ ms_plot_require_columns(composition_summary,
 RQ1_VERSION <- ms_plot_one_version(joint$rq1_analysis_version, "rq1_analysis_version")
 RQ3_VERSION <- ms_plot_one_version(joint$rq3_analysis_version, "rq3_analysis_version")
 CORE_VERSION <- ms_plot_assert_core(joint$core_artifact_version)
-ms_plot_assert_prefix(RQ1_VERSION, "rq1_v6_", "rq1_analysis_version")
-ms_plot_assert_prefix(RQ3_VERSION, "rq3_v9_", "rq3_analysis_version")
+ms_plot_assert_prefix(RQ1_VERSION, c("rq1_v6_", "rq1_v7_"), "rq1_analysis_version")
+ms_plot_assert_prefix(RQ3_VERSION, "rq3_v10_", "rq3_analysis_version")
 for (artifact in list(task_projection, composition_summary)) {
   ms_assert_version(artifact, "rq3_analysis_version", RQ3_VERSION)
   ms_assert_version(artifact, "rq1_analysis_version", RQ1_VERSION)

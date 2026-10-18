@@ -2,6 +2,37 @@
 # actual window representations. Daily targets are aggregated from the durable
 # participant-day metric cube; IS/IV are rebuilt from the stored hourly basis.
 
+duration_artifact_version <- function() "duration_complete_analysis_days_v3_min2day_is"
+
+duration_apply_availability <- function(x) {
+  required <- c("metric", "n_days", "value", "available")
+  if (!all(required %in% names(x))) stop("Duration values lack metric/day availability fields")
+  if (!"unavailable_reason" %in% names(x)) x$unavailable_reason <- rep(NA_character_, nrow(x))
+  actual_days <- if ("n_days_present" %in% names(x)) x$n_days_present else x$n_days
+  is_metric <- x$metric == "interdaily_stability"
+  if (anyNA(is_metric) || anyNA(x$n_days[is_metric]) || anyNA(actual_days[is_metric])) {
+    stop("Duration IS requires known complete-day counts")
+  }
+  single_day_is <- is_metric & (x$n_days < 2L | actual_days < 2L)
+  x$value[single_day_is] <- NA_real_
+  x$available[single_day_is] <- FALSE
+  x$unavailable_reason[single_day_is] <- "interdaily stability requires at least two complete analysis days"
+  x
+}
+
+duration_upgrade_v2_part <- function(x) {
+  # This availability-only migration preserves every other metric value and
+  # scientific key; it does not reconstruct daily aggregates or hourly series.
+  if (!is.data.frame(x) || !"duration_artifact_version" %in% names(x) ||
+      anyNA(x$duration_artifact_version) ||
+      any(x$duration_artifact_version != "duration_complete_analysis_days_v2_exact_hours")) {
+    stop("Only exact-hour v2 duration parts can receive the minimum-day migration")
+  }
+  x <- duration_apply_availability(x)
+  x$duration_artifact_version <- rep(duration_artifact_version(), nrow(x))
+  x
+}
+
 duration_circular_mean <- function(x, period = 86400) {
   x <- x[is.finite(x)]
   if (!length(x)) return(NA_real_)
@@ -19,13 +50,13 @@ duration_cube_is_partitioned <- function(x) {
 }
 
 load_duration_metric_cube <- function(x, columns = NULL, filter_fn = NULL) {
-  if (is.data.frame(x)) return(x)
+  if (is.data.frame(x)) return(duration_apply_availability(x))
   if (!duration_cube_is_partitioned(x)) stop("Unsupported duration metric cube artifact")
   paths <- file.path(x$part_dir, x$parts)
   missing <- paths[!file.exists(paths)]
   if (length(missing)) stop("Missing duration cube part: ", missing[[1]])
   read_part <- function(path) {
-    z <- readRDS(path)
+    z <- duration_apply_availability(readRDS(path))
     if (!is.null(columns)) z <- z |> dplyr::select(dplyr::all_of(columns))
     if (!is.null(filter_fn)) z <- filter_fn(z)
     z
@@ -76,6 +107,9 @@ duration_isiv_from_context <- function(x) {
     var_hourly_diff <- sum(diff(hourly_values)^2) / (length(hourly_values) - 1L)
     vals <- c(var_avg_day / var_total, var_hourly_diff / var_total)
   }
+  # One complete date has no between-day replication, including 23/25-hour
+  # DST dates. Do not identify this case by IS == 1: multiday IS may equal 1.
+  if (dplyr::n_distinct(x$Date, na.rm = TRUE) < 2L) vals[[1L]] <- NA_real_
   tibble::tibble(metric = c("interdaily_stability", "intradaily_variability"), value = as.numeric(vals))
 }
 
@@ -164,13 +198,14 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
         ) |>
         dplyr::group_modify(~{
           vals <- duration_isiv_from_context(.x)
-          if (dplyr::n_distinct(.x$Date) != dplyr::first(.y$n_days)) vals$value <- NA_real_
+          vals$n_days_present <- dplyr::n_distinct(.x$Date, na.rm = TRUE)
+          if (vals$n_days_present[[1L]] != dplyr::first(.y$n_days)) vals$value <- NA_real_
           vals
         }) |>
         dplyr::ungroup() |>
         dplyr::left_join(isiv_meta, by = "metric") |>
         dplyr::mutate(
-          n_days_present = n_days, available = is.finite(value),
+          available = is.finite(value),
           unavailable_reason = dplyr::if_else(available, NA_character_, "IS/IV undefined on selected complete-day hourly basis")
         ) |>
         dplyr::select(
@@ -186,9 +221,10 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
     raw <- dplyr::bind_rows(block$daily, block$isiv)
     if (!nrow(raw)) return(raw)
     raw |>
+      duration_apply_availability() |>
       dplyr::mutate(
         analysis_unit_type = "participant_window", analysis_unit_id = window_id,
-        duration_artifact_version = "duration_complete_analysis_days_v2_exact_hours"
+        duration_artifact_version = duration_artifact_version()
       ) |>
       dplyr::select(
         support_id, site, Id, analysis_unit_type, analysis_unit_id, run_id, window_id, window_index,
@@ -218,21 +254,30 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
       part_marker <- paste0(part_path, ".ok")
       support_value <- as.character(block_keys$support_id[[i]])
       site_value <- as.character(block_keys$site[[i]])
+      part <- NULL
       if (reuse_parts && file.exists(part_path)) {
         marker_ok <- file.exists(part_marker)
         if (marker_ok) {
           marker <- readLines(part_marker, n = 2L, warn = FALSE)
-          if (length(marker) && identical(marker[[1L]], "duration_complete_analysis_days_v2_exact_hours")) {
+          if (length(marker) && identical(marker[[1L]], duration_artifact_version())) {
             rows <- if (length(marker) >= 2L) suppressWarnings(as.integer(marker[[2L]])) else NA_integer_
             if (!is.finite(rows) || rows < 0) rows <- nrow(readRDS(part_path))
             if (length(rows) != 1L || !is.finite(rows)) stop("Cannot recover duration checkpoint row count: ", part_path)
             return(list(i = i, path = part_path, rows = rows, support = support_value, site = site_value))
           }
-          message("[duration] rebuilding checkpoint with incompatible hourly-basis marker: ", part_path)
+          if (length(marker) && identical(marker[[1L]], "duration_complete_analysis_days_v2_exact_hours")) {
+            part <- duration_upgrade_v2_part(readRDS(part_path))
+            message("[duration] migrating single-day IS availability without recomputing values: ", part_path)
+          } else {
+            message("[duration] rebuilding checkpoint with incompatible hourly-basis marker: ", part_path)
+          }
         }
       }
-      block <- build_block(block_keys[i, , drop = FALSE])
-      part <- finalize_part(block)
+      if (is.null(part)) {
+        block <- build_block(block_keys[i, , drop = FALSE])
+        part <- finalize_part(block)
+        rm(block)
+      }
       tmp_path <- paste0(part_path, ".tmp")
       if (file.exists(tmp_path)) unlink(tmp_path)
       saveRDS(part, tmp_path, compress = FALSE)
@@ -240,8 +285,8 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
       if (file.exists(part_path)) unlink(part_path)
       if (!file.rename(tmp_path, part_path)) stop("Could not atomically install duration checkpoint: ", part_path)
       rows <- nrow(part)
-      writeLines(c("duration_complete_analysis_days_v2_exact_hours", as.character(rows)), part_marker, useBytes = TRUE)
-      rm(block, part)
+      writeLines(c(duration_artifact_version(), as.character(rows)), part_marker, useBytes = TRUE)
+      rm(part)
       invisible(gc(FALSE))
       list(i = i, path = part_path, rows = rows, support = support_value, site = site_value)
     }
@@ -286,7 +331,7 @@ build_duration_metric_cube <- function(metric_cube, unit_context, metric_types, 
     invisible(gc())
     cube <- list(
       artifact_type = "partitioned_duration_metric_cube",
-      duration_artifact_version = "duration_complete_analysis_days_v2_exact_hours",
+      duration_artifact_version = duration_artifact_version(),
       part_dir = part_dir, parts = part_manifest$part,
       part_manifest = part_manifest, rows = sum(part_manifest$rows, na.rm = TRUE)
     )

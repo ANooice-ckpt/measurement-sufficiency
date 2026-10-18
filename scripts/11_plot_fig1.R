@@ -112,7 +112,7 @@ CORE_VERSION <- ms_plot_assert_core(
     dimension_metric$core_artifact_version, dimension_summary$core_artifact_version,
     dimension_assoc$core_artifact_version)
 )
-ms_plot_assert_prefix(RQ1_VERSION, "rq1_v6_", "rq1_analysis_version")
+ms_plot_assert_prefix(RQ1_VERSION, "rq1_v7_", "rq1_analysis_version")
 if (!grepl(ms_analysis_design_id(), RQ1_VERSION, fixed = TRUE)) {
   stop("Fig. 1 inputs do not match the current frozen analysis design", call. = FALSE)
 }

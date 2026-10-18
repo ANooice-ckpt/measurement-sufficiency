@@ -92,6 +92,17 @@ The single source of truth for the active temporal and duration domains is `scri
 
 Every main artifact carries `core_artifact_version`. A change to measurement-state semantics, duration semantics, schema or output paths requires a normal core-version change. No parallel hash/contract system is used.
 
+The 2026-10-19 minimum-day IS correction is a narrow availability correction:
+native source selection, daily values, hourly basis, complete-day windows and
+all 2–6-day values remain v5. The existing `duration_artifact_version` advances
+to `duration_complete_analysis_days_v3_min2day_is`. Current readers mask
+single-day IS even in old exact-hour v2 blocks. A duration-only resume migrates
+validated v2 blocks by setting only single-day IS value/availability/reason and
+the duration version; it does not recompute their daily aggregates. Other
+duration semantics changes still require the normal Core-version review above.
+RQ1 advances to v7, invalidating affected pair caches and dependent RQ2 fits.
+Missing local duration blocks are not manufactured by changing a manifest.
+
 The v5 revision invalidates v4 support, metric, context and duration caches because
 native-source eligibility and the durable hourly schema changed. All downstream
 scientific versions inherit this new core identity. See `AUDIT_FIXES_20260922.md`

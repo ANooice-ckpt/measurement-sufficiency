@@ -105,8 +105,8 @@ RQ1_VERSION <- ms_plot_one_version(c(observed$rq1_analysis_version, joint$rq1_an
 RQ3_VERSION <- ms_plot_one_version(c(observed$rq3_analysis_version, joint$rq3_analysis_version),
                                    "rq3_analysis_version")
 CORE_VERSION <- ms_plot_assert_core(c(observed$core_artifact_version, joint$core_artifact_version))
-ms_plot_assert_prefix(RQ1_VERSION, "rq1_v6_", "rq1_analysis_version")
-ms_plot_assert_prefix(RQ3_VERSION, "rq3_v9_", "rq3_analysis_version")
+ms_plot_assert_prefix(RQ1_VERSION, c("rq1_v6_", "rq1_v7_"), "rq1_analysis_version")
+ms_plot_assert_prefix(RQ3_VERSION, "rq3_v10_", "rq3_analysis_version")
 if (!all(sort(unique(joint$resolution_s)) %in% sort(ms_primary_temporal_s()))) {
   stop("RQ3 joint artifact contains temporal states outside the frozen primary design", call. = FALSE)
 }

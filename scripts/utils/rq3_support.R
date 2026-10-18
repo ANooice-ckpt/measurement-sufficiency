@@ -32,7 +32,9 @@ rq3_task_projection <- function(joint, metric_inventory, tasks = NULL, tol = 1e-
       by = c("support_id", "placement", "optical", "resolution_s", "n_days", "config_id", "metric"),
       relationship = "many-to-one"
     ) |>
-    dplyr::mutate(available = optically_available & !is.na(status),
+    dplyr::mutate(available = optically_available &
+                    !(metric == "interdaily_stability" & n_days < 2L) &
+                    !is.na(status) & status != "unavailable",
                   resolved = available & !is.na(status) & status == "resolved" & is.finite(R_obs))
   states <- required |>
     dplyr::group_by(task_id, placement, optical, resolution_s, n_days, config_id) |>
@@ -71,6 +73,6 @@ rq3_task_projection <- function(joint, metric_inventory, tasks = NULL, tol = 1e-
             pareto = ifelse(status == "resolved", config_id %in% z$config_id[frontier], NA))
       }))
     }) |> dplyr::ungroup()
-  list(task_projection_version = "rq3_task_projection_v1", inventory = members,
+  list(task_projection_version = "rq3_task_projection_v2_min2day_is", inventory = members,
        states = states, frontiers = frontiers)
 }

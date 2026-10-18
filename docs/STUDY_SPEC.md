@@ -53,6 +53,13 @@ trial_times metadata remains in unit_context for audit, descriptive metadata and
 
 Daily-defined metric windows are aggregated from the durable daily metric cube using the existing semantics: arithmetic aggregation for linear metrics and circular aggregation for circular-time metrics. IS/IV are rebuilt on exact selected dates from the stored hourly basis.
 
+Interdaily stability requires at least two distinct complete analysis dates. A
+single-day IS is unavailable, including 23/25-hour local dates; its finite
+formula value must not be interpreted as a between-day stability estimate.
+Single-day IV remains eligible. The 54-target inventory is unchanged: a task
+requiring IS (including All-54 and Dynamics) is unavailable at one day, with
+undefined sufficiency/Pareto decisions rather than a silently reduced inventory.
+
 Duration contrasts and their shared scale use one maximal stored support per
 placement/optical/metric configuration: eye, eye–chest or eye–wrist respectively;
 MEDI-only support for ordinary MEDI targets, full support for LIGHT or MDER/nvRD.

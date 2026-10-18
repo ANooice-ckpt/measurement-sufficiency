@@ -71,7 +71,7 @@ local({
                    "read_duration_anchor_part", "build_duration_pair_chunk",
                    "canonicalize_pairs", "rq1_marker_rows", "rq1_process_duration_part",
                    "rq1_summary_projection")) eval(assignment(name), envir = e)
-    stopifnot(startsWith(e$RQ1_ANALYSIS_VERSION, "rq1_v6_maximal_duration_support__"))
+    stopifnot(startsWith(e$RQ1_ANALYSIS_VERSION, "rq1_v7_min2day_is__"))
     e$pairwise_part_dir <- file.path(root, paste(partitioned, paste(primary, collapse = "_")),
                                    e$RQ1_ANALYSIS_VERSION)
 
@@ -130,6 +130,19 @@ local({
   stopifnot(nrow(run_case(TRUE, c(20L, 60L))) == 4L,
             nrow(run_case(FALSE, c(20L, 60L))) == 4L,
             identical(tools::md5sum(input_path), before))
+
+  # Old exact-hour blocks can contain finite single-day IS. The production
+  # reader/pair builder must mask it even before physical block migration.
+  e <- new.env(parent = globalenv())
+  e$PRIMARY_TEMPORAL_S <- ms_primary_temporal_s()
+  e$MAX_DURATION_DAYS <- 6L
+  eval(assignment("build_duration_pair_chunk"), envir = e)
+  legacy_is <- values |> mutate(metric = "interdaily_stability", value = 1)
+  is_pairs <- e$build_duration_pair_chunk(legacy_is, windows)
+  stopifnot(nrow(is_pairs) == 2L * length(ms_primary_temporal_s()),
+    all(!is_pairs$pair_available), all(is.na(is_pairs$value_a)),
+    all(is_pairs$value_b == 1), all(is_pairs$available_b),
+    all(grepl("at least two complete", is_pairs$pair_unavailable_reason)))
 })
 
 cat("PASS: RQ1 primary-only duration scales, partition/flat pairs and frozen summary projection\n")

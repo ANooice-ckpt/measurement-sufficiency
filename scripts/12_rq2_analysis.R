@@ -67,6 +67,9 @@ if (!rq1_pairwise_is_partitioned(rq1_artifact)) stop("RQ2 v5 requires partitione
 part_paths <- rq1_pairwise_part_paths(rq1_artifact)
 if (any(!file.exists(part_paths))) stop("Missing RQ1 canonical part")
 RQ1_VERSION <- rq1_pairwise_version(rq1_artifact)
+if (!startsWith(RQ1_VERSION, "rq1_v7_")) {
+  stop("RQ2 duration models require RQ1 v7 minimum-day IS availability; run 10_rq1_analysis.R from existing Core first")
+}
 if (!is.null(rq1_artifact$analysis_design_id) && !identical(as.character(rq1_artifact$analysis_design_id[[1]]), ANALYSIS_DESIGN_ID)) {
   stop("RQ1 artifact analysis design does not match current frozen design")
 }

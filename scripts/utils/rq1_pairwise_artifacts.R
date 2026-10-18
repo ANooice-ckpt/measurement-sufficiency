@@ -1,4 +1,7 @@
 # RQ1 partitioned-artifact helpers.
+if (!exists("duration_apply_availability", mode = "function")) {
+  source("scripts/utils/duration_artifacts.R")
+}
 #
 # The canonical RQ1 object is allowed to be a manifest rather than one large
 # data frame.  Parts are immutable, versioned, and written atomically.  This
@@ -11,6 +14,7 @@
 rq1_primary_duration_values <- function(x, primary_temporal_s = ms_primary_temporal_s()) {
   required <- c("resolution_s", "support_id", "placement", "optical", "metric")
   if (!all(required %in% names(x))) stop("Duration values lack configuration/support fields")
+  x <- duration_apply_availability(x)
   ms_maximal_configuration_support(x[x$resolution_s %in% primary_temporal_s, , drop = FALSE])
 }
 

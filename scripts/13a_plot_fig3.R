@@ -94,7 +94,7 @@ RQ2_VERSION <- ms_plot_one_version(c(condition_rq2, conditional$rq2_analysis_ver
                                    "rq2_analysis_version")
 CORE_VERSION <- ms_plot_assert_core(c(condition_core, conditional$core_artifact_version,
                                      model_manifest$core_artifact_version, gamma_long$core_artifact_version))
-ms_plot_assert_prefix(RQ1_VERSION, "rq1_v6_", "rq1_analysis_version")
+ms_plot_assert_prefix(RQ1_VERSION, "rq1_v7_", "rq1_analysis_version")
 ms_plot_assert_prefix(RQ2_VERSION, "rq2_v5_", "rq2_analysis_version")
 if (is.list(condition) && !is.null(condition$analysis_design_id) &&
     !identical(as.character(condition$analysis_design_id[[1]]), ms_analysis_design_id())) {

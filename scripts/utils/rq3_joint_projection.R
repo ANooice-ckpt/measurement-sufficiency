@@ -68,6 +68,7 @@ rq3_composition_failure <- function(pairs, states, tol=1e-12) {
 }
 
 joint_outgoing <- joint_pair_summary |>
+  filter(is.finite(A), !(metric == "interdaily_stability" & (n_days_a < 2L | n_days_b < 2L))) |>
   group_by(support_id, placement, optical, resolution_a, n_days_a, config_a_id,
            metric, metric_class, metric_geometry) |>
   summarise(
@@ -81,7 +82,13 @@ joint <- joint_state_catalog |>
            "n_days" = "n_days_a", "config_id" = "config_a_id", "metric", "metric_class", "metric_geometry")
   ) |>
   mutate(
-    status = if_else(coalesce(n_higher_observed, 0L) == 0L, "boundary_unresolved", "resolved"),
+    status = case_when(
+      metric == "interdaily_stability" & n_days < 2L ~ "unavailable",
+      coalesce(n_higher_observed, 0L) == 0L ~ "boundary_unresolved",
+      TRUE ~ "resolved"
+    ),
+    unavailable_reason = if_else(status == "unavailable",
+      "interdaily stability requires at least two complete analysis days", NA_character_),
     n_higher_observed = coalesce(n_higher_observed, 0L),
     R_obs = if_else(status == "resolved", R_obs, NA_real_),
     joint_configuration = paste(placement, optical, temporal_label(resolution_s), paste0(n_days, " d"), sep = " | "),
@@ -146,7 +153,7 @@ pareto_summary <- pareto_occupancy |>
 pareto_frequency <- pareto_summary |>
   group_by(support_id, placement, optical, resolution_s, n_days) |>
   summarise(
-    n_metrics_available = n_distinct(metric),
+    n_metrics_available = n_distinct(metric[status != "unavailable"]),
     n_metrics_resolved = n_distinct(metric[status == "resolved"]),
     n_metrics_ever_pareto = if (n_metrics_resolved > 0L) n_distinct(metric[which(ever_pareto)]) else NA_integer_,
     fraction_metrics_ever_pareto = if (n_metrics_resolved > 0L) n_metrics_ever_pareto / n_metrics_resolved else NA_real_,

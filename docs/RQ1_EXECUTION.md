@@ -63,6 +63,24 @@ anchors, excluding reserve intersections and duplicate narrower supports.
 It applies to partitioned and in-memory inputs and does not reuse earlier pair
 parts. Core remains v5; dependent RQ2 checkpoints follow the new RQ1 identity.
 
+The current producer is `rq1_v7_min2day_is__...`. It preserves v6 support rules
+and masks IS whenever a duration state has fewer than two complete dates,
+including when reading older v2 duration blocks. No new v7 pair part may reuse
+the v6 cache. RQ2 duration models require v7; their checkpoint identity already
+includes this upstream version. Historical v6 daily inference and daily
+conditional-reliability artifacts remain labelled with their actual source
+version and may be used by the separate frozen daily diagnostic export.
+
+`Rscript scripts/10c_export_continuous_diagnostics.R` writes continuous signal
+and MAE/MSE tables to `results/continuous_diagnostics/` without fitting or
+bootstrapping. Fixed-reference-coefficient propagation is
+`RMS(W_c beta_r - W_r beta_r)` on the same matched, participant-demeaned design;
+it excludes stable participant offsets and is not total fixed-intercept
+prediction displacement. The original refitted signal displacement is retained.
+Ratios to reference signal are displacement ratios, not fractions of signal
+lost. Continuous prediction losses average target losses before forming skill
+relative to training-fold means; they are separate from exceedance Brier scores.
+
 All pairs within a lattice join one standardizer. Primary scaling is SD; IQR/1.349 is sensitivity. The empirical distribution comes before A=mean(abs(z)) and B=mean(z); A >= |B| is checked.
 
 ## Downstream inferential-preservation extension

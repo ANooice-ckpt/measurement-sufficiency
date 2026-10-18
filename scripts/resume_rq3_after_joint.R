@@ -42,7 +42,7 @@ if (length(CORE_VERSION) != 1L) stop("Core version mismatch")
 CORE_VERSION <- CORE_VERSION[[1]]
 ms_assert_version(pairwise_artifact, "core_artifact_version", core_artifact_version())
 ms_assert_version(duration_artifact, "core_artifact_version", CORE_VERSION)
-RQ3_VERSION <- paste0("rq3_v9_unresolved_decisions__", RQ1_VERSION, "__", ANALYSIS_DESIGN_ID)
+RQ3_VERSION <- paste0("rq3_v10_min2day_is__", RQ1_VERSION, "__", ANALYSIS_DESIGN_ID)
 single <- readr::read_csv(SINGLE_CSV, show_col_types = FALSE, progress = FALSE)
 ms_assert_version(single, "rq3_analysis_version", RQ3_VERSION)
 ms_assert_version(single, "core_artifact_version", CORE_VERSION)
@@ -64,6 +64,7 @@ aggregate_scale <- function(x, geometry) {
 temporal_label <- ms_temporal_label
 read_duration_primary <- function(path) {
   readRDS(path) |>
+    duration_apply_availability() |>
     filter(resolution_s %in% PRIMARY_TEMPORAL_S, n_days %in% PRIMARY_DURATION_DAYS) |>
     select(support_id, site, Id, placement, optical, resolution_s, window_id, n_days,
            window_start, window_end, metric, metric_class, metric_geometry, value, available)
@@ -102,7 +103,7 @@ for (i in seq_along(duration_part_paths)) {
     select(support_id, metric, metric_geometry, value)
   state_parts[[i]] <- z |>
     ms_maximal_configuration_support() |>
-    filter(available, is.finite(value)) |>
+    filter((available & is.finite(value)) | (metric == "interdaily_stability" & n_days < 2L)) |>
     distinct(support_id, placement, optical, resolution_s, n_days, metric, metric_class, metric_geometry)
   if (i %% 8L == 0L || i == length(duration_part_paths)) message("  state catalogue ", i, "/", length(duration_part_paths))
   rm(z); invisible(gc(FALSE))
@@ -124,9 +125,11 @@ source("scripts/utils/rq3_joint_projection.R", local = TRUE)
 boundary_audit <- single |>
   transmute(
     dimension, metric, state_id, n_higher_observed, R_obs, status,
-    pass = if_else(n_higher_observed == 0L,
+    pass = if_else(status == "unavailable", metric == "interdaily_stability" &
+                   dimension == "duration" & state_id == "duration_1d" & is.na(R_obs),
+                   if_else(n_higher_observed == 0L,
                    is.na(R_obs) & status == "boundary_unresolved",
-                   is.finite(R_obs) & status == "resolved")
+                   is.finite(R_obs) & status == "resolved"))
   )
 readr::write_csv(boundary_audit, file.path(DIAG, "rq3_boundary_unresolved_audit.csv"), na = "")
 if (any(!boundary_audit$pass)) stop("RQ3 boundary/status invariant failed")
@@ -135,9 +138,10 @@ joint_boundary_audit <- joint |>
   transmute(
     support_id, placement, optical, resolution_s, n_days, metric,
     n_higher_observed, R_obs, status,
-    pass = if_else(n_higher_observed == 0L,
+    pass = if_else(status == "unavailable", metric == "interdaily_stability" & n_days < 2L & is.na(R_obs),
+                   if_else(n_higher_observed == 0L,
                    is.na(R_obs) & status == "boundary_unresolved",
-                   is.finite(R_obs) & status == "resolved")
+                   is.finite(R_obs) & status == "resolved"))
   )
 readr::write_csv(joint_boundary_audit, file.path(DIAG, "rq3_joint_boundary_unresolved_audit.csv"), na = "")
 if (any(!joint_boundary_audit$pass)) stop("RQ3 joint boundary/status invariant failed")

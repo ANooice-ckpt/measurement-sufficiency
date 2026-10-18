@@ -28,11 +28,11 @@ rq3_prepare_appendix <- function() {
   core_version <- one(joint$core_artifact_version)
   rq1_version <- one(joint$rq1_analysis_version)
   rq3_version <- one(joint$rq3_analysis_version)
-  expected_rq3 <- paste0("rq3_v9_unresolved_decisions__", rq1_version, "__", ms_analysis_design_id())
+  expected_rq3 <- paste0("rq3_v10_min2day_is__", rq1_version, "__", ms_analysis_design_id())
   if (!identical(core_version, core_artifact_version()) ||
       !identical(core_version, one(upstream$core_artifact_version)) ||
       !identical(rq1_version, one(upstream$rq1_analysis_version)) ||
-      !startsWith(rq1_version, "rq1_v6_") || !identical(rq3_version, expected_rq3)) {
+      !any(startsWith(rq1_version, c("rq1_v6_", "rq1_v7_"))) || !identical(rq3_version, expected_rq3)) {
     stop("Appendix requires mutually compatible current Core/RQ1/RQ3 results")
   }
   inventory <- readxl::read_excel(inventory_path) |>
@@ -477,8 +477,11 @@ OUT <- file.path("results", "rq3")
 DIAG <- file.path("results", "diagnostics")
 RQ3_WORKERS <- ms_resolve_workers("RQ3_WORKERS", default = 1L, cap = 48L)
 RQ3_PART_WORKERS <- ms_resolve_workers("RQ3_PART_WORKERS", default = min(8L, RQ3_WORKERS), cap = 12L)
+REFRESH_FROZEN <- "--refresh-frozen-availability" %in% commandArgs(trailingOnly = TRUE)
 ensure_result_dirs(OUT, DIAG)
-for (p in c(RQ1_LONG, RQ1_SUMMARY, LOCAL, DURATION_CUBE)) if (!file.exists(p)) stop("Missing RQ3 input: ", p)
+required_inputs <- c(RQ1_LONG, RQ1_SUMMARY, LOCAL,
+  if (REFRESH_FROZEN) file.path(OUT, c("rq3_joint_summary.csv", "rq3_joint_stability.rds")) else DURATION_CUBE)
+for (p in required_inputs) if (!file.exists(p)) stop("Missing RQ3 input: ", p)
 
 PRIMARY_TEMPORAL_S <- ms_primary_temporal_s()
 PRIMARY_DURATION_DAYS <- ms_primary_duration_days()
@@ -489,10 +492,12 @@ pair_summary <- readr::read_csv(RQ1_SUMMARY, show_col_types = FALSE, progress = 
 rq1_assert_summary_version(pairwise_artifact, pair_summary)
 local <- readr::read_csv(LOCAL, show_col_types = FALSE, progress = FALSE)
 rq1_assert_summary_version(pairwise_artifact, local)
-duration_artifact <- readRDS(DURATION_CUBE)
-if (!duration_cube_is_partitioned(duration_artifact)) stop("RQ3 v5 requires partitioned duration metric cube")
-duration_part_paths <- file.path(duration_artifact$part_dir, duration_artifact$parts)
-if (any(!file.exists(duration_part_paths))) stop("Missing duration metric cube part")
+if (!REFRESH_FROZEN) {
+  duration_artifact <- readRDS(DURATION_CUBE)
+  if (!duration_cube_is_partitioned(duration_artifact)) stop("RQ3 requires partitioned duration metric cube")
+  duration_part_paths <- file.path(duration_artifact$part_dir, duration_artifact$parts)
+  if (any(!file.exists(duration_part_paths))) stop("Missing duration metric cube part")
+}
 
 RQ1_VERSION <- rq1_pairwise_version(pairwise_artifact)
 if (!is.null(pairwise_artifact$analysis_design_id) && !identical(as.character(pairwise_artifact$analysis_design_id[[1]]), ANALYSIS_DESIGN_ID)) {
@@ -502,10 +507,40 @@ CORE_VERSION <- unique(na.omit(c(pairwise_artifact$core_artifact_version, pair_s
 if (length(CORE_VERSION) != 1L) stop("Core version mismatch")
 CORE_VERSION <- CORE_VERSION[[1]]
 ms_assert_version(pairwise_artifact, "core_artifact_version", core_artifact_version())
-ms_assert_version(duration_artifact, "core_artifact_version", CORE_VERSION)
-RQ3_VERSION <- paste0("rq3_v9_unresolved_decisions__", RQ1_VERSION, "__", ANALYSIS_DESIGN_ID)
+if (!REFRESH_FROZEN) ms_assert_version(duration_artifact, "core_artifact_version", CORE_VERSION)
+RQ3_VERSION <- paste0("rq3_v10_min2day_is__", RQ1_VERSION, "__", ANALYSIS_DESIGN_ID)
 NUMERIC_TOL <- 1e-12
 DUAL <- c("MDER", "nvRD")
+if (REFRESH_FROZEN) {
+  # The correction changes only availability at IS/1 d. All other paired
+  # values, six-day scales and supports are identical, so their frozen A/B
+  # summaries can be reused without enumerating windows or refitting models.
+  frozen_paths <- file.path(OUT, c("rq3_joint_summary.csv", "rq3_joint_stability.rds"))
+  frozen_joint <- readr::read_csv(frozen_paths[[1]], show_col_types = FALSE, progress = FALSE)
+  frozen_pairs <- readRDS(frozen_paths[[2]])
+  compatible <- paste0(c("rq3_v9_unresolved_decisions__", "rq3_v10_min2day_is__"),
+                       RQ1_VERSION, "__", ANALYSIS_DESIGN_ID)
+  for (z in list(frozen_joint, frozen_pairs)) {
+    ms_assert_version(z, "core_artifact_version", CORE_VERSION)
+    ms_assert_version(z, "rq1_analysis_version", RQ1_VERSION)
+    ver <- unique(z$rq3_analysis_version)
+    if (length(ver) != 1L || !ver %in% compatible) stop("Incompatible frozen RQ3 availability-refresh input")
+  }
+  if (!all(frozen_joint$resolution_s %in% PRIMARY_TEMPORAL_S) ||
+      !all(frozen_joint$n_days %in% PRIMARY_DURATION_DAYS) ||
+      !all(is.finite(frozen_pairs$A)) || any(frozen_pairs$A + NUMERIC_TOL < abs(frozen_pairs$B))) {
+    stop("Invalid frozen RQ3 domain or pair summaries")
+  }
+  refresh_provenance <- tibble(path = frozen_paths, md5 = unname(tools::md5sum(frozen_paths)),
+    source_rq3_version = c(unique(frozen_joint$rq3_analysis_version), unique(frozen_pairs$rq3_analysis_version)),
+    refreshed_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
+    output_rq3_version = RQ3_VERSION, correction = "single-day IS unavailable; all other A/B unchanged")
+  audit_path <- file.path(DIAG, "rq3_availability_refresh_inputs.csv")
+  if (file.exists(audit_path)) refresh_provenance <- bind_rows(
+    readr::read_csv(audit_path, show_col_types = FALSE, col_types = cols(.default = col_character())),
+    refresh_provenance)
+  readr::write_csv(refresh_provenance, audit_path)
+}
 
 safe_q <- function(x, p) { x <- x[is.finite(x)]; if (length(x)) unname(quantile(x, p, names = FALSE)) else NA_real_ }
 circular_delta <- function(a, b, period = 86400) ((a - b + period / 2) %% period) - period / 2
@@ -524,7 +559,8 @@ temporal_label <- ms_temporal_label
 # Single-dimension observed residual instability on configuration TYPES.
 # -----------------------------------------------------------------------------
 ordered_pairs <- pair_summary |>
-  filter(dimension %in% c("temporal", "duration"), is.finite(A_mean_absolute))
+  filter(dimension %in% c("temporal", "duration"), is.finite(A_mean_absolute) |
+    (dimension == "duration" & metric == "interdaily_stability" & config_a_label == "1 d"))
 if (any(ordered_pairs$dimension == "duration" & grepl("__to__", ordered_pairs$comparison_pair_id, fixed = TRUE))) {
   stop("Concrete duration window ids leaked into RQ3 single-dimension summary")
 }
@@ -544,7 +580,14 @@ state_catalog <- bind_rows(
       dimension == "duration" ~ suppressWarnings(as.integer(str_extract(state_label, "^\\d+"))),
       TRUE ~ NA_integer_
     )
-  )
+  ) |>
+  # v7 finite pair summaries omit unavailable IS/1-d pairs. Keep that state
+  # explicit even when it no longer appears as either endpoint of a pair.
+  bind_rows(ordered_pairs |>
+    filter(dimension == "duration", metric == "interdaily_stability") |>
+    distinct(dimension, comparison_lattice, metric, metric_class, metric_geometry) |>
+    mutate(state_id = "duration_1d", state_label = "1 d", requirement_rank = 1L)) |>
+  distinct()
 if (any(!is.finite(state_catalog$requirement_rank))) stop("RQ3 could not rank an ordered configuration state")
 
 single <- state_catalog |>
@@ -556,6 +599,13 @@ single <- state_catalog |>
              metric == key$metric[[1]])
     map_dfr(seq_len(nrow(states)), function(i) {
       c0 <- states$state_id[[i]]
+      if (key$dimension[[1]] == "duration" && key$metric[[1]] == "interdaily_stability" &&
+          states$requirement_rank[[i]] < 2L) {
+        return(tibble(state_id = c0, state_label = states$state_label[[i]],
+          requirement_rank = states$requirement_rank[[i]], n_higher_observed = 0L,
+          worst_refinement_config = NA_character_, R_obs = NA_real_,
+          status = "unavailable", boundary = FALSE))
+      }
       higher <- p |> filter(config_a_id == c0, is.finite(A_mean_absolute))
       n_higher <- n_distinct(higher$config_b_id)
       if (!n_higher) {
@@ -648,15 +698,18 @@ convergence <- local |>
       dimension == "temporal" ~ requirement_position / length(PRIMARY_TEMPORAL_S),
       TRUE ~ NA_real_
     ),
-    G = as.numeric(G), rq3_analysis_version = RQ3_VERSION
+    G = if_else(dimension == "duration" & metric == "interdaily_stability" &
+      requirement_position < 2L, NA_real_, as.numeric(G)), rq3_analysis_version = RQ3_VERSION
   )
 readr::write_csv(convergence, file.path(OUT, "rq3_convergence_profile.csv"), na = "")
 
 # -----------------------------------------------------------------------------
 # Joint temporal x duration stability, streamed over duration-cube parts.
 # -----------------------------------------------------------------------------
+if (!REFRESH_FROZEN) {
 read_duration_primary <- function(path) {
   readRDS(path) |>
+    duration_apply_availability() |>
     filter(resolution_s %in% PRIMARY_TEMPORAL_S, n_days %in% PRIMARY_DURATION_DAYS) |>
     select(support_id, site, Id, placement, optical, resolution_s, window_id, n_days,
            window_start, window_end, metric, metric_class, metric_geometry, value, available)
@@ -672,7 +725,7 @@ for (i in seq_along(duration_part_paths)) {
     select(support_id, metric, metric_geometry, value)
   state_parts[[i]] <- z |>
     ms_maximal_configuration_support() |>
-    filter(available, is.finite(value)) |>
+    filter((available & is.finite(value)) | (metric == "interdaily_stability" & n_days < 2L)) |>
     distinct(support_id, placement, optical, resolution_s, n_days, metric, metric_class, metric_geometry)
   rm(z); invisible(gc(FALSE))
 }
@@ -735,7 +788,7 @@ ord <- order(cost, decreasing = TRUE, na.last = TRUE)
 partials_scheduled <- ms_parallel_map(
   duration_part_paths[ord], build_joint_part, workers = RQ3_PART_WORKERS,
   packages = "tidyverse",
-  exports = c("build_joint_part", "read_duration_primary", "ms_maximal_configuration_support", "PRIMARY_TEMPORAL_S", "PRIMARY_DURATION_DAYS",
+  exports = c("build_joint_part", "read_duration_primary", "duration_apply_availability", "ms_maximal_configuration_support", "PRIMARY_TEMPORAL_S", "PRIMARY_DURATION_DAYS",
               "DUAL", "joint_anchor", "circular_delta")
 )
 partials <- partials_scheduled[order(ord)]
@@ -748,6 +801,18 @@ joint_pair_summary <- bind_rows(partials) |>
   )
 rm(partials, partials_scheduled)
 invisible(gc())
+} else {
+  message("RQ3: refresh availability and projections from frozen pairs; no duration blocks or fits")
+  joint_state_catalog <- frozen_joint |>
+    select(support_id, placement, optical, resolution_s, n_days, config_id,
+           metric, metric_class, metric_geometry)
+  removed <- frozen_pairs |>
+    filter(metric == "interdaily_stability" & (n_days_a < 2L | n_days_b < 2L))
+  if (nrow(removed)) readr::write_csv(removed, file.path(DIAG, "rq3_removed_single_day_is_pairs.csv"))
+  joint_pair_summary <- frozen_pairs |>
+    filter(!(metric == "interdaily_stability" & (n_days_a < 2L | n_days_b < 2L)))
+  attr(joint_pair_summary, "task_projection") <- NULL
+}
 if (nrow(joint_pair_summary) && any(joint_pair_summary$A + NUMERIC_TOL < abs(joint_pair_summary$B))) {
   stop("RQ3 joint A >= |B| invariant failed")
 }
@@ -761,25 +826,40 @@ source("scripts/utils/rq3_joint_projection.R", local = TRUE)
 boundary_audit <- single |>
   transmute(
     dimension, metric, state_id, n_higher_observed, R_obs, status,
-    pass = if_else(n_higher_observed == 0L,
+    pass = if_else(status == "unavailable",
+                   metric == "interdaily_stability" & dimension == "duration" & state_id == "duration_1d" & is.na(R_obs),
+                   if_else(n_higher_observed == 0L,
                    is.na(R_obs) & status == "boundary_unresolved",
-                   is.finite(R_obs) & status == "resolved")
+                   is.finite(R_obs) & status == "resolved"))
   )
 readr::write_csv(boundary_audit, file.path(DIAG, "rq3_boundary_unresolved_audit.csv"), na = "")
 if (any(!boundary_audit$pass)) stop("RQ3 boundary/status invariant failed")
 joint_boundary_audit <- joint |>
   transmute(support_id, placement, optical, resolution_s, n_days, metric,
             n_higher_observed, R_obs, status,
-            pass = if_else(n_higher_observed == 0L,
+            pass = if_else(status == "unavailable",
+                           metric == "interdaily_stability" & n_days < 2L & is.na(R_obs),
+                           if_else(n_higher_observed == 0L,
                            is.na(R_obs) & status == "boundary_unresolved",
-                           is.finite(R_obs) & status == "resolved"))
+                           is.finite(R_obs) & status == "resolved")))
 readr::write_csv(joint_boundary_audit, file.path(DIAG, "rq3_joint_boundary_unresolved_audit.csv"), na = "")
 if (any(!joint_boundary_audit$pass)) stop("RQ3 joint boundary/status invariant failed")
+if (REFRESH_FROZEN) {
+  unchanged <- !(frozen_joint$metric == "interdaily_stability" & frozen_joint$n_days < 2L)
+  key <- c("support_id", "placement", "optical", "resolution_s", "n_days", "metric")
+  before <- frozen_joint[unchanged, c(key, "R_obs", "status")] |> arrange(across(all_of(key)))
+  after <- joint |> filter(!(metric == "interdaily_stability" & n_days < 2L)) |>
+    select(all_of(c(key, "R_obs", "status"))) |> arrange(across(all_of(key)))
+  stopifnot(isTRUE(all.equal(before, after, tolerance = 1e-12, check.attributes = FALSE)))
+  message("Verified: every non-single-day-IS R_obs/status is unchanged")
+}
 
 writeLines(c(
   "# RQ3 run report", "",
   paste0("RQ1 upstream: ", RQ1_VERSION), paste0("RQ3 analysis version: ", RQ3_VERSION),
   paste0("Analysis design: ", ANALYSIS_DESIGN_ID),
+  paste0("Frozen availability refresh: ", REFRESH_FROZEN, "; upstream RQ1 version is retained, not relabelled."),
+  "Single-day IS is unavailable; IV remains eligible. All-target and Dynamics tasks retain the missing required target and NA decisions.",
   paste0("Primary temporal states: ", paste(PRIMARY_TEMPORAL_S, collapse = ", "), " s."),
   "Single-dimension R_obs is computed on temporal/duration configuration TYPES from RQ1 pair summaries.",
   "Threshold-like sufficient-set checks exclude unresolved boundaries and require false->true monotone ordering with increasing burden.",

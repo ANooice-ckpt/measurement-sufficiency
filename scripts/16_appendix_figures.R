@@ -59,7 +59,7 @@ read_input <- function(key) readr::read_csv(input_paths[[key]], show_col_types =
 rq1 <- read_input("summary")
 CORE_VERSION <- ms_plot_assert_core(rq1$core_artifact_version)
 RQ1_VERSION <- ms_plot_one_version(rq1$rq1_analysis_version, "RQ1 appendix input")
-ms_plot_assert_prefix(RQ1_VERSION, "rq1_v6_", "RQ1 appendix input")
+ms_plot_assert_prefix(RQ1_VERSION, "rq1_v7_", "RQ1 appendix input")
 validate_versions <- function(x, label) {
   ms_plot_assert_core(x$core_artifact_version, CORE_VERSION)
   if (!identical(ms_plot_one_version(x$rq1_analysis_version, label), RQ1_VERSION)) stop(label, " upstream mismatch")
@@ -81,7 +81,7 @@ single <- read_input("single"); validate_versions(single, "RQ3 single-axis")
 joint <- read_input("joint"); validate_versions(joint, "RQ3 joint")
 RQ3_VERSION <- ms_plot_one_version(joint$rq3_analysis_version, "RQ3 appendix input")
 if (!identical(RQ3_VERSION, ms_plot_one_version(single$rq3_analysis_version, "RQ3 single-axis")) ||
-    !identical(RQ3_VERSION, paste0("rq3_v9_unresolved_decisions__", RQ1_VERSION, "__", ms_analysis_design_id()))) stop("RQ3 version mismatch")
+    !identical(RQ3_VERSION, paste0("rq3_v10_min2day_is__", RQ1_VERSION, "__", ms_analysis_design_id()))) stop("RQ3 version mismatch")
 joint_sensitivity <- readRDS(input_paths[["joint_sensitivity"]])
 validate_versions(joint_sensitivity, "RQ3 appendix target sensitivity")
 ms_assert_version(joint_sensitivity, "rq3_analysis_version", RQ3_VERSION)

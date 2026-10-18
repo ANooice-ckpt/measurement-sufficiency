@@ -58,7 +58,7 @@ ms_plot_one_version <- function(values, label) {
 }
 
 ms_plot_assert_prefix <- function(value, prefix, label) {
-  if (!startsWith(value, prefix)) {
+  if (!any(startsWith(value, prefix))) {
     stop(label, " has unsupported version: ", value, "; expected prefix ", prefix, call. = FALSE)
   }
   invisible(value)

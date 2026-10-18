@@ -73,7 +73,12 @@ compare_isiv <- function(series) {
     LightLogR::interdaily_stability(LightLogR::log_zero_inflated(series$MEDI), series$Datetime, na.rm = TRUE),
     LightLogR::intradaily_variability(LightLogR::log_zero_inflated(series$MEDI), series$Datetime, na.rm = TRUE)
   ))
-  stopifnot(max(abs(observed - expected)) < 1e-12)
+  if (n_distinct(series$Date) < 2L) {
+    stopifnot(is.na(observed[[1L]]), is.finite(observed[[2L]]),
+              abs(observed[[2L]] - expected[[2L]]) < 1e-12)
+  } else {
+    stopifnot(max(abs(observed - expected)) < 1e-12)
+  }
   context
 }
 fall <- hour_fixture("2024-10-27", "2024-10-28")
@@ -82,7 +87,22 @@ fall_basis <- duration_decode_hourly_basis(fall_context$isiv_hourly_basis)
 stopifnot(nrow(fall_basis) == 25L, sum(fall_basis[, 2L] == 2L) == 2L)
 spring_context <- compare_isiv(hour_fixture("2024-03-31", "2024-04-01"))
 stopifnot(nrow(duration_decode_hourly_basis(spring_context$isiv_hourly_basis)) == 23L)
-invisible(compare_isiv(hour_fixture("2024-10-26", "2024-10-27")))
+ordinary_context <- compare_isiv(hour_fixture("2024-10-26", "2024-10-27"))
+# Two rows on the same complete date still provide only one day of evidence.
+ordinary_basis <- duration_decode_hourly_basis(ordinary_context$isiv_hourly_basis)
+split_date <- ordinary_context[rep(1L, 2L), ]
+split_date$isiv_hourly_basis <- list(ordinary_basis[1:12, ], ordinary_basis[13:24, ])
+stopifnot(is.na(duration_isiv_from_context(split_date)$value[[1L]]))
+# All retained 2--6-day values still reproduce the published formula, including DST.
+for (n_days in 2:6) {
+  invisible(compare_isiv(hour_fixture("2024-10-24", as.character(as.Date("2024-10-24") + n_days))))
+}
+# Perfectly repeated multiday profiles legitimately have IS=1 and must remain valid.
+repeated <- ordinary_context[rep(1L, 2L), ]
+repeated$Date <- as.Date("2024-10-24") + 0:1
+next_basis <- ordinary_basis; next_basis[, 1L] <- next_basis[, 1L] + 86400
+repeated$isiv_hourly_basis <- list(ordinary_basis, next_basis)
+stopifnot(abs(duration_isiv_from_context(repeated)$value[[1L]] - 1) < 1e-12)
 series <- hour_fixture("2024-10-26", "2024-10-29")
 # Include a completely missing hour and unequal partial-hour support.
 series$MEDI[series$Date == as.Date("2024-10-26") & lubridate::hour(series$Datetime) == 4L] <- NA_real_
@@ -112,19 +132,48 @@ local({
   first <- build_duration_metric_cube(metric_cube, unit_context, metric_types, part_dir = part_dir)
   resumed <- build_duration_metric_cube(metric_cube, unit_context, metric_types, part_dir = part_dir)
   stopifnot(first$cube$rows > 0, identical(first$cube$rows, resumed$cube$rows),
-            all(is.finite(resumed$cube$part_manifest$rows)))
+            all(is.finite(resumed$cube$part_manifest$rows)),
+            identical(first$cube$duration_artifact_version, duration_artifact_version()))
   # A historical one-line marker must recover its count rather than imply zero.
   marker <- paste0(file.path(part_dir, first$cube$parts[[1L]]), ".ok")
-  writeLines("duration_complete_analysis_days_v2_exact_hours", marker)
+  writeLines(duration_artifact_version(), marker)
   recovered <- build_duration_metric_cube(metric_cube, unit_context, metric_types, part_dir = part_dir)
   stopifnot(identical(first$cube$rows, recovered$cube$rows))
+  actual <- load_duration_metric_cube(first$cube)
+  single_is <- actual |> filter(n_days == 1L, metric == "interdaily_stability")
+  single_iv <- actual |> filter(n_days == 1L, metric == "intradaily_variability")
+  stopifnot(nrow(single_is) == 3L, all(is.na(single_is$value)), all(!single_is$available),
+            all(single_is$unavailable_reason == "interdaily stability requires at least two complete analysis days"),
+            nrow(single_iv) == 3L, all(is.finite(single_iv$value)), all(single_iv$available))
+  # Upgrade completed v2 parts in place, without recomputing daily/multiday values.
+  legacy <- actual
+  affected <- legacy$metric == "interdaily_stability" & legacy$n_days == 1L
+  legacy$value[affected] <- 1
+  legacy$available[affected] <- TRUE
+  legacy$unavailable_reason[affected] <- NA_character_
+  legacy$duration_artifact_version <- "duration_complete_analysis_days_v2_exact_hours"
+  # Downstream readers can apply the availability rule before selecting columns,
+  # without a stored version, present-day count or pre-existing reason column.
+  minimal <- legacy |> select(metric, n_days, value, available)
+  screened <- duration_apply_availability(minimal)
+  stopifnot(all(is.na(screened$value[affected])), all(!screened$available[affected]),
+            identical(screened$value[!affected], minimal$value[!affected]),
+            identical(screened$available[!affected], minimal$available[!affected]),
+            all(!is.na(screened$unavailable_reason[affected])))
+  saveRDS(legacy, file.path(part_dir, first$cube$parts[[1L]]), compress = FALSE)
+  writeLines(c("duration_complete_analysis_days_v2_exact_hours", nrow(legacy)), marker)
+  changed_input <- metric_cube |> mutate(value = value + 1000)
+  migrated <- build_duration_metric_cube(changed_input, unit_context, metric_types, part_dir = part_dir)
+  stopifnot(identical(load_duration_metric_cube(migrated$cube), actual),
+            identical(readLines(marker, n = 1L), duration_artifact_version()))
+  expect_error(duration_upgrade_v2_part(actual))
   writeLines("duration_complete_analysis_days_v1", marker)
   replaced <- build_duration_metric_cube(metric_cube, unit_context, metric_types, part_dir = part_dir)
   stopifnot(identical(first$cube$rows, replaced$cube$rows),
-            identical(readLines(marker, n = 1L), "duration_complete_analysis_days_v2_exact_hours"))
+            identical(readLines(marker, n = 1L), duration_artifact_version()))
   actual <- load_duration_metric_cube(first$cube)
   full <- actual |> filter(n_days == 3L, metric %in% c("interdaily_stability", "intradaily_variability")) |> arrange(metric)
   oracle <- duration_isiv_from_context(context) |> arrange(metric)
   stopifnot(max(abs(full$value - oracle$value)) < 1e-12)
 })
-cat("PASS: native source cadence/support isolation, exact sparse values, DST IS/IV, CSV persistence, duration resume counts\n")
+cat("PASS: native cadence, sparse values, minimum-day IS/retained IV, 2--6-day and DST formulas, CSV persistence, v2 migration and resume counts\n")

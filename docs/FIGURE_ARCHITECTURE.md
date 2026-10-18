@@ -32,6 +32,23 @@ primary temporal states are 10, 20, 30, 40, 60 and 120 s; monitoring duration
 is 1–6 complete analysis days. Five minutes is a core sensitivity state only and
 does not enter the primary figures.
 
+After the minimum-day IS correction, Fig. 1/Fig. 3 and the combined appendix
+require RQ1 v7 rather than accepting stale duration results. Fig. 2 may retain
+the unchanged v6 daily inference. Fig. 5/Fig. 6 require RQ3 v10 and task
+projection v2. `14_rq3_analysis.R --refresh-frozen-availability` can refresh
+the latter from compatible frozen v9/v10 pairs and state catalogues without
+opening duration blocks: single-day IS is removed from pairs, retained as an
+unavailable state, and all other R_obs/status values are checked unchanged.
+The upstream RQ1 version is retained honestly; this is not a full RQ1/RQ2 rerun.
+
+`14c_rq3_common_reference.R` separately freezes target-level loss to the same
+placement/optical facet's 10-s/6-day reference and nominal-record budget
+projections. These are descriptive projections of existing pair summaries;
+the summaries cannot verify identical parent-window identities and weights
+between candidate configurations. They neither replace R_obs nor establish
+a controlled common-sample optimal design. Plot scripts must read these exports
+if they display this new quantity, rather than deriving it inside a plot.
+
 ## Plot-script architecture
 
 Each main-text figure has exactly one canonical plotting script:

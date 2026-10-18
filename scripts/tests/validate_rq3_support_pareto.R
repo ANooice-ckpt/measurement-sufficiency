@@ -34,7 +34,7 @@ check_projection <- function(A) {
   source("scripts/utils/rq3_joint_projection.R", local = TRUE)
   saved <- readRDS(file.path(OUT, "rq3_joint_stability.rds"))
   stopifnot(is.data.frame(saved), nrow(saved) == nrow(joint_pair_summary),
-    identical(attr(saved, "task_projection")$task_projection_version, "rq3_task_projection_v1"))
+    identical(attr(saved, "task_projection")$task_projection_version, "rq3_task_projection_v2_min2day_is"))
   stopifnot(all(!composition$states$composition_resolved),
             all(is.na(composition$summary$failure_rate)))
   boundary <- pareto_occupancy |> filter(config_id == "r10__d6")
@@ -87,6 +87,40 @@ check_projection <- function(A) {
 }
 check_projection(.5)
 check_projection(0)
+
+# v7 finite summaries have no single-day IS pairs. Execute the production state
+# catalogue and single-axis projection to retain its explicit unavailable state.
+local({
+  code <- as.list(parse("scripts/14_rq3_analysis.R"))
+  expressions <- lapply(c("state_catalog", "single"), function(name) {
+    found <- Filter(function(e) is.call(e) && identical(e[[1]], as.name("<-")) &&
+      identical(e[[2]], as.name(name)), code)
+    stopifnot(length(found) == 1L)
+    found[[1L]]
+  })
+  current_pairs <- tibble(dimension = "duration", comparison_lattice = "duration",
+    metric = "interdaily_stability", metric_class = "temporal dynamics", metric_geometry = "linear",
+    config_a_id = "duration_2d", config_b_id = "duration_6d",
+    config_a_label = "2 d", config_b_label = "6 d", A_mean_absolute = .3)
+  project <- function(pairs) {
+    e <- new.env(parent = globalenv())
+    e$ordered_pairs <- pairs
+    e$PRIMARY_TEMPORAL_S <- ms_primary_temporal_s()
+    e$temporal_label <- ms_temporal_label
+    e$CORE_VERSION <- e$RQ1_VERSION <- e$RQ3_VERSION <- "synthetic"
+    for (expr in expressions) eval(expr, envir = e)
+    stopifnot(!anyDuplicated(e$state_catalog$state_id), !anyDuplicated(e$single$state_id))
+    e$single |> arrange(requirement_rank)
+  }
+  current <- project(current_pairs)
+  stopifnot(identical(current$state_id, c("duration_1d", "duration_2d", "duration_6d")),
+    identical(current$status, c("unavailable", "resolved", "boundary_unresolved")),
+    is.na(current$R_obs[[1L]]), current$R_obs[[2L]] == .3, is.na(current$R_obs[[3L]]),
+    current$n_higher_observed[[1L]] == 0L, !current$boundary[[1L]], current$boundary[[3L]])
+  legacy_pairs <- bind_rows(current_pairs, current_pairs |>
+    mutate(config_a_id = "duration_1d", config_a_label = "1 d", A_mean_absolute = 1.9))
+  stopifnot(identical(project(legacy_pairs), current))
+})
 
 # Execute the single-axis producer and query its frozen decisions as Fig. 5
 # does. Include a non-threshold-like set, an upper boundary and exact endpoints.
@@ -159,6 +193,50 @@ stopifnot(all(missing$states$status[missing$states$config_id == "r120__d1"] == "
 absent_inventory <- bind_rows(inventory, tibble(metric = "absent", metric_class = "level"))
 absent <- rq3_task_projection(task_joint, absent_inventory)
 stopifnot(all(absent$states$status[absent$states$task_id %in% c("all_targets", "level")] == "unavailable"))
+
+# A legacy finite single-day IS must not turn All-54 into All-53, or make the
+# Dynamics task pass. Check the published inventory, including unchanged IV.
+local({
+  published_inventory <- readxl::read_excel("external/zauner_position/data/metric_types.xlsx") |>
+    transmute(metric = name, metric_class = metric_type)
+  stopifnot(n_distinct(published_inventory$metric) == 54L)
+  domain <- tibble(resolution_s = c(120L, 60L, 10L), n_days = c(1L, 2L, 6L),
+                   R_obs = c(.1, .2, NA_real_),
+                   status = c("resolved", "resolved", "boundary_unresolved")) |>
+    mutate(config_id = paste0("r", resolution_s, "__d", n_days))
+  stale_joint <- tidyr::crossing(domain, published_inventory) |>
+    mutate(placement = "eye", optical = "MEDI",
+      support_id = if_else(metric %in% c("MDER", "nvRD"), "eye_full", "eye_medi"))
+  stopifnot(is.finite(stale_joint$R_obs[stale_joint$n_days == 1L &
+    stale_joint$metric == "interdaily_stability"]))
+  screened <- rq3_task_projection(stale_joint, published_inventory)
+  unavailable <- screened$states |> filter(n_days == 1L,
+    task_id %in% c("all_targets", "temporal dynamics"))
+  stopifnot(nrow(unavailable) == 2L, all(unavailable$status == "unavailable"),
+    unavailable$n_required[unavailable$task_id == "all_targets"] == 54L,
+    unavailable$n_available[unavailable$task_id == "all_targets"] == 53L,
+    unavailable$n_required[unavailable$task_id == "temporal dynamics"] == 7L,
+    unavailable$n_available[unavailable$task_id == "temporal dynamics"] == 6L,
+    all(unavailable$missing_targets == "interdaily_stability"),
+    all(is.na(unavailable$R_task)))
+  frontier <- screened$frontiers |> filter(n_days == 1L,
+    task_id %in% c("all_targets", "temporal dynamics"))
+  stopifnot(nrow(frontier) > 0L, all(is.na(frontier$sufficient)), all(is.na(frontier$pareto)),
+    all(screened$states$status[screened$states$n_days == 2L] == "resolved"),
+    all(screened$states$status[screened$states$n_days == 6L] == "boundary_unresolved"))
+  iv <- rq3_task_projection(stale_joint, published_inventory,
+    list(iv_only = "intradaily_variability"))
+  stopifnot(iv$states$status[iv$states$n_days == 1L] == "resolved",
+    iv$states$n_available[iv$states$n_days == 1L] == 1L)
+  # Repairing the stale metric row explicitly cannot change these decisions.
+  repaired <- stale_joint |>
+    mutate(status = if_else(metric == "interdaily_stability" & n_days == 1L,
+                            "unavailable", status),
+      R_obs = if_else(metric == "interdaily_stability" & n_days == 1L, NA_real_, R_obs)) |>
+    rq3_task_projection(published_inventory)
+  stopifnot(identical(screened$states, repaired$states),
+            identical(screened$frontiers, repaired$frontiers))
+})
 
 # Removing a binding target can expand sufficiency and displace the old
 # frontier. Omitting a nonbinding target leaves the same resolved decisions;
