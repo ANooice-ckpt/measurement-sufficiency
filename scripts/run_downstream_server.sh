@@ -168,6 +168,12 @@ LOG="results/logs/downstream_v5.log"
   echo "===== FIGURE 6 ====="
   Rscript scripts/15b_plot_fig6.R
 
+  echo "===== SIX-ITEM RESULTS APPENDIX ====="
+  Rscript scripts/14_rq3_analysis.R --appendix
+  Rscript scripts/14_rq3_analysis.R --appendix-robustness
+  Rscript scripts/14_rq3_analysis.R --appendix-phase
+  Rscript scripts/16_appendix_figures.R
+
   echo "===== PROVENANCE ====="
   git rev-parse HEAD > results/logs/git_commit.txt
   git status --short > results/logs/git_status_after_run.txt

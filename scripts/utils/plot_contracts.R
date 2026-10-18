@@ -197,6 +197,11 @@ ms_plot_save <- function(plot, path, width, height,
   }
 
   figure_dir <- file.path("results", "figures")
+  # The numbered appendix is the manuscript supplement. Earlier exploratory
+  # layouts remain reproducible diagnostics without consuming its six slots.
+  if (startsWith(current_id, "FigS_") && !grepl("^FigS[1-5]_", current_id)) {
+    figure_dir <- file.path("results", "diagnostics", "figure_exploration")
+  }
   output_path <- file.path(figure_dir, basename(path))
   dir.create(figure_dir, recursive = TRUE, showWarnings = FALSE)
 

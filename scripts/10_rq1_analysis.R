@@ -691,12 +691,14 @@ participant_balanced <- read_rq1_fragment_component("participant") |>
   mutate(A_participant = sum_abs / n_units, B_participant = sum_signed / n_units) |>
   group_by(across(all_of(summary_groups))) |>
   summarise(A_participant_balanced = mean(A_participant), B_participant_balanced = mean(B_participant),
-            n_participants = n(), .groups = "drop")
+            n_participants = n(), .groups = "drop") |>
+  mutate(core_artifact_version = CORE_VERSION, rq1_analysis_version = RQ1_ANALYSIS_VERSION)
 readr::write_csv(participant_balanced, file.path(OUT, "rq1_participant_balanced_sensitivity.csv"), na = "")
 robust <- read_rq1_fragment_component("robust") |>
   group_by(across(all_of(summary_groups))) |>
   summarise(A_robust = sum(sum_abs) / sum(n_units), B_robust = sum(sum_signed) / sum(n_units),
-            n_units = sum(n_units), .groups = "drop")
+            n_units = sum(n_units), .groups = "drop") |>
+  mutate(core_artifact_version = CORE_VERSION, rq1_analysis_version = RQ1_ANALYSIS_VERSION)
 readr::write_csv(robust, file.path(OUT, "rq1_robust_scale_sensitivity.csv"), na = "")
 
 readr::write_csv(duration_cohort_audit(duration_manifest), file.path(DIAG, "duration_cohort_audit.csv"), na = "")

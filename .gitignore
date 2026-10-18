@@ -20,7 +20,11 @@ results/
 logs/*
 !logs/.gitkeep
 
+# Local manuscript drafts, review artifacts and reference exports
+/manuscript/
+
 # Local scratch directories and external-project staging
+/tmp/
 /.tmp*/
 
 # R

@@ -82,6 +82,12 @@ Rscript scripts/13b_plot_fig4.R
 Rscript scripts/14_rq3_analysis.R
 Rscript scripts/15a_plot_fig5.R
 Rscript scripts/15b_plot_fig6.R
+
+# Results appendix: explicit sensitivities, then Table S1 plus Figs. S1-S5
+Rscript scripts/14_rq3_analysis.R --appendix
+RQ3_APPENDIX_BOOTSTRAP=1000 Rscript scripts/14_rq3_analysis.R --appendix-robustness
+RQ3_PHASE_WORKERS=4 Rscript scripts/14_rq3_analysis.R --appendix-phase
+Rscript scripts/16_appendix_figures.R
 ```
 
 RQ1-RQ3 remain the canonical scientific analysis sources. The inferential-preservation extension is an RQ1 downstream-consequence layer rather than a new research question. It uses 52 participant-day light representations and six day-level outcomes spanning **Sleep** (sleep quality, awakenings, awake duration), **Alertness** (daily KSS) and **Affect** (daily positive and negative MoodZoom composites), with exactly eight single-axis contrasts against eye/MEDI/10 s: chest, wrist, LIGHT, and 20/30/40/60/120 s. Sleep outcomes pair exposure day D with the following-morning diary; repeated current-conditions EMA responses are harmonized to nominal 11/14/17/20 h slots and summarized to same-day alertness/affect phenotypes. The analysis is descriptive association preservation rather than a temporally resolved causal health-effect model.
@@ -97,6 +103,8 @@ Linux execution has three maintained entrypoints: `scripts/run_core_artifacts.sh
 The analysis stages emit versioned model/checkpoint and figure provenance tables alongside their primary outputs. Main PNG figures are centralized under `results/figures`; RQ-specific figure manifests remain at the corresponding `results/rqX/` roots.
 
 RQ1's primary upstream artifact is `results/rq1/rq1_pairwise_change_long.rds`, a manifest for versioned canonical parts. RQ2 uses the manifest loader and selects only primary pairwise rows/columns. RQ3 reads the RQ1 pairwise summaries and actual `results/core/duration_metric_cube.rds`. Plot scripts read frozen RQ outputs only; they do not load raw MeLiDos series, call LightLogR metric operators, refit models, bootstrap, construct duration windows or calculate gamma/sufficiency.
+
+The appendix robustness mode reconstructs focused MEDI windows from durable daily values and exact hourly bases, validates them against frozen joint comparisons, and evaluates participant sampling and scale sensitivity without changing primary RQ3 results. The explicit phase mode accesses raw observations for the requested alternate 20-s sampling phase at three adjacent designs; original supports and windows remain fixed. Appendix plotting consumes these frozen sensitivity outputs. Bootstrap percentages describe sufficiency at nine fixed states, with unresolved counts retained, rather than whole-frontier selection probabilities.
 
 Context analyses previously split across historical `10b`, `10c` and `12b` entry points are no longer separate context-analysis stages. The current `10b_rq1_inferential_preservation.R` is a different, dedicated downstream-inference extension. Reusable context operators belong in `scripts/utils/` or in the RQ2 checkpointed stages; `12c_rq2_context_models.R` is sourced internally by the canonical RQ2 entrypoint rather than run as a standalone stage.
 

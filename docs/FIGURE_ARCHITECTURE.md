@@ -100,11 +100,14 @@ Plot scripts read only frozen RQ outputs. Figure-level display summaries may be
 derived from those frozen artifacts and written as audit CSVs, but plotting does
 not change canonical RQ estimands or downstream sufficiency calculations.
 
-`ms_plot_save()` centralizes all raster figure output in:
+`ms_plot_save()` centralizes manuscript raster figure output in:
 
 ```text
 results/figures/
 ```
+
+Unnumbered historical supplementary layouts are diagnostic exports under
+`results/diagnostics/figure_exploration/`; the six-item appendix is described below.
 
 PDF calls retained in older plotting blocks are no-ops; PNG is the canonical
 figure artifact. Figure manifests are normalized out of legacy per-RQ figure
@@ -478,3 +481,91 @@ single-target sufficient/Pareto decisions as NA. Core v5 remains unchanged.
 Fig. 5a queries the frozen single-dimension requirement table at its existing
 breakpoints, and Fig. 5c reads frozen substitutability coverage. Neither panel
 reimplements sufficiency. The original layout and display-table exports remain.
+
+## Results appendix (2026-10-13)
+
+`scripts/16_appendix_figures.R` is the independent appendix entrypoint. It
+produces exactly six manuscript items, using frozen results only:
+
+| Item | Evidence role | Frozen inputs |
+| --- | --- | --- |
+| Table S1 | Comparable support, units and availability | Core source/cohort/window audits, RQ1 availability, matched inference summaries |
+| Fig. S1 | Standardization, participant weighting, and joint-decision scale dependence | RQ1 sensitivities plus RQ3 support-specific SD/IQR rescaling |
+| Fig. S2 | Reference-strength dependence of preservation | Current three-domain, eight-anchor RQ1 inference artifact |
+| Fig. S3 | Held-out contextual performance and group calibration | RQ2 layered grouped-CV performance and conditional-reliability risk profiles |
+| Fig. S4 | Sampling phase at adjacent reduced joint designs | Both 20-s source-grid phases for the three prespecified MEDI neighbours |
+| Fig. S5 | Target composition and participant sampling | Leave-one-target-out frontiers plus cluster-bootstrap All-54 stability at nine fixed states |
+
+Fig. S2 is composed by `ms_fig2_appendix_strength()` in the canonical
+`11b_plot_fig2.R`; the appendix imports that function without running the main
+figure. Linear/circular geometries and the exact task-matched reference within
+R² stay separate. Nested R² strata (all, ≥0.1%, ≥1%, ≥5%) are descriptive;
+empty strata have zero task counts and undefined estimates. Medians and IQRs
+describe task heterogeneity, not uncertainty intervals or independent replicates.
+
+Fig. S3 retains negative held-out R². Calibration points are equal-target mean
+predicted and observed probabilities within the three outer-training-defined
+context-risk groups, for chest, LIGHT and 120-s contrasts at ε=.10/.50. These
+are group calibration diagnostics, not individual probability-bin calibration
+curves. The frozen export includes coverage and target counts. Grouped validation
+supports new participants in the observed site mixture, not new study sites.
+
+The focused phase experiment is prepared explicitly with
+`Rscript scripts/14_rq3_analysis.R --appendix-phase`. It reconstructs the original
+eligible supports, applies the alternate +10-s phase to the 20-s coarser neighbour
+of each MEDI All-54 design at epsilon=.50, and recomputes all 54 targets and every
+higher comparison at those three states. Both possible 20-s grid phases retain
+exact source timestamps and values. Participant/day supports, all contiguous
+windows and original support-specific SD anchors remain fixed. The chosen and
+one-day-shorter 10-s configurations have no alternate grid phase. This is a
+focused observation-operator sensitivity, not a complete phase-by-cadence or
+participant-specific random-phase experiment. Source hashes, exact-row checks
+and a primary-phase metric reproduction check are exported. Historical
+state-coverage diagnostics remain CSV audit outputs, outside the numbered S4.
+
+Before plotting, `Rscript scripts/14_rq3_analysis.R --appendix` explicitly
+prepares `results/rq3/rq3_appendix_joint_target_sensitivity.rds` from frozen
+`rq3_joint_summary.csv`. It reuses `rq3_task_projection()` for all 54 one-target
+omissions under MEDI at ε=.50, retaining target-specific maximal supports and
+NA boundary decisions. Fig. S5 reports the fraction of resolved omissions
+changing sufficient/frontier membership, plus the largest target-specific
+frontier changes. These are deterministic inventory perturbations, not
+participant-bootstrap probabilities.
+
+`Rscript scripts/14_rq3_analysis.R --appendix-robustness` reconstructs focused
+10/20-s MEDI windows from the durable daily metric cube and exact hourly bases;
+it does not rebuild Core or change canonical RQ3 results. Reconstructed pair
+counts and A values must reproduce every corresponding frozen pair before
+bootstrap. It retains participant-level sums and counts, resamples participants
+within site, and shares each draw across targets, supports and comparisons
+within a placement. All higher comparisons and all 54 target maxima are
+recomputed in each draw. The main uncertainty analysis re-estimates the SD
+anchor; a paired fixed-anchor analysis separates change-estimation uncertainty
+from scale-estimation uncertainty. Undefined scales/comparisons remain
+unresolved. Report resolved and sufficient draw counts explicitly. Percentages
+at nine prespecified states are conditional sufficiency frequencies, not
+whole-frontier selection probabilities or population-optimal design claims.
+
+RQ3 robust-scale sensitivity uses the same support-specific six-day eye/MEDI/
+10-s reference as primary joint scaling, never the pooled RQ1 duration scale.
+Each target's frozen R_obs is rescaled by SD/(IQR/1.349), and the full All-54
+decision inventory is projected again. Undefined scales cannot remove a
+required target silently. Equal numerical epsilon values under two scales
+express different absolute-change requirements. Fig. S1c displays the nine
+prespecified states; complete scale and decision exports remain in
+`results/rq3/appendix_robustness/`.
+
+Table S1 is delivered as HTML and CSV under `results/appendix/`; Figs. S1–S5
+are PNGs under `results/figures/`. All six identities and provenance live in
+`results/appendix/appendix_artifact_manifest.csv`, with display CSVs alongside.
+The appendix validates upstream versions and sensitivity source hashes; it
+never silently prepares analysis. Historical unnumbered `FigS_*` layouts are
+now routed by `ms_plot_save()` to `results/diagnostics/figure_exploration/`.
+They remain reproducible diagnostic exports outside the six-item appendix.
+`MS_PLOT_PREP_ONLY=1` builds the entire appendix in memory without writes.
+
+RQ1 sensitivity exports now carry Core/RQ1 versions. Existing versionless
+frozen sensitivity exports are accepted only with exact primary pair-key and
+unit/participant-count agreement on available pairs; missing robust-scale pairs
+must have an undefined/nonpositive audited robust scale. They remain unavailable
+in display exports and are not relabelled as new analyses.

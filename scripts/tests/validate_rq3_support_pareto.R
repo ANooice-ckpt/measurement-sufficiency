@@ -159,6 +159,29 @@ stopifnot(all(missing$states$status[missing$states$config_id == "r120__d1"] == "
 absent_inventory <- bind_rows(inventory, tibble(metric = "absent", metric_class = "level"))
 absent <- rq3_task_projection(task_joint, absent_inventory)
 stopifnot(all(absent$states$status[absent$states$task_id %in% c("all_targets", "level")] == "unavailable"))
+
+# Removing a binding target can expand sufficiency and displace the old
+# frontier. Omitting a nonbinding target leaves the same resolved decisions;
+# boundary cells remain undefined in every omission inventory.
+local({
+  sensitivity_joint <- task_joint |> filter(placement == "eye", optical == "MEDI")
+  # Make mean_MEDI the sole binding target at the lowest-burden cell.
+  sensitivity_joint <- sensitivity_joint |> mutate(
+    R_obs = if_else(config_id == "r120__d1" & metric != "mean_MEDI", .2, R_obs))
+  sensitivity <- rq3_task_projection(sensitivity_joint, inventory,
+    list(all_targets = inventory$metric,
+         omit_binding = setdiff(inventory$metric, "mean_MEDI"),
+         omit_nonbinding = setdiff(inventory$metric, "dose")))
+  selected <- sensitivity$frontiers |> filter(epsilon_interval_start <= .5 + 1e-12) |>
+    group_by(task_id, placement, optical, config_id) |>
+    slice_max(epsilon_interval_start, n = 1, with_ties = FALSE) |> ungroup()
+  fronts <- lapply(split(selected, selected$task_id), function(x) sort(x$config_id[which(x$pareto)]))
+  stopifnot(identical(fronts$all_targets, fronts$omit_nonbinding),
+    identical(fronts$omit_binding, "r120__d1"),
+    !identical(fronts$all_targets, fronts$omit_binding),
+    all(is.na(selected$pareto[selected$config_id == "r10__d2"])),
+    all(is.na(selected$sufficient[selected$config_id == "r10__d2"])))
+})
 nonmonotone <- task_joint |>
   mutate(R_obs = if_else(config_id == "r120__d1", .1, R_obs)) |>
   rq3_task_projection(inventory, list(level = c("mean_MEDI", "dose")))

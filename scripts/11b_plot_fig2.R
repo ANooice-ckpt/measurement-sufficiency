@@ -29,6 +29,77 @@ source("scripts/utils/plot_contracts.R")
 source("scripts/utils/artifact_validation.R")
 source("scripts/utils/rq1_inference_contract.R")
 
+# Appendix entrypoint stays here so active inference plotting has one owner.
+# 16_appendix_figures.R sources this file with MS_FIG2_APPENDIX_ONLY=TRUE,
+# then supplies the already-validated frozen artifact; no main figure is run.
+ms_fig2_appendix_strength <- function(artifact) {
+  tasks <- tibble::as_tibble(artifact$contrast_summary)
+  ms_plot_require_columns(tasks, c("status", "outcome", "outcome_label", "outcome_domain",
+    "metric_geometry", "signal_reference_r2", "signal_difference_outcome_sd",
+    "inference_deviation", "n_matched_days", "n_participants"), "Appendix inference")
+  eligible <- tasks |> filter(status == "estimated", is.finite(signal_reference_r2)) |>
+    mutate(geometry = if_else(metric_geometry == "circular_time", "Circular", "Linear"),
+           domain = factor(outcome_domain, levels = c("Sleep", "Alertness", "Affect")))
+  thresholds <- tibble(stratum = c("All", "R² ≥ 0.1%", "R² ≥ 1%", "R² ≥ 5%"),
+                       threshold = c(0, .001, .01, .05))
+  rows <- tidyr::crossing(eligible, thresholds) |> filter(signal_reference_r2 >= threshold) |>
+    tidyr::pivot_longer(c(inference_deviation, signal_difference_outcome_sd),
+                       names_to = "quantity", values_to = "value") |>
+    filter(is.finite(value))
+  summary <- rows |> group_by(domain, geometry, stratum, threshold, quantity) |>
+    summarise(n_tasks = n(), median = median(value), q25 = quantile(value, .25),
+      q75 = quantile(value, .75), min_participants = min(n_participants),
+      max_participants = max(n_participants), min_matched_days = min(n_matched_days),
+      max_matched_days = max(n_matched_days), .groups = "drop")
+  # Empty signal-strength strata remain explicit, rather than disappearing.
+  grid <- tidyr::crossing(domain = factor(c("Sleep", "Alertness", "Affect"),
+    levels = c("Sleep", "Alertness", "Affect")), geometry = c("Linear", "Circular"),
+    thresholds, quantity = c("inference_deviation", "signal_difference_outcome_sd"))
+  summary <- grid |> left_join(summary, by = c("domain", "geometry", "stratum", "threshold", "quantity")) |>
+    mutate(n_tasks = coalesce(n_tasks, 0L),
+      stratum = factor(stratum, levels = rev(thresholds$stratum)),
+      quantity_label = if_else(quantity == "inference_deviation",
+        "Coefficient displacement / reference uncertainty", "Signal RMS / within-outcome RMS"))
+  strength <- eligible |> group_by(outcome, outcome_label, geometry) |>
+    summarise(n_tasks = n(), median_r2 = median(signal_reference_r2),
+      q25 = quantile(signal_reference_r2, .25), q75 = quantile(signal_reference_r2, .75),
+      min_participants = min(n_participants), max_participants = max(n_participants),
+      min_matched_days = min(n_matched_days), max_matched_days = max(n_matched_days), .groups = "drop")
+  p_a <- ggplot(eligible, aes(100 * signal_reference_r2, outcome_label)) +
+    geom_point(position = position_jitter(height = .16, width = 0, seed = 19),
+               size = .55, alpha = .22, colour = MS_NEUTRAL) +
+    geom_errorbar(data = strength, aes(x = 100 * median_r2, xmin = 100 * q25, xmax = 100 * q75),
+                  orientation = "y", width = .16, colour = MS_PRIMARY, linewidth = .5) +
+    geom_point(data = strength, aes(x = 100 * median_r2), size = 1.5, colour = MS_PRIMARY) +
+    facet_wrap(~geometry, nrow = 1) +
+    scale_x_continuous(trans = scales::pseudo_log_trans(sigma = .03),
+                       breaks = c(0, .1, 1, 5, 10, 25)) +
+    labs(x = "Reference within-participant R² (%)", y = NULL,
+      caption = "Reference strength is evaluated on each contrast's exact matched days; tasks can share observations.") +
+    theme_ms_axes(legend_position = "none")
+  panels <- lapply(unique(summary$quantity), function(quantity) {
+    z <- summary |> filter(.data$quantity == .env$quantity)
+    ggplot(z, aes(median, stratum)) +
+      geom_errorbar(aes(xmin = q25, xmax = q75), orientation = "y", width = .2,
+                    linewidth = .5, colour = MS_PRIMARY, na.rm = TRUE) +
+      geom_point(size = 1.5, colour = MS_PRIMARY, na.rm = TRUE) +
+      geom_text(aes(x = 0, label = paste0("n=", n_tasks)), hjust = -.1, vjust = -1,
+                size = 1.8, colour = MS_NEUTRAL) +
+      facet_grid(geometry ~ domain) +
+      scale_x_continuous(trans = scales::pseudo_log_trans(sigma = .02), expand = expansion(mult = c(.03, .20))) +
+      labs(x = unique(z$quantity_label), y = NULL) + theme_ms_axes(legend_position = "none")
+  })
+  note <- cowplot::ggdraw() + cowplot::draw_label(
+    "Nested reference-strength strata describe the same matched-support association models. Points/bars show task medians/IQR.\nLinear and circular exposure geometries are summarized separately; each stratum retains its task count.",
+    x = .02, hjust = 0, size = MS_FIG_DENSE_PT, fontfamily = MS_FONT)
+  plot <- cowplot::plot_grid(ms_panel_frame(p_a, "a  Reference signal on matched support"),
+    ms_panel_frame(panels[[1]], "b  Coefficient preservation by reference strength"),
+    ms_panel_frame(panels[[2]], "c  Signal preservation by reference strength"), note,
+    ncol = 1, rel_heights = c(.30, .32, .32, .06))
+  list(plot = plot, strength = strength, strata = summary)
+}
+
+if (!isTRUE(get0("MS_FIG2_APPENDIX_ONLY", inherits = FALSE, ifnotfound = FALSE))) {
 contract <- rq1_inference_contract()
 INFERENCE_RDS <- file.path("results", "rq1", "inference", contract$artifact_filename)
 RQ1_SUMMARY_CSV <- file.path("results", "rq1", "rq1_pairwise_summary.csv")
@@ -450,3 +521,4 @@ ms_plot_write_manifest(
   )
 )
 message("Fig. 2 complete: distortion magnitude, inferential displacement and association-signal preservation.")
+}

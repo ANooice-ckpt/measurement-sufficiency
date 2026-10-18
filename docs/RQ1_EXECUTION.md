@@ -232,8 +232,14 @@ results/rq1/inference/
 results/figures/
   Fig1_RQ1.png
   Fig2_RQ1_inferential_preservation.png
+
+results/diagnostics/figure_exploration/
   FigS_RQ1_*.png
 ```
+
+The manuscript appendix is composed by `scripts/16_appendix_figures.R` after
+`scripts/14_rq3_analysis.R --appendix`. Its inference-strength supplement is
+defined in `11b_plot_fig2.R` and exported as `results/figures/FigS2_reference_strength.png`.
 
 The historical `rq1_inferential_preservation.rds` all-configuration prototype and the intermediate sleep-only `rq1_inferential_preservation_anchor8.rds` artifact are retired. The v5 composition analysis removes both before writing the three-domain artifact so legacy drawing code cannot be mistaken for the active Fig. 2.
 
